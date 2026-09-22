@@ -99,7 +99,7 @@ function keyFor(a: ToolKey): KeyInfo {
 function renderKeys(): void {
   if (!K.def) return;
   $("defRow").innerHTML =
-    '<div class="t"><span>' + K.def.mask + '</span><span class="tag own">DEFAULT</span></div>' +
+    '<div class="t"><span>' + esc(K.def.mask) + '</span><span class="tag own">DEFAULT</span></div>' +
     '<div class="m">' + esc(K.def.user) + " · " + K.def.models + " models · added " + K.def.added + "</div>" +
     '<div class="acts"><button class="mini" data-change="def">REPLACE</button></div><div id="edit-def"></div>';
   $("toolKeys").innerHTML = (Object.keys(TOOLS) as ToolKey[])
@@ -108,7 +108,7 @@ function renderKeys(): void {
       const k = keyFor(a);
       return (
         '<div class="krow"><div class="t"><span>' + TOOLS[a][0] + '</span><span class="tag' + (own ? " own" : "") + '">' +
-        (own ? "OWN KEY" : "DEFAULT") + '</span></div><div class="m">' + k.mask + '</div><div class="acts">' +
+        (own ? "OWN KEY" : "DEFAULT") + '</span></div><div class="m">' + esc(k.mask) + '</div><div class="acts">' +
         '<button class="mini" data-change="' + a + '">' + (own ? "REPLACE" : "USE A DIFFERENT KEY") + "</button>" +
         (own ? '<button class="mini" data-reset="' + a + '">USE DEFAULT</button>' : "") +
         '</div><div id="edit-' + a + '"></div></div>'
@@ -144,13 +144,16 @@ function render(): void {
   $("nDest").textContent = String(n);
   $("pl").textContent = n === 1 ? "" : "s";
   $("tcount").textContent = rows.length ? "· " + rows.length : "";
-  if (!rows.length) return;
+  if (!rows.length) {
+    $("feed").innerHTML = '<span class="dim">// waiting for the first request</span>\n';
+    return;
+  }
   $("feed").innerHTML = rows
     .slice(0, 60)
     .map(
       (r) =>
         '<span class="l"><span class="t">' + r.t + '</span>  <span class="h">' + pad(r.host, 16) + "</span> " +
-        pad(r.kb + " kB", 7) + " " + pad(r.app, 15) + " " + pad(r.m, 22) + ' <span class="k">' + r.k + "</span>  " + r.ms + " ms</span>",
+        pad(r.kb + " kB", 7) + " " + pad(r.app, 15) + " " + pad(r.m, 22) + ' <span class="k">' + esc(r.k) + "</span>  " + r.ms + " ms</span>",
     )
     .join("");
   $("feed").scrollTop = 0;
@@ -201,8 +204,12 @@ function req(): void {
 function resetAll(): void {
   K = { def: null, tool: {} };
   cur = null;
+  rows = [];
+  hosts = {};
+  for (const k of Object.keys(last) as ToolKey[]) delete last[k];
   if (timer) clearInterval(timer);
   $("rate").textContent = "idle";
+  render();
   document.querySelectorAll<HTMLElement>(".appwin").forEach((w) => {
     w.classList.remove("on");
     w.style.display = "";
