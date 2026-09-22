@@ -419,13 +419,36 @@ function toolTile(key: RealTool): HTMLButtonElement {
   return document.querySelector<HTMLButtonElement>(`.tool[data-app="${key}"]`)!;
 }
 
+interface ToolStatus {
+  installed: boolean;
+  icon: string | null;
+}
+
 async function refreshTools(): Promise<void> {
-  const installed = await invoke<Record<string, boolean>>("detect_tools");
+  const status = await invoke<Record<string, ToolStatus>>("detect_tools");
   for (const key of REAL_TOOLS) {
+    const st = status[key] ?? { installed: false, icon: null };
     const b = toolTile(key);
     const go = b.querySelector<HTMLElement>(".go")!;
     const sb = b.querySelector<HTMLElement>("[data-sb]")!;
-    if (installed[key]) {
+    const ic = b.querySelector<HTMLElement>(".ic")!;
+    if (st.icon) {
+      if (ic.querySelector("img")?.src !== st.icon) {
+        const img = document.createElement("img");
+        img.src = st.icon;
+        img.alt = "";
+        img.onerror = () => {
+          ic.classList.remove("real");
+          ic.textContent = ic.dataset.glyph ?? "";
+        };
+        ic.replaceChildren(img);
+      }
+      ic.classList.add("real");
+    } else {
+      ic.classList.remove("real");
+      ic.textContent = ic.dataset.glyph ?? "";
+    }
+    if (st.installed) {
       delete b.dataset.missing;
       b.classList.remove("missing");
       if (go.textContent !== "RUNNING") go.textContent = "OPEN";
@@ -580,6 +603,9 @@ async function restoreSession(): Promise<void> {
 function init(): void {
   document.querySelectorAll<HTMLElement>("[data-sb]").forEach((el) => {
     if (!el.closest(".tool")?.hasAttribute("data-missing")) el.dataset.d = el.textContent ?? "";
+  });
+  document.querySelectorAll<HTMLElement>(".tool .ic").forEach((ic) => {
+    ic.dataset.glyph = ic.textContent ?? "";
   });
   setInterval(subs, 30000);
   wireWindowControls();
