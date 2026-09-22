@@ -4,8 +4,23 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { listen } from "@tauri-apps/api/event";
 
 const PORTAL_URL = "https://portal.consus.io";
-const DESKTOP_DOWNLOAD = "https://claude.ai/download";
-const DESKTOP_SUBTITLE = "Chat, docs, analysis";
+// Tools the launcher really detects, configures, and launches. The rest of the
+// tiles are still the wireframe's demo until their build-order step lands.
+type RealTool = "desktop" | "chatgpt";
+const REAL_TOOLS: RealTool[] = ["desktop", "chatgpt"];
+const DOWNLOAD: Record<RealTool, string> = {
+  desktop: "https://claude.ai/download",
+  chatgpt: "https://openai.com/chatgpt/download/",
+};
+const SUBTITLE: Record<RealTool, string> = {
+  desktop: "Chat, docs, analysis",
+  chatgpt: "Chat, docs, analysis",
+};
+const NOT_INSTALLED: Record<RealTool, string> = {
+  desktop: "Not installed · get it from claude.ai/download",
+  chatgpt: "Not installed · get it from openai.com",
+};
+const isRealTool = (k: string): k is RealTool => (REAL_TOOLS as string[]).includes(k);
 
 type ToolKey = "desktop" | "chatgpt" | "code" | "vscode";
 
@@ -243,7 +258,7 @@ function req(): void {
 }
 
 async function resetAll(): Promise<void> {
-  for (const cmd of ["keychain_delete_key", "remove_claude_desktop_config"]) {
+  for (const cmd of ["keychain_delete_key", "remove_tool_configs"]) {
     try {
       await invoke(cmd);
     } catch {
@@ -398,25 +413,27 @@ function wireKeysTab(): void {
   });
 }
 
-function desktopTile(): HTMLButtonElement {
-  return document.querySelector<HTMLButtonElement>('.tool[data-app="desktop"]')!;
+function toolTile(key: RealTool): HTMLButtonElement {
+  return document.querySelector<HTMLButtonElement>(`.tool[data-app="${key}"]`)!;
 }
 
 async function refreshTools(): Promise<void> {
   const installed = await invoke<Record<string, boolean>>("detect_tools");
-  const b = desktopTile();
-  const go = b.querySelector<HTMLElement>(".go")!;
-  const sb = b.querySelector<HTMLElement>("[data-sb]")!;
-  if (installed.desktop) {
-    delete b.dataset.missing;
-    b.classList.remove("missing");
-    if (go.textContent !== "RUNNING") go.textContent = "OPEN";
-    sb.textContent = sb.dataset.d ?? DESKTOP_SUBTITLE;
-  } else {
-    b.dataset.missing = "1";
-    b.classList.add("missing");
-    go.textContent = "GET IT ↗";
-    sb.textContent = "Not installed · get it from claude.ai/download";
+  for (const key of REAL_TOOLS) {
+    const b = toolTile(key);
+    const go = b.querySelector<HTMLElement>(".go")!;
+    const sb = b.querySelector<HTMLElement>("[data-sb]")!;
+    if (installed[key]) {
+      delete b.dataset.missing;
+      b.classList.remove("missing");
+      if (go.textContent !== "RUNNING") go.textContent = "OPEN";
+      sb.textContent = sb.dataset.d ?? SUBTITLE[key];
+    } else {
+      b.dataset.missing = "1";
+      b.classList.add("missing");
+      go.textContent = "GET IT ↗";
+      sb.textContent = NOT_INSTALLED[key];
+    }
   }
 }
 
@@ -449,7 +466,7 @@ function activateTile(b: HTMLButtonElement, key: ToolKey): void {
   });
 }
 
-async function launchDesktop(b: HTMLButtonElement): Promise<void> {
+async function launchTool(b: HTMLButtonElement, key: RealTool): Promise<void> {
   if (b.disabled) return;
   const go = b.querySelector<HTMLElement>(".go")!;
   const sb = b.querySelector<HTMLElement>("[data-sb]")!;
@@ -457,10 +474,10 @@ async function launchDesktop(b: HTMLButtonElement): Promise<void> {
   if (timer) clearInterval(timer);
   go.textContent = "OPENING…";
   try {
-    await invoke("launch_claude_desktop", { rect: await glassRect(), models: currentModels ?? [] });
-    activateTile(b, "desktop");
-    sb.textContent = DESKTOP_SUBTITLE;
-    sb.dataset.d = DESKTOP_SUBTITLE;
+    await invoke("launch_tool", { tool: key, rect: await glassRect(), models: currentModels ?? [] });
+    activateTile(b, key);
+    sb.textContent = SUBTITLE[key];
+    sb.dataset.d = SUBTITLE[key];
   } catch (err) {
     go.textContent = "OPEN";
     sb.textContent = String(err);
@@ -473,13 +490,13 @@ function wireTools(): void {
   document.querySelectorAll<HTMLButtonElement>(".tool").forEach((b) => {
     b.addEventListener("click", () => {
       const a = b.dataset.app as ToolKey;
-      if (a === "desktop") {
+      if (isRealTool(a)) {
         if (b.dataset.missing) {
-          void openUrl(DESKTOP_DOWNLOAD);
+          void openUrl(DOWNLOAD[a]);
           b.querySelector("[data-sb]")!.textContent = "Download opened in your browser. Install it, then come back.";
           return;
         }
-        void launchDesktop(b);
+        void launchTool(b, a);
         return;
       }
       if (b.dataset.missing) {
@@ -567,18 +584,18 @@ function init(): void {
   wireSend();
   wireTabs();
   void listen<string>("tool-exited", (e) => {
-    if (e.payload !== "desktop") return;
-    const b = desktopTile();
+    if (!isRealTool(e.payload)) return;
+    const b = toolTile(e.payload);
     b.classList.remove("on");
     b.querySelector(".go")!.textContent = "OPEN";
-    if (cur === "desktop") {
+    if (cur === e.payload) {
       cur = null;
       $("empty").style.display = "";
     }
   });
   void listen<{ tool: string; message: string }>("tool-notice", (e) => {
-    if (e.payload.tool !== "desktop") return;
-    const sb = desktopTile().querySelector<HTMLElement>("[data-sb]")!;
+    if (!isRealTool(e.payload.tool)) return;
+    const sb = toolTile(e.payload.tool).querySelector<HTMLElement>("[data-sb]")!;
     sb.textContent = e.payload.message;
     sb.dataset.d = e.payload.message;
   });

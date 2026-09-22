@@ -11,18 +11,56 @@ use std::thread;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 
-use crate::config;
+use crate::{chatgpt, config, keychain};
 
-const CLAUDE_APP: &str = "/Applications/Claude.app";
-const CLAUDE_BIN: &str = "/Applications/Claude.app/Contents/MacOS/Claude";
-const CLAUDE_BUNDLE: &str = "com.anthropic.claudefordesktop";
-const CLAUDE_PROCESS: &str = "Claude";
 /// Claude Desktop runs the launcher binary under this name to fetch the key.
 pub const HELPER_NAME: &str = "claude-key-helper";
-const PLACE_HELP: &str = "Claude opened but could not be placed in the launcher. Allow Consus Launcher under System Settings, Privacy and Security, Accessibility.";
 
-/// PIDs of apps this launcher started. Quit when the launcher exits.
-pub struct Children(pub Mutex<Vec<u32>>);
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Tool {
+    Desktop,
+    ChatGpt,
+}
+
+const TOOLS: [Tool; 2] = [Tool::Desktop, Tool::ChatGpt];
+
+#[derive(Clone, Copy)]
+struct Spec {
+    key: &'static str,
+    name: &'static str,
+    app: &'static str,
+    bin: &'static str,
+    bundle: &'static str,
+    process: &'static str,
+}
+
+fn spec(t: Tool) -> Spec {
+    match t {
+        Tool::Desktop => Spec {
+            key: "desktop",
+            name: "Claude",
+            app: "/Applications/Claude.app",
+            bin: "/Applications/Claude.app/Contents/MacOS/Claude",
+            bundle: "com.anthropic.claudefordesktop",
+            process: "Claude",
+        },
+        Tool::ChatGpt => Spec {
+            key: "chatgpt",
+            name: "ChatGPT",
+            app: "/Applications/ChatGPT.app",
+            bin: "/Applications/ChatGPT.app/Contents/MacOS/ChatGPT",
+            bundle: "com.openai.codex",
+            process: "ChatGPT",
+        },
+    }
+}
+
+fn tool_from_key(key: &str) -> Option<Tool> {
+    TOOLS.into_iter().find(|t| spec(*t).key == key)
+}
+
+/// (tool, pid) of apps this launcher started. Quit when the launcher exits.
+pub struct Children(pub Mutex<Vec<(Tool, u32)>>);
 
 #[derive(Deserialize)]
 pub struct Rect {
@@ -32,19 +70,26 @@ pub struct Rect {
     pub h: f64,
 }
 
-fn claude_installed(app: &AppHandle) -> bool {
-    if Path::new(CLAUDE_APP).exists() {
+fn installed(app: &AppHandle, s: &Spec) -> bool {
+    if Path::new(s.app).exists() {
         return true;
     }
+    let name = Path::new(s.app).file_name().unwrap_or_default();
     app.path()
         .home_dir()
-        .map(|h| h.join("Applications/Claude.app").exists())
+        .map(|h| h.join("Applications").join(name).exists())
         .unwrap_or(false)
 }
 
 #[tauri::command]
 pub fn detect_tools(app: AppHandle) -> HashMap<String, bool> {
-    HashMap::from([("desktop".to_string(), cfg!(target_os = "macos") && claude_installed(&app))])
+    TOOLS
+        .into_iter()
+        .map(|t| {
+            let s = spec(t);
+            (s.key.to_string(), cfg!(target_os = "macos") && installed(&app, &s))
+        })
+        .collect()
 }
 
 fn osascript(script: &str) -> Result<String, String> {
@@ -60,9 +105,9 @@ fn osascript(script: &str) -> Result<String, String> {
     }
 }
 
-fn running_pids() -> Vec<u32> {
+fn running_pids(process: &str) -> Vec<u32> {
     Command::new("pgrep")
-        .args(["-x", CLAUDE_PROCESS])
+        .args(["-x", process])
         .output()
         .map(|o| {
             String::from_utf8_lossy(&o.stdout)
@@ -81,30 +126,31 @@ fn alive(pid: u32) -> bool {
         .unwrap_or(false)
 }
 
-fn ask_claude_to_quit() {
-    let _ = osascript(&format!("tell application id \"{CLAUDE_BUNDLE}\" to quit"));
+fn ask_to_quit(bundle: &str) {
+    let _ = osascript(&format!("tell application id \"{bundle}\" to quit"));
 }
 
-fn quit_and_wait() -> Result<(), String> {
-    ask_claude_to_quit();
+fn quit_and_wait(s: &Spec) -> Result<(), String> {
+    ask_to_quit(s.bundle);
     for _ in 0..40 {
-        if running_pids().is_empty() {
+        if running_pids(s.process).is_empty() {
             return Ok(());
         }
         thread::sleep(Duration::from_millis(200));
     }
-    Err("Claude Desktop is still running. Close it and try again.".into())
+    Err(format!("{} is still running. Close it and try again.", s.name))
 }
 
-fn place_window(rect: &Rect) -> Result<(), String> {
+fn place_window(s: &Spec, rect: &Rect) -> Result<(), String> {
     let (x, y, w, h) = (rect.x.round(), rect.y.round(), rect.w.round(), rect.h.round());
     let probe = format!(
-        "tell application \"System Events\" to (exists window 1 of process \"{CLAUDE_PROCESS}\")"
+        "tell application \"System Events\" to (exists window 1 of process \"{}\")",
+        s.process
     );
     let mut seen = false;
     for _ in 0..60 {
         match osascript(&probe) {
-            Ok(s) if s == "true" => {
+            Ok(v) if v == "true" => {
                 seen = true;
                 break;
             }
@@ -113,25 +159,29 @@ fn place_window(rect: &Rect) -> Result<(), String> {
         }
     }
     if !seen {
-        return Err("Claude did not open a window in time.".into());
+        return Err(format!("{} did not open a window in time.", s.name));
     }
     osascript(&format!(
-        "tell application \"System Events\" to tell process \"{CLAUDE_PROCESS}\"\n\
+        "tell application \"System Events\" to tell process \"{}\"\n\
            set position of window 1 to {{{x}, {y}}}\n\
            set size of window 1 to {{{w}, {h}}}\n\
-         end tell"
+         end tell",
+        s.process
     ))?;
-    let _ = osascript(&format!("tell application id \"{CLAUDE_BUNDLE}\" to activate"));
+    let _ = osascript(&format!("tell application id \"{}\" to activate", s.bundle));
     Ok(())
 }
 
-fn notice(app: &AppHandle, err: &str) {
+fn notice(app: &AppHandle, s: &Spec, err: &str) {
     let message = if err.contains("assistive access") {
-        PLACE_HELP.to_string()
+        format!(
+            "{} opened but could not be placed in the launcher. Allow Consus Launcher under System Settings, Privacy and Security, Accessibility.",
+            s.name
+        )
     } else {
-        format!("Claude opened but could not be placed: {err}")
+        format!("{} opened but could not be placed: {err}", s.name)
     };
-    let _ = app.emit("tool-notice", json!({ "tool": "desktop", "message": message }));
+    let _ = app.emit("tool-notice", json!({ "tool": s.key, "message": message }));
 }
 
 /// While a tool is running the launcher is a backdrop: the tool's window
@@ -143,81 +193,117 @@ fn set_backdrop(app: &AppHandle, on: bool) {
 }
 
 #[tauri::command]
-pub async fn launch_claude_desktop(app: AppHandle, rect: Rect, models: Value) -> Result<(), String> {
+pub async fn launch_tool(app: AppHandle, tool: String, rect: Rect, models: Value) -> Result<(), String> {
+    let t = tool_from_key(&tool).ok_or_else(|| format!("unknown tool {tool}"))?;
     if !cfg!(target_os = "macos") {
-        return Err("Claude Desktop launch is macOS only for now".into());
+        return Err("Tool launch is macOS only for now".into());
     }
+    let s = spec(t);
     let home = app.path().home_dir().map_err(|e| e.to_string())?;
-    let helper = app
-        .path()
-        .app_config_dir()
-        .map_err(|e| e.to_string())?
-        .join(HELPER_NAME);
-    config::write_helper(&helper)?;
-    config::write_claude_desktop(&home, &helper, &models)?;
 
-    let ours = app.state::<Children>().0.lock().unwrap().clone();
-    let running = running_pids();
-    if running.iter().any(|p| ours.contains(p)) {
-        let handle = app.clone();
-        thread::spawn(move || {
-            if let Err(e) = place_window(&rect) {
-                notice(&handle, &e);
-            }
-        });
-        return Ok(());
-    }
-    if !running.is_empty() {
-        quit_and_wait()?;
-    }
-
-    let mut child = Command::new(CLAUDE_BIN).spawn().map_err(|e| e.to_string())?;
-    let pid = child.id();
-    app.state::<Children>().0.lock().unwrap().push(pid);
-    set_backdrop(&app, true);
-
-    let handle = app.clone();
-    thread::spawn(move || {
-        if let Err(e) = place_window(&rect) {
-            notice(&handle, &e);
+    // Configure. The key reaches each app the way its config format allows
+    // without ever being written to a file.
+    let mut env: Option<(&str, String)> = None;
+    match t {
+        Tool::Desktop => {
+            let helper = app
+                .path()
+                .app_config_dir()
+                .map_err(|e| e.to_string())?
+                .join(HELPER_NAME);
+            config::write_helper(&helper)?;
+            config::write_claude_desktop(&home, &helper, &models)?;
         }
-        let _ = child.wait();
-        handle.state::<Children>().0.lock().unwrap().retain(|p| *p != pid);
-        set_backdrop(&handle, false);
-        let _ = handle.emit("tool-exited", "desktop");
-    });
-    Ok(())
-}
+        Tool::ChatGpt => {
+            let key = keychain::get_key().ok_or("No key in the keychain. Connect first.")?;
+            chatgpt::write_config(&home, &models)?;
+            env = Some(("CONSUS_API_KEY", key));
+        }
+    }
 
-#[tauri::command]
-pub fn remove_claude_desktop_config(app: AppHandle) -> Result<(), String> {
-    let home = app.path().home_dir().map_err(|e| e.to_string())?;
-    config::remove_claude_desktop(&home)
-}
-
-/// On launcher exit the apps it started are asked to quit, then killed if
-/// they ignore that. Apps the user opened themselves are left alone.
-pub fn terminate_children(app: &AppHandle) {
     let ours: Vec<u32> = app
         .state::<Children>()
         .0
         .lock()
         .unwrap()
         .iter()
-        .copied()
-        .filter(|p| alive(*p))
+        .filter(|(x, _)| *x == t)
+        .map(|(_, p)| *p)
         .collect();
+    let running = running_pids(s.process);
+    if running.iter().any(|p| ours.contains(p)) {
+        let handle = app.clone();
+        thread::spawn(move || {
+            if let Err(e) = place_window(&s, &rect) {
+                notice(&handle, &s, &e);
+            }
+        });
+        return Ok(());
+    }
+    if !running.is_empty() {
+        quit_and_wait(&s)?;
+    }
+
+    let mut cmd = Command::new(s.bin);
+    if let Some((k, v)) = env {
+        cmd.env(k, v);
+    }
+    let mut child = cmd.spawn().map_err(|e| e.to_string())?;
+    let pid = child.id();
+    app.state::<Children>().0.lock().unwrap().push((t, pid));
+    set_backdrop(&app, true);
+
+    let handle = app.clone();
+    thread::spawn(move || {
+        if let Err(e) = place_window(&s, &rect) {
+            notice(&handle, &s, &e);
+        }
+        let _ = child.wait();
+        let remaining = {
+            let children = handle.state::<Children>();
+            let mut c = children.0.lock().unwrap();
+            c.retain(|(_, p)| *p != pid);
+            c.len()
+        };
+        if remaining == 0 {
+            set_backdrop(&handle, false);
+        }
+        let _ = handle.emit("tool-exited", s.key);
+    });
+    Ok(())
+}
+
+#[tauri::command]
+pub fn remove_tool_configs(app: AppHandle) -> Result<(), String> {
+    let home = app.path().home_dir().map_err(|e| e.to_string())?;
+    let claude = config::remove_claude_desktop(&home);
+    let chatgpt = chatgpt::restore(&home);
+    claude.and(chatgpt)
+}
+
+/// On launcher exit the apps it started are asked to quit, then killed if
+/// they ignore that. Apps the user opened themselves are left alone.
+pub fn terminate_children(app: &AppHandle) {
+    let ours: Vec<(Tool, u32)> = {
+        let children = app.state::<Children>();
+        let guard = children.0.lock().unwrap();
+        guard.iter().copied().filter(|(_, p)| alive(*p)).collect()
+    };
     if ours.is_empty() {
         return;
     }
-    ask_claude_to_quit();
+    for t in TOOLS {
+        if ours.iter().any(|(x, _)| *x == t) {
+            ask_to_quit(spec(t).bundle);
+        }
+    }
     for _ in 0..15 {
-        if !ours.iter().any(|p| alive(*p)) {
+        if !ours.iter().any(|(_, p)| alive(*p)) {
             return;
         }
         thread::sleep(Duration::from_millis(200));
     }
-    for pid in ours {
+    for (_, pid) in ours {
         let _ = Command::new("kill").arg(pid.to_string()).status();
     }
 }
