@@ -1,5 +1,7 @@
+mod chatgpt;
 mod config;
 mod keychain;
+mod models;
 mod portal;
 mod tools;
 
@@ -28,8 +30,8 @@ pub fn run() {
             keychain::keychain_delete_key,
             portal::validate_key,
             tools::detect_tools,
-            tools::launch_claude_desktop,
-            tools::remove_claude_desktop_config,
+            tools::launch_tool,
+            tools::remove_tool_configs,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

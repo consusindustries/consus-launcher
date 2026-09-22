@@ -13,12 +13,11 @@ use serde_json::{json, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::models::{self, REGIME, REGIME_TAG};
+
 const ENTRY_ID: &str = "6c3e2a4e-0b1d-4f7a-9e8c-5a1c0f2d3b47";
 const ENTRY_NAME: &str = "Consus Launcher";
 const GATEWAY: &str = "https://api.consus.io";
-// Fixed for now by decision (2026-09-22); a regime rule is a later conversation.
-const REGIME: &str = "itar";
-const REGIME_TAG: &str = "ITAR";
 const FAMILIES: [&str; 3] = ["opus", "sonnet", "haiku"];
 
 struct ClaudeModel {
@@ -30,7 +29,7 @@ struct ClaudeModel {
 
 // "consus/claude-opus-4-8:itar" -> name "claude-opus-4-8:itar", label "Opus 4.8 ITAR"
 fn parse(id: &str) -> Option<ClaudeModel> {
-    let bare = id.strip_prefix("consus/").unwrap_or(id);
+    let bare = models::bare(id);
     let (base, suffix) = bare.split_once(':')?;
     if suffix != REGIME {
         return None;

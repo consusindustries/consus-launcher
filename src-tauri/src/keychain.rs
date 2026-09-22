@@ -7,12 +7,13 @@ fn entry() -> Result<Entry, String> {
     Entry::new(SERVICE, DEFAULT_ACCOUNT).map_err(|e| e.to_string())
 }
 
+pub fn get_key() -> Option<String> {
+    entry().ok()?.get_password().ok().filter(|k| !k.is_empty())
+}
+
 #[tauri::command]
 pub fn keychain_get_key() -> Option<String> {
-    match entry() {
-        Ok(e) => e.get_password().ok(),
-        Err(_) => None,
-    }
+    get_key()
 }
 
 #[tauri::command]
