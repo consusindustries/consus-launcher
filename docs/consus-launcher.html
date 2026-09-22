@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Consus Launcher</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{--cream:#E8E0C8;--cream-2:#F3EBD6;--line:#C9C0A6;--ink:#1F1A16;--ink-2:#5F564A;--side:#2A211B;--side-2:#3A2F27;--side-3:#4A3E34;--side-t:#CFC5B0;--side-h:#7E7466;--orange:#D9522A;--green:#7CA33A;
+--display:"Archivo Black",Impact,"Arial Black",sans-serif;--mono:"JetBrains Mono",ui-monospace,Menlo,monospace;--sans:"Space Grotesk",system-ui,Helvetica,Arial,sans-serif;
+--desk:#CFC6AC}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--cream:#1B1612;--cream-2:#24201B;--line:#3E362E;--ink:#F3EBD6;--ink-2:#B5AB96;--desk:#171310}}
+:root[data-theme="dark"]{--cream:#1B1612;--cream-2:#24201B;--line:#3E362E;--ink:#F3EBD6;--ink-2:#B5AB96;--desk:#171310}
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--cream);color:var(--ink);font-family:var(--sans);font-size:15px;line-height:1.5}
+.stage{max-width:1180px;margin:0 auto;padding:36px 28px 48px}
+.eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.14em;color:var(--ink-2);text-transform:uppercase}
+h1{font-family:var(--display);font-weight:400;font-size:40px;line-height:1.05;margin:6px 0 8px;letter-spacing:-.5px}
+.lede{color:var(--ink-2);max-width:620px;margin:0 0 26px}
+.win{border:1px solid #1F1A16;border-radius:12px;overflow:hidden;background:var(--desk);display:grid;grid-template-rows:36px minmax(0,1fr);height:640px}
+.chrome{background:var(--side);display:flex;align-items:center;gap:14px;padding:0 14px;color:var(--side-t);font-family:var(--mono);font-size:11px;letter-spacing:.08em}
+.lights{display:flex;gap:7px}.lights i{width:11px;height:11px;border-radius:50%;background:var(--side-3);display:block}
+.lights i:first-child{background:var(--orange)}
+.chrome .logo{font-family:var(--display);color:#F3EBD6;font-size:13px;letter-spacing:.5px}.chrome .logo span{color:var(--orange)}
+.body{display:grid;grid-template-columns:minmax(0,1fr) 300px;min-height:0}
+.glass{position:relative;overflow:hidden;background-color:var(--desk);background-image:radial-gradient(circle at 1px 1px,rgba(31,26,22,.12) 1px,transparent 0);background-size:18px 18px}
+.glass .hint{position:absolute;left:18px;top:14px;font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-2);opacity:.8}
+.empty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;text-align:center;color:var(--ink-2)}
+.empty b{font-family:var(--display);font-weight:400;font-size:26px;color:var(--ink)}
+.appwin{position:absolute;left:36px;right:36px;top:48px;bottom:36px;border:1px solid #1F1A16;border-radius:10px;overflow:hidden;background:#FBF8F1;color:#1F1A16;display:none;flex-direction:column;transform:translateY(8px);opacity:0;transition:transform .25s ease,opacity .25s ease}
+.appwin.on{display:flex;transform:none;opacity:1}
+.apptop{height:30px;background:#EFEBE1;border-bottom:1px solid #DDD6C6;display:flex;align-items:center;gap:8px;padding:0 10px;font-size:12px;color:#5F564A}
+.apptop .lights i{background:#CFC6B2;width:9px;height:9px}
+.banner{padding:7px 14px;font-size:12px;background:#F3EBD6;border-bottom:1px solid #DDD6C6;display:flex;gap:8px;align-items:center}
+.banner i{width:7px;height:7px;border-radius:50%;background:var(--green);display:inline-block}
+.side-dark{background:#1B1612;color:#E8E0C8}
+.panel{background:var(--side);color:var(--side-t);display:flex;flex-direction:column;min-height:0}
+.org{margin:16px 16px 0;border:1px solid var(--side-3);border-radius:6px;padding:10px 12px;display:flex;align-items:center;justify-content:space-between}
+.org b{color:#F3EBD6;font-weight:500;font-size:14px}
+.status{font-family:var(--mono);font-size:10px;letter-spacing:.12em;color:#A6C86A;display:flex;align-items:center;gap:6px}
+.status i{width:7px;height:7px;border-radius:50%;background:var(--green);display:inline-block}
+.tabs{display:flex;margin:16px 16px 0;border-bottom:1px solid var(--side-3)}
+.tabs button{flex:1;background:none;border:0;border-bottom:2px solid transparent;color:var(--side-h);font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;padding:10px 0;cursor:pointer}
+.tabs button.on{color:#F3EBD6;border-bottom-color:var(--orange)}
+.tabs button:focus-visible,.tool:focus-visible,.send:focus-visible{outline:2px solid var(--orange);outline-offset:2px}
+.tabpane{display:none;padding:16px;overflow:auto;flex:1;min-height:0}.tabpane.on{display:block}
+.h{font-family:var(--mono);font-size:10px;letter-spacing:.14em;color:var(--side-h);text-transform:uppercase;margin:0 0 10px}
+.tool{width:100%;display:grid;grid-template-columns:36px minmax(0,1fr) auto;gap:12px;align-items:center;background:var(--side-2);border:1px solid var(--side-3);border-radius:8px;padding:12px;margin-bottom:10px;color:#F3EBD6;font:inherit;text-align:left;cursor:pointer;transition:border-color .15s}
+.tool:hover{border-color:var(--side-h)}
+.tool.on{border-color:var(--orange)}
+.tool .ic{width:36px;height:36px;border-radius:8px;background:#F3EBD6;color:#1F1A16;display:flex;align-items:center;justify-content:center;font-family:var(--display);font-size:15px}
+.tool .nm{font-weight:500;font-size:14px;line-height:1.2}
+.tool .sb{font-size:12px;color:var(--side-h)}
+.tool .go{font-family:var(--mono);font-size:10px;letter-spacing:.1em;color:var(--side-h)}
+.tool.on .go{color:var(--orange)}
+.tool.locked{cursor:default;opacity:.6}.tool.locked .ic{background:var(--side-3);color:var(--side-h)}
+.note{font-size:12px;color:var(--side-h);border-top:1px solid var(--side-3);padding-top:12px;margin-top:6px}
+.big{font-family:var(--display);font-size:56px;color:#F3EBD6;line-height:1}
+.big small{font-family:var(--mono);font-size:11px;color:var(--side-h);letter-spacing:.1em;margin-left:6px}
+.dest{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:12px;color:#F3EBD6;margin:8px 0 18px}
+.dest i{width:7px;height:7px;border-radius:50%;background:var(--green)}
+.row{border-top:1px solid var(--side-3);padding:8px 0;font-family:var(--mono);font-size:11px}
+.row .a{display:flex;justify-content:space-between;color:#F3EBD6}
+.row .b{display:flex;justify-content:space-between;color:var(--side-h);margin-top:2px}
+.row.new{animation:in .4s ease}
+@keyframes in{from{background:var(--side-3)}to{background:transparent}}
+.foot{padding:12px 16px;border-top:1px solid var(--side-3);font-family:var(--mono);font-size:10px;color:var(--side-h);letter-spacing:.04em}
+.send{background:#1F1A16;color:#F3EBD6;border:0;border-radius:6px;padding:8px 14px;font-family:var(--mono);font-size:12px;cursor:pointer}
+.prompt{border:1px solid #DDD6C6;border-radius:12px;padding:12px 14px;background:#fff;display:flex;justify-content:space-between;align-items:center;gap:12px;font-size:14px;color:#8A8070}
+.term{flex:1;background:#1B1612;color:#E8E0C8;font-family:var(--mono);font-size:12px;padding:16px;line-height:1.7}
+.term .o{color:#D9522A}.term .g{color:#A6C86A}.term .m{color:#8A8070}
+.code{flex:1;display:grid;grid-template-columns:44px minmax(0,1fr) 260px}
+.code .rail{background:#EFEBE1;border-right:1px solid #DDD6C6}
+.code .ed{font-family:var(--mono);font-size:12px;padding:14px;color:#5F564A;line-height:1.8}
+.code .chat{border-left:1px solid #DDD6C6;padding:12px;display:flex;flex-direction:column;justify-content:flex-end;gap:10px;font-size:12px}
+.chip{font-family:var(--mono);font-size:10px;border:1px solid #DDD6C6;border-radius:4px;padding:2px 6px;color:#5F564A}
+.connect{padding:18px 16px;flex:1;overflow:auto}
+.connect h2{font-family:var(--display);font-weight:400;font-size:22px;color:#F3EBD6;margin:0 0 6px;line-height:1.15}
+.connect p{font-size:13px;color:var(--side-t);margin:0 0 16px}
+.cs{display:grid;grid-template-columns:22px minmax(0,1fr);gap:10px;padding:12px 0;border-top:1px solid var(--side-3)}
+.cn{width:20px;height:20px;border-radius:50%;border:1.5px solid var(--side-h);font-family:var(--mono);font-size:10px;display:flex;align-items:center;justify-content:center;color:var(--side-t)}
+.cn.done{background:var(--green);border-color:var(--green);color:#1F1A16}
+.cs b{display:block;color:#F3EBD6;font-weight:500;font-size:13px}
+.cs span{font-size:12px;color:var(--side-h)}
+.link{display:inline-flex;margin-top:8px;background:transparent;border:1px solid var(--side-h);color:#F3EBD6;border-radius:6px;padding:6px 10px;font-family:var(--mono);font-size:11px;cursor:pointer}
+.keyin{width:100%;margin-top:8px;background:#1B1612;border:1px solid var(--side-3);border-radius:6px;color:#F3EBD6;font-family:var(--mono);font-size:12px;padding:9px 10px}
+.keyin:focus-visible,.link:focus-visible,.cta:focus-visible{outline:2px solid var(--orange);outline-offset:2px}
+.cta{width:100%;margin-top:10px;background:var(--orange);color:#1F1A16;border:0;border-radius:6px;padding:10px;font-family:var(--mono);font-size:12px;letter-spacing:.06em;cursor:pointer}
+.err{font-family:var(--mono);font-size:11px;color:#F09A7E;margin-top:8px;min-height:14px}
+.ok{font-family:var(--mono);font-size:11px;color:#A6C86A;margin-top:8px}
+.krow{border:1px solid var(--side-3);border-radius:8px;padding:12px;margin-bottom:10px;background:var(--side-2)}
+.krow .t{display:flex;justify-content:space-between;align-items:center;color:#F3EBD6;font-size:13px;font-weight:500}
+.krow .m{font-family:var(--mono);font-size:11px;color:var(--side-h);margin-top:4px}
+.krow .acts{display:flex;gap:6px;margin-top:8px}
+.mini{background:transparent;border:1px solid var(--side-3);color:var(--side-t);border-radius:5px;padding:4px 8px;font-family:var(--mono);font-size:10px;letter-spacing:.06em;cursor:pointer}
+.mini:hover{border-color:var(--side-h)}
+.tag{font-family:var(--mono);font-size:10px;padding:2px 6px;border-radius:4px;border:1px solid var(--side-3);color:var(--side-h)}
+.tag.own{border-color:var(--orange);color:var(--orange)}
+.status.off{color:#E7B25A}.status.off i{background:#E7B25A}
+.tabpane.log{padding:0;display:none;flex-direction:column;background:#120F0C}
+.tabpane.log.on{display:flex}
+.loghead{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;font-family:var(--mono);font-size:11px;letter-spacing:.08em;color:#A6C86A;border-bottom:1px solid var(--side-3);text-transform:uppercase}
+.loghead i{width:7px;height:7px;border-radius:50%;background:var(--green);display:inline-block;margin-right:8px;animation:pulse 1.6s infinite}
+@keyframes pulse{50%{opacity:.3}}
+#feed{flex:1;margin:0;padding:12px 14px;overflow:auto;font-family:var(--mono);font-size:11px;line-height:1.75;color:#A6C86A;white-space:pre;scrollbar-width:thin;scrollbar-color:var(--side-3) transparent}
+#feed .l{display:block;animation:fadein .35s ease}
+#feed .l:first-child{color:#E8E0C8}
+#feed .t{color:#7E7466}#feed .h{color:#F3EBD6}#feed .k{color:#D9522A}#feed .dim{color:#7E7466}
+@keyframes fadein{from{opacity:0;transform:translateX(-4px)}to{opacity:1;transform:none}}
+.cursor{padding:8px 14px 10px;font-family:var(--mono);font-size:11px;color:#A6C86A;border-top:1px solid var(--side-3)}
+.cursor b{font-weight:400;animation:blink 1s steps(1) infinite}
+@keyframes blink{50%{opacity:0}}
+.tool.missing .ic{background:var(--side-3);color:var(--side-h);border:1px dashed var(--side-h)}
+.tool.missing .nm{color:var(--side-t)}
+.tool.missing .go{color:#E7B25A}
+.tool.missing:hover{border-color:#E7B25A}
+@media (max-width:860px){.body{grid-template-columns:1fr}.win{height:auto}.glass{height:380px}h1{font-size:30px}.code{grid-template-columns:0 minmax(0,1fr)}.code .chat{display:none}}
+@media (prefers-reduced-motion: reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+<div class="stage">
+  <div class="eyebrow">Consus launcher · wireframe</div>
+  <h1>Click the tool. It opens set up.</h1>
+  <p class="lede">A small window on the desktop. Paste your key from portal.consus.io once. Then pick a tool and it opens already pointed at the Consus gateway. Swap keys per tool anytime.</p>
+
+  <div class="win">
+    <div class="chrome"><div class="lights"><i></i><i></i><i></i></div><span class="logo">C<span>O</span>NSUS</span><span style="margin-left:auto">LAUNCHER</span></div>
+    <div class="body">
+      <div class="glass">
+        <div class="hint">Your desktop</div>
+        <div class="empty" id="empty"><b>Connect, then pick a tool.</b><span>It opens here, configured for Consus. No setup.</span></div>
+
+        <div class="appwin" id="w-desktop">
+          <div class="apptop"><div class="lights"><i></i><i></i><i></i></div><span style="margin-left:6px">Claude</span></div>
+          <div class="banner"><i></i><span id="orgBanner">Company runs this on the Consus gateway. Cleared for ITAR and CUI work.</span></div>
+          <div style="flex:1;display:grid;grid-template-columns:150px minmax(0,1fr)">
+            <div style="background:#F3EFE6;border-right:1px solid #DDD6C6;padding:14px;font-size:12px;color:#5F564A;line-height:2">
+              <div style="font-weight:500;color:#1F1A16">Company AI</div><div>+ New chat</div><div>Projects</div><div>Recents</div>
+            </div>
+            <div style="display:flex;flex-direction:column;justify-content:center;padding:24px;gap:14px">
+              <div style="text-align:center;font-size:20px">What are you working on?</div>
+              <div class="prompt"><span>Summarize the RCS valve test plan</span><button class="send" data-send>Send</button></div>
+              <div style="display:flex;justify-content:center;gap:6px"><span class="chip">claude-sonnet-5:itar</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="appwin" id="w-code">
+          <div class="apptop"><div class="lights"><i></i><i></i><i></i></div><span style="margin-left:6px">Terminal · claude</span></div>
+          <div class="term">
+            <div><span class="o">✻</span> Claude Code</div>
+            <div class="m">  endpoint  api.consus.ai (managed)</div>
+            <div class="m">  model     claude-sonnet-5:itar</div>
+            <br>
+            <div><span class="g">&gt;</span> explain the thermal model in sim/thermal.py</div>
+            <div class="m" id="codeOut">  Ready.</div>
+            <br>
+            <button class="send" data-send style="background:#D9522A">Run</button>
+          </div>
+        </div>
+
+        <div class="appwin" id="w-vscode">
+          <div class="apptop"><div class="lights"><i></i><i></i><i></i></div><span style="margin-left:6px">VS Code · gnc-sim</span></div>
+          <div class="code">
+            <div class="rail"></div>
+            <div class="ed">def attitude_error(q, q_ref):<br>&nbsp;&nbsp;&nbsp;&nbsp;q_err = quat_mult(q_ref.conj(), q)<br>&nbsp;&nbsp;&nbsp;&nbsp;return 2 * q_err.vec<br><br>def pd_torque(err, rate, kp, kd):<br>&nbsp;&nbsp;&nbsp;&nbsp;return -kp * err - kd * rate</div>
+            <div class="chat"><div style="color:#5F564A">Chat · Consus</div><span class="chip" style="align-self:flex-start">gpt-5.6-terra:cui</span><div class="prompt" style="font-size:12px;padding:8px 10px"><span>Add a saturation limit</span><button class="send" data-send style="padding:5px 10px">Ask</button></div></div>
+          </div>
+        </div>
+        <div class="appwin" id="w-chatgpt">
+          <div class="apptop"><div class="lights"><i></i><i></i><i></i></div><span style="margin-left:6px">ChatGPT</span></div>
+          <div class="banner"><i></i><span>Company runs this on the Consus gateway. Cleared for ITAR and CUI work.</span></div>
+          <div style="flex:1;display:flex;flex-direction:column;justify-content:center;padding:24px 48px;gap:14px">
+            <div style="text-align:center;font-size:20px">What can I help with?</div>
+            <div class="prompt" style="border-radius:24px"><span>Draft a test readiness memo</span><button class="send" data-send style="border-radius:16px">Send</button></div>
+            <div style="display:flex;justify-content:center"><span class="chip">gpt-5.6-terra:itar</span></div>
+          </div>
+        </div>
+
+      </div>
+
+      <aside class="panel">
+        <div class="org"><b id="orgName">Company</b><span class="status off" id="status"><i></i><span id="statusT">NOT CONNECTED</span></span></div>
+
+        <div class="connect" id="connect">
+          <h2>Connect to Consus</h2>
+          <p>One time. After this, every tool is one click.</p>
+          <div class="cs"><div class="cn" id="c1">1</div><div><b>Open the portal</b><span>Sign in the way you normally do.</span><br><button class="link" id="openPortal">Open portal.consus.io ↗</button></div></div>
+          <div class="cs"><div class="cn" id="c2">2</div><div><b>Create a key</b><span>Key management, Create key. Name it after this machine. Copy it.</span></div></div>
+          <div class="cs"><div class="cn" id="c3">3</div><div><b>Paste it here</b><span>Goes in your system keychain. Never shown again.</span>
+            <input class="keyin" id="keyIn" type="password" placeholder="csk_live_…" autocomplete="off" spellcheck="false" aria-label="Consus API key">
+            <button class="cta" id="connectBtn">CONNECT</button>
+            <div class="err" id="keyErr" role="alert"></div></div></div>
+        </div>
+
+        <div id="main" style="display:none;flex:1;min-height:0;flex-direction:column">
+        <div class="tabs" role="tablist"><button class="on" data-tab="open" role="tab" aria-selected="true">Open</button><button data-tab="keys" role="tab" aria-selected="false">Keys</button><button data-tab="traffic" role="tab" aria-selected="false">Log <span id="tcount"></span></button></div>
+
+        <div class="tabpane on" id="p-open">
+          <p class="h">Open with the right setup</p>
+          <button class="tool" data-app="desktop"><span class="ic">C</span><span><div class="nm">Claude Desktop</div><div class="sb" data-sb="desktop">Chat, docs, analysis</div></span><span class="go">OPEN</span></button>
+          <button class="tool" data-app="chatgpt"><span class="ic">G</span><span><div class="nm">ChatGPT</div><div class="sb" data-sb="chatgpt">Chat, docs, analysis</div></span><span class="go">OPEN</span></button>
+          <button class="tool" data-app="code"><span class="ic">&gt;_</span><span><div class="nm">Claude Code</div><div class="sb" data-sb="code">Terminal agent</div></span><span class="go">OPEN</span></button>
+          <button class="tool missing" data-app="vscode" data-missing="1"><span class="ic">{ }</span><span><div class="nm">VS Code</div><div class="sb" data-sb="vscode">Not installed · get it from code.visualstudio.com</div></span><span class="go">GET IT ↗</span></button>
+          <p class="note" id="whoNote"></p>
+        </div>
+
+        <div class="tabpane" id="p-keys">
+          <p class="h">Default key</p>
+          <div class="krow" id="defRow"></div>
+          <p class="note">Every tool uses this key. It lives in your system keychain. Revoke it in the portal and it stops everywhere.</p>
+          <button class="mini" id="adv" style="margin:12px 0 0" aria-expanded="false">ADVANCED: ONE KEY PER TOOL</button>
+          <div id="advBox" style="display:none;margin-top:12px"><div id="toolKeys"></div></div>
+          <button class="mini" id="signOut" style="margin-top:18px;opacity:.7">SIGN OUT AND REMOVE KEYS</button>
+        </div>
+
+        <div class="tabpane log" id="p-traffic">
+          <div class="loghead"><span><i></i><span id="nDest">0</span> destination<span id="pl">s</span></span><span id="rate">idle</span></div>
+          <pre id="feed" aria-live="polite" aria-label="Request log"><span class="dim">// waiting for the first request</span>
+</pre>
+          <div class="cursor"><span class="dim">consus &gt;</span> <b>_</b></div>
+        </div>
+        </div>
+
+        <div class="foot">Log is metadata only: where, when, how big. Content is never read or stored on this machine.</div>
+      </aside>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  var cur=null,rows=[],hosts={};
+  var M={desktop:['Claude Desktop','claude-sonnet-5:itar'],chatgpt:['ChatGPT','gpt-5.6-terra:itar'],code:['Claude Code','claude-sonnet-5:itar'],vscode:['VS Code','gpt-5.6-terra:cui']};
+  var K={def:null,tool:{}};
+  function $(id){return document.getElementById(id)}
+  function esc(x){return String(x).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})}
+  function ts(){return new Date().toTimeString().slice(0,8)}
+  function mask(k){return 'csk_…'+k.slice(-4)}
+  function validate(k){k=(k||'').trim();if(!k)return'Paste a key first.';if(k.indexOf('csk_')!==0)return"That doesn't look like a Consus key. They start with csk_.";if(k.length<16)return'That key looks cut off. Copy it again from the portal.';return null}
+  function info(k){return{key:k,mask:mask(k),user:'eric@company.com',models:6,added:new Date().toLocaleDateString()}}
+
+  function setConnected(on){
+    $('connect').style.display=on?'none':'block';$('main').style.display=on?'flex':'none';
+    $('status').classList.toggle('off',!on);$('statusT').textContent=on?'CONNECTED':'NOT CONNECTED';
+    if(on){$('empty').querySelector('b').textContent='Pick a tool.';$('empty').querySelector('span').textContent='It opens here, set up for Consus.';$('whoNote').textContent='Signed in as '+K.def.user+'. Every tool here uses Consus. Anything not installed links to the vendor; Consus never installs software.';renderKeys()}
+    else{$('keyIn').value='';$('keyErr').textContent='';['c1','c2','c3'].forEach(function(c){$(c).className='cn'});$('c1').textContent='1';$('c2').textContent='2';$('c3').textContent='3'}
+  }
+  function keyFor(a){return K.tool[a]||K.def}
+  function renderKeys(){
+    $('defRow').innerHTML='<div class="t"><span>'+K.def.mask+'</span><span class="tag own">DEFAULT</span></div><div class="m">'+esc(K.def.user)+' · '+K.def.models+' models · added '+K.def.added+'</div><div class="acts"><button class="mini" data-change="def">REPLACE</button></div><div id="edit-def"></div>';
+    $('toolKeys').innerHTML=Object.keys(M).map(function(a){var own=!!K.tool[a],k=keyFor(a);return '<div class="krow"><div class="t"><span>'+M[a][0]+'</span><span class="tag'+(own?' own':'')+'">'+(own?'OWN KEY':'DEFAULT')+'</span></div><div class="m">'+k.mask+'</div><div class="acts"><button class="mini" data-change="'+a+'">'+(own?'REPLACE':'USE A DIFFERENT KEY')+'</button>'+(own?'<button class="mini" data-reset="'+a+'">USE DEFAULT</button>':'')+'</div><div id="edit-'+a+'"></div></div>'}).join('');
+  }
+  function editor(slot){
+    var box=$('edit-'+slot);if(box.innerHTML){box.innerHTML='';return}
+    box.innerHTML='<input class="keyin" type="password" placeholder="Paste a key from portal.consus.io" id="in-'+slot+'" aria-label="New key"><div style="display:flex;gap:6px;margin-top:8px"><button class="mini" data-save="'+slot+'" style="border-color:var(--orange);color:#F3EBD6">SAVE</button><button class="mini" data-cancel="'+slot+'">CANCEL</button><button class="mini" data-portal="1">OPEN PORTAL ↗</button></div><div class="err" id="err-'+slot+'" role="alert"></div>';
+    $('in-'+slot).focus();
+  }
+
+  function pad(x,n){x=String(x);while(x.length<n)x+=' ';return x}
+  function render(){
+    var n=Object.keys(hosts).length;$('nDest').textContent=n;$('pl').textContent=n===1?'':'s';
+    $('tcount').textContent=rows.length?'· '+rows.length:'';
+    if(!rows.length)return;
+    $('feed').innerHTML=rows.slice(0,60).map(function(r){return '<span class="l"><span class="t">'+r.t+'</span>  <span class="h">'+pad(r.host,16)+'</span> '+pad(r.kb+' kB',7)+' '+pad(r.app,15)+' '+pad(r.m,22)+' <span class="k">'+r.k+'</span>  '+r.ms+' ms</span>'}).join('');
+    $('feed').scrollTop=0;
+  }
+  var timer=null;
+  function stream(){clearInterval(timer);if(!cur)return;timer=setInterval(function(){if(Math.random()<.55)req()},1800)}
+  var last={};function ago(a){if(!last[a])return null;var m=Math.round((Date.now()-last[a])/60000);return m<1?'just now':m+' min ago'}
+  function subs(){Object.keys(M).forEach(function(a){var el=document.querySelector('[data-sb="'+a+'"]');if(!el||el.closest('.tool').dataset.missing)return;var t=ago(a);el.textContent=t?'Last used '+t:el.dataset.d})}
+  function req(){if(!cur)return;last[cur]=Date.now();subs();hosts['api.consus.ai']=1;rows.unshift({t:ts(),host:'api.consus.ai',kb:Math.round(Math.random()*38+3),app:M[cur][0],m:M[cur][1],k:keyFor(cur).mask,ms:Math.round(Math.random()*900+300)});$('rate').textContent='live';render()}
+
+  $('openPortal').addEventListener('click',function(){$('c1').className='cn done';$('c1').textContent='✓';$('c2').className='cn done';$('c2').textContent='✓';$('keyIn').focus()});
+  $('keyIn').addEventListener('input',function(){$('keyErr').textContent=''});
+  $('connectBtn').addEventListener('click',function(){
+    var v=$('keyIn').value,e=validate(v);if(e){$('keyErr').textContent=e;return}
+    $('connectBtn').textContent='CHECKING…';
+    setTimeout(function(){$('connectBtn').textContent='CONNECT';K.def=info(v.trim());setConnected(true)},600);
+  });
+  $('keyIn').addEventListener('keydown',function(e){if(e.key==='Enter')$('connectBtn').click()});
+
+  $('p-keys').addEventListener('click',function(e){
+    var t=e.target;
+    if(t.dataset.change){editor(t.dataset.change);return}
+    if(t.dataset.cancel){$('edit-'+t.dataset.cancel).innerHTML='';return}
+    if(t.dataset.portal){return}
+    if(t.id==='adv'){var b=$('advBox'),o=b.style.display==='none';b.style.display=o?'block':'none';t.setAttribute('aria-expanded',o?'true':'false');t.textContent=o?'HIDE PER-TOOL KEYS':'ADVANCED: ONE KEY PER TOOL';return}
+    if(t.dataset.reset){delete K.tool[t.dataset.reset];renderKeys();return}
+    if(t.dataset.save){var slot=t.dataset.save,v=$('in-'+slot).value,er=validate(v);if(er){$('err-'+slot).textContent=er;return}
+      var k=info(v.trim());if(slot==='def')K.def=k;else K.tool[slot]=k;renderKeys();return}
+    if(t.id==='signOut'){K={def:null,tool:{}};cur=null;clearInterval(timer);$('rate').textContent='idle';document.querySelectorAll('.appwin').forEach(function(w){w.classList.remove('on');w.style.display=''});$('empty').style.display='';document.querySelectorAll('.tool').forEach(function(x){x.classList.remove('on');x.querySelector('.go').textContent='OPEN'});$('empty').querySelector('b').textContent='Connect, then pick a tool.';$('empty').querySelector('span').textContent='Paste your key on the right. One time.';setConnected(false)}
+  });
+  $('p-keys').addEventListener('input',function(e){var id=e.target.id||'';if(id.indexOf('in-')===0)$('err-'+id.slice(3)).textContent=''});
+
+  document.querySelectorAll('.tool').forEach(function(b){b.addEventListener('click',function(){
+    var a=b.dataset.app;
+    if(b.dataset.missing){b.querySelector('.go').textContent='OPENING…';b.querySelector('[data-sb]').textContent='Download opened in your browser. Install it, then come back.';setTimeout(function(){delete b.dataset.missing;b.classList.remove('missing');b.querySelector('.go').textContent='OPEN';var sb=b.querySelector('[data-sb]');sb.textContent='Installed. Config written.';sb.dataset.d='Editor chat';setTimeout(subs,2500)},3500);return}
+    document.querySelectorAll('.tool').forEach(function(x){x.classList.remove('on');x.querySelector('.go').textContent='OPEN'});
+    b.classList.add('on');b.querySelector('.go').textContent='RUNNING';cur=a;
+    $('empty').style.display='none';
+    document.querySelectorAll('.appwin').forEach(function(w){w.classList.remove('on');w.style.display=''});
+    var w=$('w-'+a);w.style.display='flex';requestAnimationFrame(function(){w.classList.add('on')});
+    req();stream();
+  })});
+  document.querySelectorAll('[data-send]').forEach(function(b){b.addEventListener('click',function(){req();setTimeout(req,450);if(cur==='code')$('codeOut').textContent='  Reading sim/thermal.py … explaining lumped-mass model'})});
+  document.querySelectorAll('.tabs button').forEach(function(b){b.addEventListener('click',function(){
+    document.querySelectorAll('.tabs button').forEach(function(x){x.classList.toggle('on',x===b);x.setAttribute('aria-selected',x===b?'true':'false')});
+    ['open','keys','traffic'].forEach(function(n){$('p-'+n).classList.toggle('on',b.dataset.tab===n)});
+  })});
+  document.querySelectorAll('[data-sb]').forEach(function(el){if(!el.closest('.tool').dataset.missing)el.dataset.d=el.textContent});setInterval(subs,30000);
+})();
+</script>
+</body>
+</html>
