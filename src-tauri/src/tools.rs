@@ -1,9 +1,11 @@
 // Detect, launch, and place tools. macOS only for now; other targets compile
 // and report nothing installed.
 
-use serde::Deserialize;
+use base64::Engine as _;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Mutex;
@@ -80,13 +82,70 @@ fn app_path(app: &AppHandle, s: &Spec) -> Option<PathBuf> {
     user.exists().then_some(user)
 }
 
+/// The app's own icon as a PNG data URL, converted once from the bundle's
+/// .icns and cached. None on other platforms or if anything is missing.
+fn app_icon(app: &AppHandle, s: &Spec, bundle_dir: &Path) -> Option<String> {
+    let plist = bundle_dir.join("Contents/Info.plist");
+    let out = Command::new("defaults")
+        .arg("read")
+        .arg(&plist)
+        .arg("CFBundleIconFile")
+        .output()
+        .ok()?;
+    let mut name = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if name.is_empty() {
+        return None;
+    }
+    if !name.ends_with(".icns") {
+        name.push_str(".icns");
+    }
+    let icns = bundle_dir.join("Contents/Resources").join(name);
+    let png = app
+        .path()
+        .app_cache_dir()
+        .ok()?
+        .join("icons")
+        .join(format!("{}.png", s.key));
+
+    let stale = match (fs::metadata(&png), fs::metadata(&icns)) {
+        (Ok(p), Ok(i)) => p.modified().ok() < i.modified().ok(),
+        _ => true,
+    };
+    if stale {
+        fs::create_dir_all(png.parent()?).ok()?;
+        let ok = Command::new("sips")
+            .args(["-s", "format", "png", "-Z", "128"])
+            .arg(&icns)
+            .arg("--out")
+            .arg(&png)
+            .output()
+            .ok()?
+            .status
+            .success();
+        if !ok {
+            return None;
+        }
+    }
+    let bytes = fs::read(&png).ok()?;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(bytes);
+    Some(format!("data:image/png;base64,{b64}"))
+}
+
+#[derive(Serialize)]
+pub struct ToolStatus {
+    pub installed: bool,
+    pub icon: Option<String>,
+}
+
 #[tauri::command]
-pub fn detect_tools(app: AppHandle) -> HashMap<String, bool> {
+pub fn detect_tools(app: AppHandle) -> HashMap<String, ToolStatus> {
     TOOLS
         .into_iter()
         .map(|t| {
             let s = spec(t);
-            (s.key.to_string(), cfg!(target_os = "macos") && app_path(&app, &s).is_some())
+            let dir = if cfg!(target_os = "macos") { app_path(&app, &s) } else { None };
+            let icon = dir.as_deref().and_then(|d| app_icon(&app, &s, d));
+            (s.key.to_string(), ToolStatus { installed: dir.is_some(), icon })
         })
         .collect()
 }

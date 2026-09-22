@@ -59,6 +59,8 @@ body{display:flex}
 .tool:hover{border-color:var(--side-h)}
 .tool.on{border-color:var(--orange)}
 .tool .ic{width:36px;height:36px;border-radius:8px;background:#F3EBD6;color:#1F1A16;display:flex;align-items:center;justify-content:center;font-family:var(--display);font-weight:700;font-size:15px}
+.tool .ic.real{background:transparent}
+.tool .ic img{width:100%;height:100%;display:block;object-fit:contain}
 .tool .nm{font-weight:400;font-size:14px;line-height:1.2}
 .tool .sb{font-size:12px;color:var(--side-h)}
 .tool .go{font-family:var(--mono);font-size:10px;letter-spacing:.1em;color:var(--side-h)}
