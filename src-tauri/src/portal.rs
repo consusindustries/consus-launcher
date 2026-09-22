@@ -22,6 +22,7 @@ pub enum ConnectError {
 pub async fn validate_key(key: String) -> Result<ConnectResult, ConnectError> {
     let client = reqwest::Client::builder()
         .user_agent(USER_AGENT)
+        .timeout(std::time::Duration::from_secs(15))
         .build()
         .map_err(|e| ConnectError::Network { message: e.to_string() })?;
 

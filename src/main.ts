@@ -83,10 +83,14 @@ function validate(k: string): string | null {
 
 const REVOKED_MESSAGE = "This key was revoked. Paste a new one from the portal.";
 
-function connectErrorMessage(err: ConnectError): string {
-  if (err.kind === "Network") return "Could not reach the portal. Check your connection.";
+// Portal commands reject with a ConnectError object; keychain commands reject with a string.
+function connectErrorMessage(err: unknown): string {
+  if (typeof err === "string") return "The portal accepted the key, but it could not be saved to your keychain.";
+  if ((err as ConnectError).kind === "Network") return "Could not reach the portal. Check your connection.";
   return "That key was not accepted by the portal.";
 }
+
+let userConnected = false;
 
 function keyInfoFromResult(rawKey: string, result: ConnectResult): KeyInfo {
   return {
@@ -298,15 +302,19 @@ function wireConnect(): void {
     const rawKey = v.trim();
     $("connectBtn").textContent = "CHECKING…";
     (async () => {
+      const btn = $<HTMLButtonElement>("connectBtn");
+      btn.disabled = true;
+      userConnected = true;
       try {
         const result = await invoke<ConnectResult>("validate_key", { key: rawKey });
         await invoke("keychain_set_key", { key: rawKey });
         K.def = keyInfoFromResult(rawKey, result);
         setConnected(true);
       } catch (err) {
-        $("keyErr").textContent = connectErrorMessage(err as ConnectError);
+        $("keyErr").textContent = connectErrorMessage(err);
       } finally {
-        $("connectBtn").textContent = "CONNECT";
+        btn.disabled = false;
+        btn.textContent = "CONNECT";
       }
     })();
   });
@@ -360,13 +368,15 @@ function wireKeysTab(): void {
       const btn = t as HTMLButtonElement;
       btn.textContent = "SAVING…";
       (async () => {
+        btn.disabled = true;
         try {
           const result = await invoke<ConnectResult>("validate_key", { key: rawKey });
           await invoke("keychain_set_key", { key: rawKey });
           K.def = keyInfoFromResult(rawKey, result);
-          renderKeys();
+          setConnected(true);
         } catch (err) {
-          $("err-" + slot).textContent = connectErrorMessage(err as ConnectError);
+          $("err-" + slot).textContent = connectErrorMessage(err);
+          btn.disabled = false;
           btn.textContent = "SAVE";
         }
       })();
@@ -443,19 +453,29 @@ function wireTabs(): void {
 
 async function restoreSession(): Promise<void> {
   const storedKey = await invoke<string | null>("keychain_get_key");
-  if (!storedKey) return;
+  if (!storedKey || userConnected) return;
+  let result: ConnectResult;
   try {
-    const result = await invoke<ConnectResult>("validate_key", { key: storedKey });
-    K.def = keyInfoFromResult(storedKey, result);
-    setConnected(true);
+    result = await invoke<ConnectResult>("validate_key", { key: storedKey });
   } catch (err) {
+    // If the user connected with a new key while this was in flight, the
+    // stored key is no longer the one we validated, so leave it alone.
+    if (userConnected) return;
     if ((err as ConnectError).kind === "Revoked") {
-      await invoke("keychain_delete_key");
+      try {
+        await invoke("keychain_delete_key");
+      } catch {
+        // the next successful connect overwrites it anyway
+      }
       $("keyErr").textContent = REVOKED_MESSAGE;
     }
     // Network/Rejected failures at startup: leave the stored key alone and
     // stay on first-run rather than guess at a transient-vs-permanent error.
+    return;
   }
+  if (userConnected) return;
+  K.def = keyInfoFromResult(storedKey, result);
+  setConnected(true);
 }
 
 function init(): void {
