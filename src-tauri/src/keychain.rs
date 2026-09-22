@@ -27,3 +27,18 @@ pub fn keychain_delete_key() -> Result<(), String> {
         Err(e) => Err(e.to_string()),
     }
 }
+
+/// Credential-helper mode: print the key for a tool that asked for it.
+/// Returns the process exit code.
+pub fn print_helper_json() -> i32 {
+    match entry().and_then(|e| e.get_password().map_err(|e| e.to_string())) {
+        Ok(k) if !k.is_empty() => {
+            println!("{}", serde_json::json!({ "token": k, "headers": { "x-api-key": k } }));
+            0
+        }
+        _ => {
+            eprintln!("No Consus key in the keychain");
+            1
+        }
+    }
+}

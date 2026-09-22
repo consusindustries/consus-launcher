@@ -2,7 +2,7 @@
 // and report nothing installed.
 
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::Path;
 use std::process::Command;
@@ -17,8 +17,11 @@ const CLAUDE_APP: &str = "/Applications/Claude.app";
 const CLAUDE_BIN: &str = "/Applications/Claude.app/Contents/MacOS/Claude";
 const CLAUDE_BUNDLE: &str = "com.anthropic.claudefordesktop";
 const CLAUDE_PROCESS: &str = "Claude";
+/// Claude Desktop runs the launcher binary under this name to fetch the key.
+pub const HELPER_NAME: &str = "claude-key-helper";
+const PLACE_HELP: &str = "Claude opened but could not be placed in the launcher. Allow Consus Launcher under System Settings, Privacy and Security, Accessibility.";
 
-/// PIDs of apps this launcher started. Terminated when the launcher exits.
+/// PIDs of apps this launcher started. Quit when the launcher exits.
 pub struct Children(pub Mutex<Vec<u32>>);
 
 #[derive(Deserialize)]
@@ -70,34 +73,73 @@ fn running_pids() -> Vec<u32> {
         .unwrap_or_default()
 }
 
-fn quit_and_wait() {
+fn alive(pid: u32) -> bool {
+    Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+fn ask_claude_to_quit() {
     let _ = osascript(&format!("tell application id \"{CLAUDE_BUNDLE}\" to quit"));
+}
+
+fn quit_and_wait() -> Result<(), String> {
+    ask_claude_to_quit();
     for _ in 0..40 {
         if running_pids().is_empty() {
-            return;
+            return Ok(());
         }
         thread::sleep(Duration::from_millis(200));
     }
+    Err("Claude Desktop is still running. Close it and try again.".into())
 }
 
-fn place_window(rect: &Rect) {
+fn place_window(rect: &Rect) -> Result<(), String> {
     let (x, y, w, h) = (rect.x.round(), rect.y.round(), rect.w.round(), rect.h.round());
+    let probe = format!(
+        "tell application \"System Events\" to (exists window 1 of process \"{CLAUDE_PROCESS}\")"
+    );
+    let mut seen = false;
     for _ in 0..60 {
-        let exists = osascript(&format!(
-            "tell application \"System Events\" to (exists window 1 of process \"{CLAUDE_PROCESS}\")"
-        ));
-        if exists.as_deref() == Ok("true") {
-            break;
+        match osascript(&probe) {
+            Ok(s) if s == "true" => {
+                seen = true;
+                break;
+            }
+            Err(e) if e.contains("assistive access") => return Err(e),
+            _ => thread::sleep(Duration::from_millis(250)),
         }
-        thread::sleep(Duration::from_millis(250));
     }
-    let _ = osascript(&format!(
+    if !seen {
+        return Err("Claude did not open a window in time.".into());
+    }
+    osascript(&format!(
         "tell application \"System Events\" to tell process \"{CLAUDE_PROCESS}\"\n\
            set position of window 1 to {{{x}, {y}}}\n\
            set size of window 1 to {{{w}, {h}}}\n\
          end tell"
-    ));
+    ))?;
     let _ = osascript(&format!("tell application id \"{CLAUDE_BUNDLE}\" to activate"));
+    Ok(())
+}
+
+fn notice(app: &AppHandle, err: &str) {
+    let message = if err.contains("assistive access") {
+        PLACE_HELP.to_string()
+    } else {
+        format!("Claude opened but could not be placed: {err}")
+    };
+    let _ = app.emit("tool-notice", json!({ "tool": "desktop", "message": message }));
+}
+
+/// While a tool is running the launcher is a backdrop: the tool's window
+/// stays above it and takes clicks, and the launcher panel still works.
+fn set_backdrop(app: &AppHandle, on: bool) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.set_always_on_bottom(on);
+    }
 }
 
 #[tauri::command]
@@ -110,29 +152,38 @@ pub async fn launch_claude_desktop(app: AppHandle, rect: Rect, models: Value) ->
         .path()
         .app_config_dir()
         .map_err(|e| e.to_string())?
-        .join("claude-key-helper");
+        .join(HELPER_NAME);
     config::write_helper(&helper)?;
     config::write_claude_desktop(&home, &helper, &models)?;
 
     let ours = app.state::<Children>().0.lock().unwrap().clone();
     let running = running_pids();
-    if !running.is_empty() && running.iter().any(|p| ours.contains(p)) {
-        place_window(&rect);
+    if running.iter().any(|p| ours.contains(p)) {
+        let handle = app.clone();
+        thread::spawn(move || {
+            if let Err(e) = place_window(&rect) {
+                notice(&handle, &e);
+            }
+        });
         return Ok(());
     }
     if !running.is_empty() {
-        quit_and_wait();
+        quit_and_wait()?;
     }
 
     let mut child = Command::new(CLAUDE_BIN).spawn().map_err(|e| e.to_string())?;
     let pid = child.id();
     app.state::<Children>().0.lock().unwrap().push(pid);
+    set_backdrop(&app, true);
 
     let handle = app.clone();
     thread::spawn(move || {
-        place_window(&rect);
+        if let Err(e) = place_window(&rect) {
+            notice(&handle, &e);
+        }
         let _ = child.wait();
         handle.state::<Children>().0.lock().unwrap().retain(|p| *p != pid);
+        set_backdrop(&handle, false);
         let _ = handle.emit("tool-exited", "desktop");
     });
     Ok(())
@@ -144,10 +195,29 @@ pub fn remove_claude_desktop_config(app: AppHandle) -> Result<(), String> {
     config::remove_claude_desktop(&home)
 }
 
-/// Called on launcher exit: the apps it started go with it.
+/// On launcher exit the apps it started are asked to quit, then killed if
+/// they ignore that. Apps the user opened themselves are left alone.
 pub fn terminate_children(app: &AppHandle) {
-    let pids = app.state::<Children>().0.lock().unwrap().clone();
-    for pid in pids {
+    let ours: Vec<u32> = app
+        .state::<Children>()
+        .0
+        .lock()
+        .unwrap()
+        .iter()
+        .copied()
+        .filter(|p| alive(*p))
+        .collect();
+    if ours.is_empty() {
+        return;
+    }
+    ask_claude_to_quit();
+    for _ in 0..15 {
+        if !ours.iter().any(|p| alive(*p)) {
+            return;
+        }
+        thread::sleep(Duration::from_millis(200));
+    }
+    for pid in ours {
         let _ = Command::new("kill").arg(pid.to_string()).status();
     }
 }
