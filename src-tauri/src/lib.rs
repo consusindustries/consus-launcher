@@ -1,6 +1,7 @@
 mod chatgpt;
 mod config;
 mod keychain;
+mod models;
 mod portal;
 mod tools;
 

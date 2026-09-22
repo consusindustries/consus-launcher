@@ -4,7 +4,7 @@
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Mutex;
 use std::thread;
@@ -28,8 +28,8 @@ const TOOLS: [Tool; 2] = [Tool::Desktop, Tool::ChatGpt];
 struct Spec {
     key: &'static str,
     name: &'static str,
-    app: &'static str,
-    bin: &'static str,
+    app_name: &'static str,
+    exec: &'static str,
     bundle: &'static str,
     process: &'static str,
 }
@@ -39,16 +39,16 @@ fn spec(t: Tool) -> Spec {
         Tool::Desktop => Spec {
             key: "desktop",
             name: "Claude",
-            app: "/Applications/Claude.app",
-            bin: "/Applications/Claude.app/Contents/MacOS/Claude",
+            app_name: "Claude.app",
+            exec: "Claude",
             bundle: "com.anthropic.claudefordesktop",
             process: "Claude",
         },
         Tool::ChatGpt => Spec {
             key: "chatgpt",
             name: "ChatGPT",
-            app: "/Applications/ChatGPT.app",
-            bin: "/Applications/ChatGPT.app/Contents/MacOS/ChatGPT",
+            app_name: "ChatGPT.app",
+            exec: "ChatGPT",
             bundle: "com.openai.codex",
             process: "ChatGPT",
         },
@@ -70,15 +70,14 @@ pub struct Rect {
     pub h: f64,
 }
 
-fn installed(app: &AppHandle, s: &Spec) -> bool {
-    if Path::new(s.app).exists() {
-        return true;
+/// The app bundle, system-wide or per-user, whichever exists.
+fn app_path(app: &AppHandle, s: &Spec) -> Option<PathBuf> {
+    let system = Path::new("/Applications").join(s.app_name);
+    if system.exists() {
+        return Some(system);
     }
-    let name = Path::new(s.app).file_name().unwrap_or_default();
-    app.path()
-        .home_dir()
-        .map(|h| h.join("Applications").join(name).exists())
-        .unwrap_or(false)
+    let user = app.path().home_dir().ok()?.join("Applications").join(s.app_name);
+    user.exists().then_some(user)
 }
 
 #[tauri::command]
@@ -87,7 +86,7 @@ pub fn detect_tools(app: AppHandle) -> HashMap<String, bool> {
         .into_iter()
         .map(|t| {
             let s = spec(t);
-            (s.key.to_string(), cfg!(target_os = "macos") && installed(&app, &s))
+            (s.key.to_string(), cfg!(target_os = "macos") && app_path(&app, &s).is_some())
         })
         .collect()
 }
@@ -192,6 +191,12 @@ fn set_backdrop(app: &AppHandle, on: bool) {
     }
 }
 
+fn our_pids(app: &AppHandle, t: Tool) -> Vec<u32> {
+    let children = app.state::<Children>();
+    let guard = children.0.lock().unwrap();
+    guard.iter().filter(|(x, _)| *x == t).map(|(_, p)| *p).collect()
+}
+
 #[tauri::command]
 pub async fn launch_tool(app: AppHandle, tool: String, rect: Rect, models: Value) -> Result<(), String> {
     let t = tool_from_key(&tool).ok_or_else(|| format!("unknown tool {tool}"))?;
@@ -199,10 +204,29 @@ pub async fn launch_tool(app: AppHandle, tool: String, rect: Rect, models: Value
         return Err("Tool launch is macOS only for now".into());
     }
     let s = spec(t);
+    let bundle_dir = app_path(&app, &s).ok_or_else(|| format!("{} is not installed.", s.name))?;
+    let bin = bundle_dir.join("Contents/MacOS").join(s.exec);
     let home = app.path().home_dir().map_err(|e| e.to_string())?;
 
-    // Configure. The key reaches each app the way its config format allows
-    // without ever being written to a file.
+    // Already ours: bring it back into the glass, touch nothing else.
+    let ours = our_pids(&app, t);
+    let running = running_pids(s.process);
+    if running.iter().any(|p| ours.contains(p)) {
+        let handle = app.clone();
+        thread::spawn(move || {
+            if let Err(e) = place_window(&s, &rect) {
+                notice(&handle, &s, &e);
+            }
+        });
+        return Ok(());
+    }
+    if !running.is_empty() {
+        quit_and_wait(&s)?;
+    }
+
+    // Configure only once the app is not running: these apps rewrite their
+    // config on the way out. The key reaches each app the way its format
+    // allows without ever being written to a file.
     let mut env: Option<(&str, String)> = None;
     match t {
         Tool::Desktop => {
@@ -221,34 +245,11 @@ pub async fn launch_tool(app: AppHandle, tool: String, rect: Rect, models: Value
         }
     }
 
-    let ours: Vec<u32> = app
-        .state::<Children>()
-        .0
-        .lock()
-        .unwrap()
-        .iter()
-        .filter(|(x, _)| *x == t)
-        .map(|(_, p)| *p)
-        .collect();
-    let running = running_pids(s.process);
-    if running.iter().any(|p| ours.contains(p)) {
-        let handle = app.clone();
-        thread::spawn(move || {
-            if let Err(e) = place_window(&s, &rect) {
-                notice(&handle, &s, &e);
-            }
-        });
-        return Ok(());
-    }
-    if !running.is_empty() {
-        quit_and_wait(&s)?;
-    }
-
-    let mut cmd = Command::new(s.bin);
+    let mut cmd = Command::new(&bin);
     if let Some((k, v)) = env {
         cmd.env(k, v);
     }
-    let mut child = cmd.spawn().map_err(|e| e.to_string())?;
+    let mut child = cmd.spawn().map_err(|e| format!("{}: {e}", bin.display()))?;
     let pid = child.id();
     app.state::<Children>().0.lock().unwrap().push((t, pid));
     set_backdrop(&app, true);
@@ -277,7 +278,7 @@ pub async fn launch_tool(app: AppHandle, tool: String, rect: Rect, models: Value
 pub fn remove_tool_configs(app: AppHandle) -> Result<(), String> {
     let home = app.path().home_dir().map_err(|e| e.to_string())?;
     let claude = config::remove_claude_desktop(&home);
-    let chatgpt = chatgpt::restore(&home);
+    let chatgpt = chatgpt::remove_config(&home);
     claude.and(chatgpt)
 }
 

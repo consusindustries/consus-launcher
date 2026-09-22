@@ -21,6 +21,8 @@ const NOT_INSTALLED: Record<RealTool, string> = {
   chatgpt: "Not installed · get it from openai.com",
 };
 const isRealTool = (k: string): k is RealTool => (REAL_TOOLS as string[]).includes(k);
+// Real tools the launcher has running right now; more than one can be up.
+const running = new Set<RealTool>();
 
 type ToolKey = "desktop" | "chatgpt" | "code" | "vscode";
 
@@ -452,9 +454,11 @@ async function glassRect(): Promise<{ x: number; y: number; w: number; h: number
 }
 
 function activateTile(b: HTMLButtonElement, key: ToolKey): void {
-  document.querySelectorAll<HTMLElement>(".tool").forEach((x) => {
+  document.querySelectorAll<HTMLButtonElement>(".tool").forEach((x) => {
     x.classList.remove("on");
-    x.querySelector(".go")!.textContent = "OPEN";
+    const k = x.dataset.app ?? "";
+    const stillRunning = isRealTool(k) && running.has(k);
+    if (x !== b && !stillRunning) x.querySelector(".go")!.textContent = "OPEN";
   });
   b.classList.add("on");
   b.querySelector(".go")!.textContent = "RUNNING";
@@ -475,6 +479,7 @@ async function launchTool(b: HTMLButtonElement, key: RealTool): Promise<void> {
   go.textContent = "OPENING…";
   try {
     await invoke("launch_tool", { tool: key, rect: await glassRect(), models: currentModels ?? [] });
+    running.add(key);
     activateTile(b, key);
     sb.textContent = SUBTITLE[key];
     sb.dataset.d = SUBTITLE[key];
@@ -585,13 +590,16 @@ function init(): void {
   wireTabs();
   void listen<string>("tool-exited", (e) => {
     if (!isRealTool(e.payload)) return;
+    running.delete(e.payload);
     const b = toolTile(e.payload);
     b.classList.remove("on");
     b.querySelector(".go")!.textContent = "OPEN";
     if (cur === e.payload) {
-      cur = null;
-      $("empty").style.display = "";
+      const next = [...running][0] ?? null;
+      cur = next;
+      if (next) toolTile(next).classList.add("on");
     }
+    if (running.size === 0) $("empty").style.display = "";
   });
   void listen<{ tool: string; message: string }>("tool-notice", (e) => {
     if (!isRealTool(e.payload.tool)) return;
