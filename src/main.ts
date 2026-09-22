@@ -1,8 +1,10 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { listen } from "@tauri-apps/api/event";
 
 const PORTAL_URL = "https://portal.consus.io";
+const DESKTOP_DOWNLOAD = "https://claude.ai/download";
 
 type ToolKey = "desktop" | "chatgpt" | "code" | "vscode";
 
@@ -91,8 +93,10 @@ function connectErrorMessage(err: unknown): string {
 }
 
 let userConnected = false;
+let currentModels: unknown = null;
 
 function keyInfoFromResult(rawKey: string, result: ConnectResult): KeyInfo {
+  currentModels = result.models;
   return {
     key: rawKey,
     mask: mask(rawKey),
@@ -117,6 +121,7 @@ function setConnected(on: boolean): void {
     $("whoNote").textContent =
       "Signed in as " + K.def.user + ". Every tool here uses Consus. Anything not installed links to the vendor; Consus never installs software.";
     renderKeys();
+    void refreshTools();
   } else {
     ($("keyIn") as HTMLInputElement).value = "";
     $("keyErr").textContent = "";
@@ -237,10 +242,12 @@ function req(): void {
 }
 
 async function resetAll(): Promise<void> {
-  try {
-    await invoke("keychain_delete_key");
-  } catch {
-    // best-effort; UI state still resets below
+  for (const cmd of ["keychain_delete_key", "remove_claude_desktop_config"]) {
+    try {
+      await invoke(cmd);
+    } catch {
+      // best-effort; UI state still resets below
+    }
   }
   K = { def: null, tool: {} };
   cur = null;
@@ -390,10 +397,78 @@ function wireKeysTab(): void {
   });
 }
 
+function desktopTile(): HTMLButtonElement {
+  return document.querySelector<HTMLButtonElement>('.tool[data-app="desktop"]')!;
+}
+
+async function refreshTools(): Promise<void> {
+  const installed = await invoke<Record<string, boolean>>("detect_tools");
+  const b = desktopTile();
+  const go = b.querySelector<HTMLElement>(".go")!;
+  const sb = b.querySelector<HTMLElement>("[data-sb]")!;
+  if (installed.desktop) {
+    delete b.dataset.missing;
+    b.classList.remove("missing");
+    if (go.textContent !== "RUNNING") go.textContent = "OPEN";
+    sb.textContent = sb.dataset.d ?? "Chat, docs, analysis";
+  } else {
+    b.dataset.missing = "1";
+    b.classList.add("missing");
+    go.textContent = "GET IT ↗";
+    sb.textContent = "Not installed · get it from claude.ai/download";
+  }
+}
+
+// The glass rect in screen points, where a launched app's window goes.
+async function glassRect(): Promise<{ x: number; y: number; w: number; h: number }> {
+  const win = getCurrentWindow();
+  const [pos, scale] = await Promise.all([win.outerPosition(), win.scaleFactor()]);
+  const r = $("glass").getBoundingClientRect();
+  const inset = 16;
+  return {
+    x: pos.x / scale + r.left + inset,
+    y: pos.y / scale + r.top + inset,
+    w: r.width - 2 * inset,
+    h: r.height - 2 * inset,
+  };
+}
+
+async function launchDesktop(b: HTMLButtonElement): Promise<void> {
+  const go = b.querySelector<HTMLElement>(".go")!;
+  go.textContent = "OPENING…";
+  try {
+    await invoke("launch_claude_desktop", { rect: await glassRect(), models: currentModels ?? [] });
+    document.querySelectorAll<HTMLElement>(".tool").forEach((x) => {
+      x.classList.remove("on");
+      if (x !== b) x.querySelector(".go")!.textContent = "OPEN";
+    });
+    b.classList.add("on");
+    go.textContent = "RUNNING";
+    cur = "desktop";
+    $("empty").style.display = "none";
+    document.querySelectorAll<HTMLElement>(".appwin").forEach((w) => {
+      w.classList.remove("on");
+      w.style.display = "";
+    });
+  } catch (err) {
+    go.textContent = "OPEN";
+    b.querySelector<HTMLElement>("[data-sb]")!.textContent = String(err);
+  }
+}
+
 function wireTools(): void {
   document.querySelectorAll<HTMLButtonElement>(".tool").forEach((b) => {
     b.addEventListener("click", () => {
       const a = b.dataset.app as ToolKey;
+      if (a === "desktop") {
+        if (b.dataset.missing) {
+          void openUrl(DESKTOP_DOWNLOAD);
+          b.querySelector("[data-sb]")!.textContent = "Download opened in your browser. Install it, then come back.";
+          return;
+        }
+        void launchDesktop(b);
+        return;
+      }
       if (b.dataset.missing) {
         b.querySelector(".go")!.textContent = "OPENING…";
         b.querySelector("[data-sb]")!.textContent = "Download opened in your browser. Install it, then come back.";
@@ -489,6 +564,19 @@ function init(): void {
   wireTools();
   wireSend();
   wireTabs();
+  void listen<string>("tool-exited", (e) => {
+    if (e.payload !== "desktop") return;
+    const b = desktopTile();
+    b.classList.remove("on");
+    b.querySelector(".go")!.textContent = "OPEN";
+    if (cur === "desktop") {
+      cur = null;
+      $("empty").style.display = "";
+    }
+  });
+  void getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+    if (focused && K.def) void refreshTools();
+  });
   void restoreSession();
 }
 
