@@ -433,10 +433,16 @@ async function refreshTools(): Promise<void> {
     const sb = b.querySelector<HTMLElement>("[data-sb]")!;
     const ic = b.querySelector<HTMLElement>(".ic")!;
     if (st.icon) {
-      const img = document.createElement("img");
-      img.src = st.icon;
-      img.alt = "";
-      ic.replaceChildren(img);
+      if (ic.querySelector("img")?.src !== st.icon) {
+        const img = document.createElement("img");
+        img.src = st.icon;
+        img.alt = "";
+        img.onerror = () => {
+          ic.classList.remove("real");
+          ic.textContent = ic.dataset.glyph ?? "";
+        };
+        ic.replaceChildren(img);
+      }
       ic.classList.add("real");
     } else {
       ic.classList.remove("real");

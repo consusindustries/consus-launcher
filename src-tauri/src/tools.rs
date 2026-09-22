@@ -8,9 +8,9 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::Mutex;
+use std::sync::{LazyLock, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::{chatgpt, config, keychain};
@@ -82,53 +82,77 @@ fn app_path(app: &AppHandle, s: &Spec) -> Option<PathBuf> {
     user.exists().then_some(user)
 }
 
-/// The app's own icon as a PNG data URL, converted once from the bundle's
-/// .icns and cached. None on other platforms or if anything is missing.
-fn app_icon(app: &AppHandle, s: &Spec, bundle_dir: &Path) -> Option<String> {
-    let plist = bundle_dir.join("Contents/Info.plist");
-    let out = Command::new("defaults")
-        .arg("read")
-        .arg(&plist)
-        .arg("CFBundleIconFile")
-        .output()
-        .ok()?;
-    let mut name = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if name.is_empty() {
-        return None;
-    }
-    if !name.ends_with(".icns") {
-        name.push_str(".icns");
-    }
-    let icns = bundle_dir.join("Contents/Resources").join(name);
-    let png = app
-        .path()
-        .app_cache_dir()
-        .ok()?
-        .join("icons")
-        .join(format!("{}.png", s.key));
+type Signature = (SystemTime, u64);
 
-    let stale = match (fs::metadata(&png), fs::metadata(&icns)) {
-        (Ok(p), Ok(i)) => p.modified().ok() < i.modified().ok(),
-        _ => true,
-    };
-    if stale {
-        fs::create_dir_all(png.parent()?).ok()?;
+/// Per tool: the .icns the icon came from, that file's signature, and the
+/// data URL, so repeat calls cost one stat instead of process spawns.
+static ICONS: LazyLock<Mutex<HashMap<&'static str, (PathBuf, Signature, String)>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn signature(p: &Path) -> Option<Signature> {
+    let m = fs::metadata(p).ok()?;
+    Some((m.modified().ok()?, m.len()))
+}
+
+fn plist_string(plist: &Path, key: &str) -> Option<String> {
+    let out = Command::new("defaults").arg("read").arg(plist).arg(key).output().ok()?;
+    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (out.status.success() && !s.is_empty()).then_some(s)
+}
+
+fn icns_path(bundle_dir: &Path) -> Option<PathBuf> {
+    let plist = bundle_dir.join("Contents/Info.plist");
+    ["CFBundleIconFile", "CFBundleIconName"].iter().find_map(|k| {
+        let mut name = plist_string(&plist, k)?;
+        if !name.ends_with(".icns") {
+            name.push_str(".icns");
+        }
+        let p = bundle_dir.join("Contents/Resources").join(name);
+        p.exists().then_some(p)
+    })
+}
+
+/// The app's own icon as a PNG data URL, converted once from the bundle's
+/// .icns. The cache file is named by the .icns's mtime and size, so an app
+/// update with a new icon is picked up even when the updater preserves old
+/// file dates. None on other platforms or if anything is missing.
+fn app_icon(app: &AppHandle, s: &Spec, bundle_dir: &Path) -> Option<String> {
+    if let Some((icns, sig, url)) = ICONS.lock().unwrap().get(s.key) {
+        if icns.starts_with(bundle_dir) && signature(icns).as_ref() == Some(sig) {
+            return Some(url.clone());
+        }
+    }
+    let icns = icns_path(bundle_dir)?;
+    let sig = signature(&icns)?;
+    let secs = sig.0.duration_since(SystemTime::UNIX_EPOCH).ok()?.as_secs();
+    let dir = app.path().app_cache_dir().ok()?.join("icons");
+    let png = dir.join(format!("{}-{secs}-{}.png", s.key, sig.1));
+    if !png.exists() {
+        fs::create_dir_all(&dir).ok()?;
+        // Convert to a temp name and rename, so an interrupted run never
+        // leaves a half-written file that would be served forever.
+        let tmp = dir.join(format!("{}-{secs}-{}.tmp.png", s.key, sig.1));
         let ok = Command::new("sips")
             .args(["-s", "format", "png", "-Z", "128"])
             .arg(&icns)
             .arg("--out")
-            .arg(&png)
+            .arg(&tmp)
             .output()
             .ok()?
             .status
             .success();
-        if !ok {
+        if !ok || fs::rename(&tmp, &png).is_err() {
+            let _ = fs::remove_file(&tmp);
             return None;
         }
     }
     let bytes = fs::read(&png).ok()?;
-    let b64 = base64::engine::general_purpose::STANDARD.encode(bytes);
-    Some(format!("data:image/png;base64,{b64}"))
+    let url = format!(
+        "data:image/png;base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    );
+    ICONS.lock().unwrap().insert(s.key, (icns, sig, url.clone()));
+    Some(url)
 }
 
 #[derive(Serialize)]
@@ -138,7 +162,7 @@ pub struct ToolStatus {
 }
 
 #[tauri::command]
-pub fn detect_tools(app: AppHandle) -> HashMap<String, ToolStatus> {
+pub async fn detect_tools(app: AppHandle) -> HashMap<String, ToolStatus> {
     TOOLS
         .into_iter()
         .map(|t| {
