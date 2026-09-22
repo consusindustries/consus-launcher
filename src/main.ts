@@ -1,6 +1,21 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { invoke } from "@tauri-apps/api/core";
+import { openUrl } from "@tauri-apps/plugin-opener";
+
+const PORTAL_URL = "https://portal.consus.io";
 
 type ToolKey = "desktop" | "chatgpt" | "code" | "vscode";
+
+interface ConnectResult {
+  models: unknown;
+  model_count: number;
+  email: string | null;
+}
+
+type ConnectError =
+  | { kind: "Revoked" }
+  | { kind: "Network"; message: string }
+  | { kind: "Rejected"; message: string };
 
 interface KeyInfo {
   key: string;
@@ -56,15 +71,31 @@ function ts(): string {
 }
 
 function mask(k: string): string {
-  return "csk_…" + k.slice(-4);
+  return "••••" + k.slice(-4);
 }
 
 function validate(k: string): string | null {
   k = (k || "").trim();
   if (!k) return "Paste a key first.";
-  if (k.indexOf("csk_") !== 0) return "That doesn't look like a Consus key. They start with csk_.";
   if (k.length < 16) return "That key looks cut off. Copy it again from the portal.";
   return null;
+}
+
+const REVOKED_MESSAGE = "This key was revoked. Paste a new one from the portal.";
+
+function connectErrorMessage(err: ConnectError): string {
+  if (err.kind === "Network") return "Could not reach the portal. Check your connection.";
+  return "That key was not accepted by the portal.";
+}
+
+function keyInfoFromResult(rawKey: string, result: ConnectResult): KeyInfo {
+  return {
+    key: rawKey,
+    mask: mask(rawKey),
+    user: result.email ?? mask(rawKey),
+    models: result.model_count,
+    added: new Date().toLocaleDateString(),
+  };
 }
 
 function info(k: string): KeyInfo {
@@ -187,10 +218,10 @@ function req(): void {
   if (!cur) return;
   last[cur] = Date.now();
   subs();
-  hosts["api.consus.ai"] = 1;
+  hosts["api.consus.io"] = 1;
   rows.unshift({
     t: ts(),
-    host: "api.consus.ai",
+    host: "api.consus.io",
     kb: Math.round(Math.random() * 38 + 3),
     app: TOOLS[cur][0],
     m: TOOLS[cur][1],
@@ -201,7 +232,12 @@ function req(): void {
   render();
 }
 
-function resetAll(): void {
+async function resetAll(): Promise<void> {
+  try {
+    await invoke("keychain_delete_key");
+  } catch {
+    // best-effort; UI state still resets below
+  }
   K = { def: null, tool: {} };
   cur = null;
   rows = [];
@@ -242,6 +278,7 @@ function wireWindowControls(): void {
 
 function wireConnect(): void {
   $("openPortal").addEventListener("click", () => {
+    void openUrl(PORTAL_URL);
     $("c1").className = "cn done";
     $("c1").textContent = "✓";
     $("c2").className = "cn done";
@@ -258,12 +295,20 @@ function wireConnect(): void {
       $("keyErr").textContent = e;
       return;
     }
+    const rawKey = v.trim();
     $("connectBtn").textContent = "CHECKING…";
-    setTimeout(() => {
-      $("connectBtn").textContent = "CONNECT";
-      K.def = info(v.trim());
-      setConnected(true);
-    }, 600);
+    (async () => {
+      try {
+        const result = await invoke<ConnectResult>("validate_key", { key: rawKey });
+        await invoke("keychain_set_key", { key: rawKey });
+        K.def = keyInfoFromResult(rawKey, result);
+        setConnected(true);
+      } catch (err) {
+        $("keyErr").textContent = connectErrorMessage(err as ConnectError);
+      } finally {
+        $("connectBtn").textContent = "CONNECT";
+      }
+    })();
   });
   $("keyIn").addEventListener("keydown", (e) => {
     if ((e as KeyboardEvent).key === "Enter") $("connectBtn").click();
@@ -281,7 +326,10 @@ function wireKeysTab(): void {
       $("edit-" + t.dataset.cancel).innerHTML = "";
       return;
     }
-    if (t.dataset.portal) return;
+    if (t.dataset.portal) {
+      void openUrl(PORTAL_URL);
+      return;
+    }
     if (t.id === "adv") {
       const b = $("advBox");
       const o = b.style.display === "none";
@@ -303,13 +351,28 @@ function wireKeysTab(): void {
         $("err-" + slot).textContent = er;
         return;
       }
-      const k = info(v.trim());
-      if (slot === "def") K.def = k;
-      else K.tool[slot as ToolKey] = k;
-      renderKeys();
+      const rawKey = v.trim();
+      if (slot !== "def") {
+        K.tool[slot as ToolKey] = info(rawKey);
+        renderKeys();
+        return;
+      }
+      const btn = t as HTMLButtonElement;
+      btn.textContent = "SAVING…";
+      (async () => {
+        try {
+          const result = await invoke<ConnectResult>("validate_key", { key: rawKey });
+          await invoke("keychain_set_key", { key: rawKey });
+          K.def = keyInfoFromResult(rawKey, result);
+          renderKeys();
+        } catch (err) {
+          $("err-" + slot).textContent = connectErrorMessage(err as ConnectError);
+          btn.textContent = "SAVE";
+        }
+      })();
       return;
     }
-    if (t.id === "signOut") resetAll();
+    if (t.id === "signOut") void resetAll();
   });
   $("p-keys").addEventListener("input", (e) => {
     const id = (e.target as HTMLElement).id || "";
@@ -378,6 +441,23 @@ function wireTabs(): void {
   });
 }
 
+async function restoreSession(): Promise<void> {
+  const storedKey = await invoke<string | null>("keychain_get_key");
+  if (!storedKey) return;
+  try {
+    const result = await invoke<ConnectResult>("validate_key", { key: storedKey });
+    K.def = keyInfoFromResult(storedKey, result);
+    setConnected(true);
+  } catch (err) {
+    if ((err as ConnectError).kind === "Revoked") {
+      await invoke("keychain_delete_key");
+      $("keyErr").textContent = REVOKED_MESSAGE;
+    }
+    // Network/Rejected failures at startup: leave the stored key alone and
+    // stay on first-run rather than guess at a transient-vs-permanent error.
+  }
+}
+
 function init(): void {
   document.querySelectorAll<HTMLElement>("[data-sb]").forEach((el) => {
     if (!el.closest(".tool")?.hasAttribute("data-missing")) el.dataset.d = el.textContent ?? "";
@@ -389,6 +469,7 @@ function init(): void {
   wireTools();
   wireSend();
   wireTabs();
+  void restoreSession();
 }
 
 init();

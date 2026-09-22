@@ -44,7 +44,7 @@ consus-launcher/
 Keep the Rust side small enough to read in one sitting. Target: under 1,500 lines total. If a change pushes past that, stop and ask.
 
 ### Supply chain and network rules (customers review this)
-- **Network:** the launcher talks to `portal.consus.io` and `api.consus.ai` only. No other host, ever, including at build time for assets the app loads at runtime. Fonts (Archivo Black, JetBrains Mono, Space Grotesk; all open license) are bundled in the app, not loaded from Google Fonts. Remove the Google Fonts link when porting the wireframe.
+- **Network:** the launcher talks to `portal.consus.io` and `api.consus.io` only. No other host, ever, including at build time for assets the app loads at runtime. Fonts (Archivo Black, JetBrains Mono, Space Grotesk; all open license) are bundled in the app, not loaded from Google Fonts. Remove the Google Fonts link when porting the wireframe.
 - **Dependencies:** pin exact versions. Commit `Cargo.lock`. No web-side package manager dependencies at all; the UI is plain HTML, CSS, and TypeScript compiled with the bundler Tauri's template ships. If a convenience library seems necessary, ask first.
 - **SBOM:** generate a CycloneDX SBOM (`cargo cyclonedx`) for every release and attach it to the GitHub Release alongside the installers.
 - **Reproducible releases:** release binaries are built only in GitHub Actions, never on a laptop, so the public workflow log is the provenance record. Signing and notarization happen in that same run.
@@ -70,7 +70,7 @@ Panel shows one card, "Connect to Consus," with three steps:
 1. Open the portal (button opens `https://portal.consus.io` in the default browser).
 2. Create a key (copy instructions only).
 3. Paste it here (masked input) and Connect.
-On Connect: trim, check prefix `csk_`, check minimum length, then call `GET /v1/models` with the key. On success store the key in the keychain, store the returned user email and model list in memory, switch to connected. On failure show one plain error: empty, wrong prefix, looks cut off, rejected by portal, or network. Errors clear when the input changes.
+On Connect: trim, check minimum length, then call `GET /v1/models` with the key. On success store the key in the keychain, store the returned user email and model list in memory, switch to connected. On failure show one plain error: empty, looks cut off, rejected by portal, or network. Errors clear when the input changes. (Real keys have no required prefix; there is no client-side format check beyond a basic length guard, the portal call is the actual validation.)
 
 ### Connected: Open tab
 Status pill turns green "CONNECTED." List of four tools, each with an icon, name, subtitle, and a state:
