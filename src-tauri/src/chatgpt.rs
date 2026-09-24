@@ -27,13 +27,7 @@ const TEMPLATE: &str = include_str!("../templates/chatgpt-desktop.toml");
 /// The one model the app starts on: the most preferred Responses-served GPT
 /// model this key can use in the regime, as a bare id ("gpt-5.6-terra:itar").
 pub fn select_model(models_json: &Value) -> Option<String> {
-    let ids: Vec<&str> = models_json
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|m| m.get("id").and_then(Value::as_str))
-        .map(models::bare)
-        .collect();
+    let ids = models::ids(models_json);
     RESPONSES_MODELS.iter().find_map(|base| {
         let want = format!("{base}:{REGIME}");
         ids.iter().find(|id| **id == want).map(|id| id.to_string())
@@ -115,19 +109,25 @@ fn strip_from(dst: &mut dyn TableLike, src: &Table) {
 }
 
 pub fn write_config(home: &Path, models_json: &Value) -> Result<(), String> {
+    write_config_at(&config_path(home), models_json, &Table::new())
+}
+
+/// The template, then `extra` (keys only this file carries), merged into
+/// the config.toml at `path`.
+pub fn write_config_at(path: &Path, models_json: &Value, extra: &Table) -> Result<(), String> {
     let model = select_model(models_json)
         .ok_or_else(|| format!("No GPT {REGIME_TAG} models are available to this key."))?;
 
-    let path = config_path(home);
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
-    let existing = fs::read_to_string(&path).unwrap_or_default();
+    let existing = fs::read_to_string(path).unwrap_or_default();
     let mut doc: DocumentMut = existing
         .parse()
         .map_err(|e| format!("{}: {e}", path.display()))?;
 
     merge_into(doc.as_table_mut(), template().as_table(), "")?;
+    merge_into(doc.as_table_mut(), extra, "")?;
     set_leaf(doc.as_table_mut(), "model", value(model));
     // A hand-made config carries the key inline; the environment replaces it.
     if let Some(consus) = doc
@@ -139,11 +139,11 @@ pub fn write_config(home: &Path, models_json: &Value) -> Result<(), String> {
         consus.remove("http_headers");
     }
 
-    fs::write(&path, doc.to_string()).map_err(|e| format!("{}: {e}", path.display()))?;
+    fs::write(path, doc.to_string()).map_err(|e| format!("{}: {e}", path.display()))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).map_err(|e| e.to_string())?;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600)).map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -152,19 +152,23 @@ pub fn write_config(home: &Path, models_json: &Value) -> Result<(), String> {
 /// attached to a removed key goes with it. A file with nothing left in it
 /// is deleted.
 pub fn remove_config(home: &Path) -> Result<(), String> {
-    let path = config_path(home);
-    let Ok(existing) = fs::read_to_string(&path) else {
+    remove_config_at(&config_path(home), &Table::new())
+}
+
+pub fn remove_config_at(path: &Path, extra: &Table) -> Result<(), String> {
+    let Ok(existing) = fs::read_to_string(path) else {
         return Ok(());
     };
     let mut doc: DocumentMut = existing
         .parse()
         .map_err(|e| format!("{}: {e}", path.display()))?;
     strip_from(doc.as_table_mut(), template().as_table());
+    strip_from(doc.as_table_mut(), extra);
     doc.as_table_mut().remove("model");
     if doc.as_table().is_empty() {
-        return fs::remove_file(&path).map_err(|e| e.to_string());
+        return fs::remove_file(path).map_err(|e| e.to_string());
     }
-    fs::write(&path, doc.to_string()).map_err(|e| format!("{}: {e}", path.display()))
+    fs::write(path, doc.to_string()).map_err(|e| format!("{}: {e}", path.display()))
 }
 
 #[cfg(test)]

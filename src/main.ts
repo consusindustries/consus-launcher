@@ -4,20 +4,21 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { listen } from "@tauri-apps/api/event";
 
 const PORTAL_URL = "https://portal.consus.io";
-// Tools the launcher detects, configures, and launches. Any other tile is
-// marked Coming soon in the markup and does nothing.
-type Tool = "desktop" | "chatgpt" | "code" | "pi";
-const TOOLS: Tool[] = ["desktop", "chatgpt", "code", "pi"];
+// Tools the launcher detects, configures, and launches.
+type Tool = "desktop" | "chatgpt" | "code" | "codex" | "pi";
+const TOOLS: Tool[] = ["desktop", "chatgpt", "code", "codex", "pi"];
 const DOWNLOAD: Record<Tool, string> = {
   desktop: "https://claude.ai/download",
   chatgpt: "https://openai.com/chatgpt/download/",
   code: "https://claude.com/claude-code",
+  codex: "https://developers.openai.com/codex",
   pi: "https://pi.dev",
 };
 const NOT_INSTALLED: Record<Tool, string> = {
   desktop: "Not installed · get it from claude.ai/download",
   chatgpt: "Not installed · get it from openai.com",
   code: "Not installed · get it from claude.com/claude-code",
+  codex: "Not installed · get it from developers.openai.com/codex",
   pi: "Not installed · get it from pi.dev",
 };
 const isTool = (k: string): k is Tool => (TOOLS as string[]).includes(k);
@@ -155,7 +156,7 @@ async function resetAll(): Promise<void> {
   $("empty").style.display = "";
   document.querySelectorAll<HTMLElement>(".tool").forEach((x) => {
     x.classList.remove("on");
-    if (!x.classList.contains("locked")) x.querySelector(".go")!.textContent = "OPEN";
+    x.querySelector(".go")!.textContent = "OPEN";
   });
   $("empty").querySelector("b")!.textContent = "Connect, then pick a tool.";
   $("empty").querySelector("span")!.textContent = "Paste your key on the right. One time.";

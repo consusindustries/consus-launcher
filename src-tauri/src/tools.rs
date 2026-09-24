@@ -14,7 +14,7 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 use tauri::{AppHandle, Emitter, Manager};
 
-use crate::{chatgpt, claude_code, config, keychain, pi};
+use crate::{chatgpt, claude_code, codex, config, keychain, pi};
 
 /// Claude Desktop runs the launcher binary under this name to fetch the key.
 pub const HELPER_NAME: &str = "claude-key-helper";
@@ -22,6 +22,8 @@ pub const HELPER_NAME: &str = "claude-key-helper";
 pub const CODE_HELPER_NAME: &str = "claude-code-key-helper";
 /// Pi's models.json runs it under this name, also for the bare key.
 pub const PI_HELPER_NAME: &str = "pi-key-helper";
+/// Codex's Terminal script runs it under this name, also for the bare key.
+pub const CODEX_HELPER_NAME: &str = "codex-key-helper";
 const TERMINAL_APP: &str = "/System/Applications/Utilities/Terminal.app";
 /// Pi's mark from pi.dev on its site's background color.
 const PI_ICON: &str = include_str!("../assets/pi.svg");
@@ -31,16 +33,18 @@ pub enum Tool {
     Desktop,
     ChatGpt,
     Code,
+    Codex,
     Pi,
 }
 
-const TOOLS: [Tool; 4] = [Tool::Desktop, Tool::ChatGpt, Tool::Code, Tool::Pi];
+const TOOLS: [Tool; 5] = [Tool::Desktop, Tool::ChatGpt, Tool::Code, Tool::Codex, Tool::Pi];
 
 fn key(t: Tool) -> &'static str {
     match t {
         Tool::Desktop => "desktop",
         Tool::ChatGpt => "chatgpt",
         Tool::Code => "code",
+        Tool::Codex => "codex",
         Tool::Pi => "pi",
     }
 }
@@ -50,6 +54,7 @@ fn name(t: Tool) -> &'static str {
         Tool::Desktop => "Claude",
         Tool::ChatGpt => "ChatGPT",
         Tool::Code => "Claude Code",
+        Tool::Codex => "Codex",
         Tool::Pi => "Pi",
     }
 }
@@ -81,7 +86,7 @@ fn app_spec(t: Tool) -> Option<AppSpec> {
             bundle: "com.openai.codex",
             process: "ChatGPT",
         }),
-        Tool::Code | Tool::Pi => None,
+        Tool::Code | Tool::Codex | Tool::Pi => None,
     }
 }
 
@@ -144,39 +149,64 @@ fn cli(app: &AppHandle, program: &'static str) -> Option<PathBuf> {
     found
 }
 
-/// Asks the user's login shell where a program is. Capped at three seconds
-/// and given no stdin, so an rc file that waits for input cannot hang the app.
+/// A command's stdout if it succeeds within `limit`. No stdin, so nothing
+/// can wait on input; stdout is read as it comes, so a large output cannot
+/// fill the pipe and stall the command.
+fn output_within(cmd: &mut Command, limit: Duration) -> Option<String> {
+    let mut child = cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().ok()?;
+    let mut pipe = child.stdout.take()?;
+    let reader = thread::spawn(move || {
+        let mut out = String::new();
+        pipe.read_to_string(&mut out).ok().map(|_| out)
+    });
+    let start = Instant::now();
+    let status = loop {
+        if let Some(status) = child.try_wait().ok()? {
+            break status;
+        }
+        if start.elapsed() > limit {
+            let _ = child.kill();
+            let _ = child.wait();
+            return None;
+        }
+        thread::sleep(Duration::from_millis(50));
+    };
+    let out = reader.join().ok()??;
+    status.success().then_some(out)
+}
+
+/// Asks the user's login shell where a program is, for at most three
+/// seconds, so an rc file that hangs cannot hang the app.
 fn shell_lookup(program: &str) -> Option<PathBuf> {
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
-    let mut child = Command::new(shell)
-        .args(["-ilc", &format!("command -v {program}")])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .ok()?;
-    let mut done = false;
-    for _ in 0..30 {
-        if child.try_wait().ok()?.is_some() {
-            done = true;
-            break;
-        }
-        thread::sleep(Duration::from_millis(100));
-    }
-    if !done {
-        let _ = child.kill();
-        let _ = child.wait();
-        return None;
-    }
-    let mut out = String::new();
-    child.stdout.take()?.read_to_string(&mut out).ok()?;
+    let out = output_within(
+        Command::new(shell).args(["-ilc", &format!("command -v {program}")]),
+        Duration::from_secs(3),
+    )?;
     let p = PathBuf::from(out.lines().last()?.trim());
     (p.is_absolute() && p.exists()).then_some(p)
 }
 
+/// The Codex CLI: the user's own, else the one inside the ChatGPT app.
+fn codex_cli(app: &AppHandle) -> Option<PathBuf> {
+    cli(app, "codex").or_else(|| {
+        let bundled = app_path(app, &app_spec(Tool::ChatGpt)?)?.join("Contents/Resources/codex");
+        bundled.exists().then_some(bundled)
+    })
+}
+
+/// The program a terminal tool runs, found the way the user's terminal
+/// would find it.
+fn terminal_cli(app: &AppHandle, t: Tool) -> Option<PathBuf> {
+    match t {
+        Tool::Codex => codex_cli(app),
+        _ => cli(app, terminal_process(t)?),
+    }
+}
+
 type Signature = (SystemTime, u64);
 
-/// Per tool: the .icns the icon came from, that file's signature, and the
+/// Per tool: the image the icon came from, that file's signature, and the
 /// data URL, so repeat calls cost one stat instead of process spawns.
 static ICONS: Cache<(PathBuf, Signature, String)> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
@@ -203,19 +233,26 @@ fn icns_path(bundle_dir: &Path) -> Option<PathBuf> {
     })
 }
 
-/// The app's own icon as a PNG data URL, converted once from the bundle's
-/// .icns. The cache file is named by the .icns's mtime and size, so an app
+/// The app's own icon as a PNG data URL, from the bundle's .icns.
+fn app_icon(app: &AppHandle, t: Tool, bundle_dir: &Path) -> Option<String> {
+    cached_icon(t, bundle_dir).or_else(|| image_icon(app, t, &icns_path(bundle_dir)?))
+}
+
+/// The remembered icon, if it came from under `within` and that file has
+/// not changed since.
+fn cached_icon(t: Tool, within: &Path) -> Option<String> {
+    let icons = ICONS.lock().unwrap();
+    let (src, sig, url) = icons.get(key(t))?;
+    (src.starts_with(within) && signature(src).as_ref() == Some(sig)).then(|| url.clone())
+}
+
+/// An image file (.icns or .png) as a 128-point PNG data URL, converted
+/// once. The cache file is named by the source's mtime and size, so an app
 /// update with a new icon is picked up even when the updater preserves old
 /// file dates. None on other platforms or if anything is missing.
-fn app_icon(app: &AppHandle, t: Tool, bundle_dir: &Path) -> Option<String> {
+fn image_icon(app: &AppHandle, t: Tool, src: &Path) -> Option<String> {
     let k = key(t);
-    if let Some((icns, sig, url)) = ICONS.lock().unwrap().get(k) {
-        if icns.starts_with(bundle_dir) && signature(icns).as_ref() == Some(sig) {
-            return Some(url.clone());
-        }
-    }
-    let icns = icns_path(bundle_dir)?;
-    let sig = signature(&icns)?;
+    let sig = signature(src)?;
     let secs = sig.0.duration_since(SystemTime::UNIX_EPOCH).ok()?.as_secs();
     let dir = app.path().app_cache_dir().ok()?.join("icons");
     let png = dir.join(format!("{k}-{secs}-{}.png", sig.1));
@@ -226,7 +263,7 @@ fn app_icon(app: &AppHandle, t: Tool, bundle_dir: &Path) -> Option<String> {
         let tmp = dir.join(format!("{k}-{secs}-{}.tmp.png", sig.1));
         let ok = Command::new("sips")
             .args(["-s", "format", "png", "-Z", "128"])
-            .arg(&icns)
+            .arg(src)
             .arg("--out")
             .arg(&tmp)
             .output()
@@ -243,7 +280,7 @@ fn app_icon(app: &AppHandle, t: Tool, bundle_dir: &Path) -> Option<String> {
         "data:image/png;base64,{}",
         base64::engine::general_purpose::STANDARD.encode(bytes)
     );
-    ICONS.lock().unwrap().insert(k, (icns, sig, url.clone()));
+    ICONS.lock().unwrap().insert(k, (src.to_path_buf(), sig, url.clone()));
     Some(url)
 }
 
@@ -265,14 +302,20 @@ pub async fn detect_tools(app: AppHandle) -> HashMap<String, ToolStatus> {
                 let icon = dir.as_deref().and_then(|d| app_icon(&app, t, d));
                 ToolStatus { installed: dir.is_some(), icon }
             } else {
-                let installed = terminal_process(t).is_some_and(|p| cli(&app, p).is_some());
-                // Pi has a logo of its own; Claude Code opens in Terminal,
-                // so it wears Terminal's icon.
-                let icon = match t {
-                    Tool::Pi => Some(format!(
+                let installed = terminal_cli(&app, t).is_some();
+                // Pi has a logo of its own and the ChatGPT app carries
+                // Codex's; Claude Code, or Codex without that app, opens in
+                // Terminal, so it wears Terminal's icon.
+                let codex_png = app_spec(Tool::ChatGpt)
+                    .and_then(|s| app_path(&app, &s))
+                    .map(|d| d.join("Contents/Resources/icon-codex-dark-color.png"))
+                    .filter(|p| p.exists());
+                let icon = match (t, codex_png) {
+                    (Tool::Pi, _) => Some(format!(
                         "data:image/svg+xml;base64,{}",
                         base64::engine::general_purpose::STANDARD.encode(PI_ICON)
                     )),
+                    (Tool::Codex, Some(png)) => cached_icon(t, &png).or_else(|| image_icon(&app, t, &png)),
                     _ => app_icon(&app, t, Path::new(TERMINAL_APP)),
                 };
                 ToolStatus { installed, icon }
@@ -492,7 +535,7 @@ fn launch_app(app: AppHandle, t: Tool, s: AppSpec, rect: Rect, models: &Value) -
             chatgpt::write_config(&home, models)?;
             env = Some(("CONSUS_API_KEY", k));
         }
-        Tool::Code | Tool::Pi => return Err(format!("{} is not a desktop app.", name(t))),
+        Tool::Code | Tool::Codex | Tool::Pi => return Err(format!("{} is not a desktop app.", name(t))),
     }
 
     // The app's own output is not the launcher's to read or keep.
@@ -536,6 +579,9 @@ const CLAUDE_VARS: &str = "(CLAUDE|ANTHROPIC)[A-Za-z0-9_]*";
 /// models next to Consus (its env-api-keys list: *_API_KEY, the cloud SDK
 /// variables, HF_TOKEN, COPILOT_GITHUB_TOKEN), and the user's own
 /// CONSUS_API_KEY, which Pi does not need and the agent's shell should not see.
+/// Anything that could point Codex at OpenAI directly or at another home.
+const CODEX_VARS: &str = "(OPENAI|CODEX)[A-Za-z0-9_]*";
+
 const PI_VARS: &str = "(CLAUDE|ANTHROPIC|AWS|GOOGLE|GCLOUD|AZURE)[A-Za-z0-9_]*|[A-Za-z0-9_]*_API_KEY|HF_TOKEN|COPILOT_GITHUB_TOKEN";
 
 fn applescript_string(s: &str) -> String {
@@ -548,6 +594,7 @@ fn applescript_string(s: &str) -> String {
 fn terminal_process(t: Tool) -> Option<&'static str> {
     match t {
         Tool::Code => Some("claude"),
+        Tool::Codex => Some("codex"),
         Tool::Pi => Some("pi"),
         Tool::Desktop | Tool::ChatGpt => None,
     }
@@ -575,6 +622,33 @@ fn terminal_script(app: &AppHandle, t: Tool, models: &Value) -> Result<String, S
                 work.display(),
                 scrub(CLAUDE_VARS),
                 claude_code::profile_dir(&home).display(),
+                cli.display()
+            ))
+        }
+        Tool::Codex => {
+            let cli = codex_cli(app).ok_or("Codex is not installed.")?;
+            let helper = helper_dir.join(CODEX_HELPER_NAME);
+            config::write_helper(&helper)?;
+            let profile = codex::profile_dir(&home);
+            fs::create_dir_all(&profile).map_err(|e| format!("{}: {e}", profile.display()))?;
+            // The catalog is cloned from this Codex's own model list.
+            let bundled = output_within(
+                Command::new(&cli).args(["debug", "models", "--bundled"]).env("CODEX_HOME", &profile),
+                Duration::from_secs(10),
+            )
+            .and_then(|s| serde_json::from_str::<Value>(&s).ok());
+            codex::write_config(&home, models, bundled.as_ref())?;
+            fs::create_dir_all(&work).map_err(|e| format!("{}: {e}", work.display()))?;
+            // Codex reads the key from CONSUS_API_KEY (env_http_headers), so
+            // the script fetches it from the keychain helper into Codex's
+            // environment only; the template's shell_environment_policy
+            // keeps CONSUS_* out of every command the agent runs.
+            Ok(format!(
+                "cd \"{}\" || exit 1; {} CONSUS_API_KEY=\"$(\"{}\")\"; export CONSUS_API_KEY CODEX_HOME=\"{}\"; clear; exec \"{}\"",
+                work.display(),
+                scrub(CODEX_VARS),
+                helper.display(),
+                profile.display(),
                 cli.display()
             ))
         }
@@ -681,8 +755,9 @@ pub fn remove_tool_configs(app: AppHandle) -> Result<(), String> {
     let claude = config::remove_claude_desktop(&home);
     let chatgpt = chatgpt::remove_config(&home);
     let code = claude_code::remove_settings(&home);
+    let codex = codex::remove_config(&home);
     let pi = pi::remove_config(&home);
-    claude.and(chatgpt).and(code).and(pi)
+    claude.and(chatgpt).and(code).and(codex).and(pi)
 }
 
 /// On launcher exit the apps it started are asked to quit, then killed if

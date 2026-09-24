@@ -57,13 +57,7 @@ fn write_object(path: &Path, doc: Map<String, Value>) -> Result<(), String> {
 
 /// The guide's provider block for this key and helper.
 fn provider(helper: &Path, models_json: &Value) -> Result<Value, String> {
-    let have: Vec<&str> = models_json
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|m| m.get("id").and_then(Value::as_str))
-        .map(models::bare)
-        .collect();
+    let have = models::ids(models_json);
     let mut doc: Value = serde_json::from_str(TEMPLATE).expect("template is valid JSON");
     let mut p = doc["providers"][PROVIDER].take();
     let list = p["models"].as_array_mut().expect("template lists models");
