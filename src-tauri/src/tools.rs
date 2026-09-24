@@ -20,6 +20,7 @@ use crate::{chatgpt, claude_code, config, keychain};
 pub const HELPER_NAME: &str = "claude-key-helper";
 /// Claude Code's apiKeyHelper runs it under this name and wants the bare key.
 pub const CODE_HELPER_NAME: &str = "claude-code-key-helper";
+const TERMINAL_APP: &str = "/System/Applications/Utilities/Terminal.app";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Tool {
@@ -245,7 +246,10 @@ pub async fn detect_tools(app: AppHandle) -> HashMap<String, ToolStatus> {
                 let icon = dir.as_deref().and_then(|d| app_icon(&app, t, d));
                 ToolStatus { installed: dir.is_some(), icon }
             } else {
-                ToolStatus { installed: claude_cli(&app).is_some(), icon: None }
+                // No app bundle of its own; it opens in Terminal, so it
+                // wears Terminal's icon.
+                let icon = app_icon(&app, t, Path::new(TERMINAL_APP));
+                ToolStatus { installed: claude_cli(&app).is_some(), icon }
             };
             (key(t).to_string(), status)
         })
