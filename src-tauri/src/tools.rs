@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{LazyLock, Mutex};
 use std::thread;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::{chatgpt, claude_code, config, keychain, pi};
@@ -115,20 +115,33 @@ fn app_path(app: &AppHandle, s: &AppSpec) -> Option<PathBuf> {
     user.exists().then_some(user)
 }
 
-static CLIS: LazyLock<Mutex<HashMap<&'static str, PathBuf>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+/// Per program: the last answer and when the login shell gave it.
+type Cache<T> = LazyLock<Mutex<HashMap<&'static str, T>>>;
+static CLIS: Cache<(Option<PathBuf>, Instant)> = LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// How long "not installed" from the login shell stands before asking again.
+const SHELL_RECHECK: Duration = Duration::from_secs(60);
 
 /// A command-line tool as the user's terminal would find it. A GUI app's
 /// PATH is minimal, so look in the usual places, then ask the login shell.
-/// The answer is remembered, so focus-driven refreshes cost one stat.
+/// Answers are remembered, a miss for a minute, so focus-driven refreshes
+/// cost a few stats, not a shell (about a second with nvm in the rc file).
 fn cli(app: &AppHandle, program: &'static str) -> Option<PathBuf> {
-    if let Some(p) = CLIS.lock().unwrap().get(program).filter(|p| p.exists()) {
-        return Some(p.clone());
+    let cached = CLIS.lock().unwrap().get(program).cloned();
+    if let Some((Some(p), _)) = &cached {
+        if p.exists() {
+            return Some(p.clone());
+        }
     }
     let home = app.path().home_dir().ok()?;
     let fixed = [home.join(".local/bin"), "/opt/homebrew/bin".into(), "/usr/local/bin".into()];
-    let found = fixed.into_iter().map(|d| d.join(program)).find(|p| p.exists()).or_else(|| shell_lookup(program))?;
-    CLIS.lock().unwrap().insert(program, found.clone());
-    Some(found)
+    let found = fixed.into_iter().map(|d| d.join(program)).find(|p| p.exists());
+    if found.is_none() && matches!(cached, Some((None, at)) if at.elapsed() < SHELL_RECHECK) {
+        return None;
+    }
+    let found = found.or_else(|| shell_lookup(program));
+    CLIS.lock().unwrap().insert(program, (found.clone(), Instant::now()));
+    found
 }
 
 /// Asks the user's login shell where a program is. Capped at three seconds
@@ -165,8 +178,7 @@ type Signature = (SystemTime, u64);
 
 /// Per tool: the .icns the icon came from, that file's signature, and the
 /// data URL, so repeat calls cost one stat instead of process spawns.
-static ICONS: LazyLock<Mutex<HashMap<&'static str, (PathBuf, Signature, String)>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+static ICONS: Cache<(PathBuf, Signature, String)> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
 fn signature(p: &Path) -> Option<Signature> {
     let m = fs::metadata(p).ok()?;

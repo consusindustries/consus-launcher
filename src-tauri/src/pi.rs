@@ -7,8 +7,10 @@
 //
 // Two changes from the guide. The model list is trimmed to what this key can
 // use. And x-api-key is not "$CONSUS_API_KEY" from the environment: it is
-// "!<helper>", a command Pi runs at request time, so the key never sits in
-// the environment the agent's own shell commands inherit.
+// "!<helper>", a command Pi runs at request time, so the key is not in the
+// environment every command the agent runs inherits. The agent can still run
+// the helper itself, as with Claude Code's apiKeyHelper: this keeps the key
+// out of casual reach, it is not a boundary.
 //
 // models.json is merged by provider: only providers.consus is the launcher's.
 // In settings.json the launcher sets defaultProvider and defaultModel, and
@@ -40,9 +42,17 @@ fn settings_path(home: &Path) -> PathBuf {
     profile_dir(home).join("settings.json")
 }
 
+/// Writes a temp file and renames it over the target, so an interrupted
+/// write never leaves a truncated file that would block every later launch.
 fn write_object(path: &Path, doc: Map<String, Value>) -> Result<(), String> {
     let text = serde_json::to_string_pretty(&Value::Object(doc)).map_err(|e| e.to_string())?;
-    fs::write(path, text + "\n").map_err(|e| format!("{}: {e}", path.display()))
+    let tmp = path.with_extension("json.tmp");
+    fs::write(&tmp, text + "\n")
+        .and_then(|_| fs::rename(&tmp, path))
+        .map_err(|e| {
+            let _ = fs::remove_file(&tmp);
+            format!("{}: {e}", path.display())
+        })
 }
 
 /// The guide's provider block for this key and helper.
