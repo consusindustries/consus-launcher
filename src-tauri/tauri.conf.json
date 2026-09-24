@@ -39,6 +39,14 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "publisher": "Consus Industries",
+    "copyright": "Copyright 2026 Consus Industries, Inc. Apache-2.0.",
+    "category": "DeveloperTool",
+    "shortDescription": "Opens AI tools already configured for the Consus gateway.",
+    "homepage": "https://github.com/consusindustries/consus-launcher",
+    "macOS": {
+      "entitlements": "./Entitlements.plist"
+    }
   }
 }

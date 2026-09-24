@@ -35,3 +35,6 @@ jobs:
 
       - name: Build Tauri app (unsigned)
         run: cargo build --manifest-path src-tauri/Cargo.toml
+
+      - name: Test
+        run: cargo test --manifest-path src-tauri/Cargo.toml

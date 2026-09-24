@@ -1,0 +1,169 @@
+name: Release
+
+# Release builds happen here and nowhere else, so this public log is the
+# provenance record for every installer.
+#
+# On a v* tag: a draft GitHub Release with the universal .dmg and .pkg, the
+# SBOMs, and SHA-256 checksums, for a person to review and publish.
+# On a pull request that changes this file, or when run by hand: the same
+# build as a dry run, with the files kept as workflow artifacts only.
+#
+# Signing and notarization run when the Apple secrets exist and are skipped
+# when they do not, in which case the app is ad-hoc signed. Secrets:
+#   APPLE_CERTIFICATE           base64 .p12 holding the Developer ID
+#                               Application and Developer ID Installer identities
+#   APPLE_CERTIFICATE_PASSWORD  its password
+#   APPLE_SIGNING_IDENTITY      "Developer ID Application: <name> (<team id>)"
+#   APPLE_INSTALLER_IDENTITY    "Developer ID Installer: <name> (<team id>)"
+#   APPLE_API_ISSUER            App Store Connect API issuer id
+#   APPLE_API_KEY               App Store Connect API key id
+#   APPLE_API_KEY_P8            contents of that key's AuthKey_<id>.p8
+#
+# Mac only for now: tool launching is macOS only (Windows builds in build.yml).
+# No updater manifest: the app does not auto-update, because an updater would
+# be a network host beyond the two Consus hosts.
+
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths: [".github/workflows/release.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    env:
+      CARGO_CYCLONEDX_VERSION: 0.5.9
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 20
+
+      - name: Rust for both Mac architectures
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+      - name: Check the version
+        id: version
+        run: |
+          v=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          pkg=$(node -p "require('./package.json').version")
+          cargo=$(sed -n 's/^version = "\(.*\)"/\1/p' src-tauri/Cargo.toml | head -1)
+          if [ "$pkg" != "$v" ] || [ "$cargo" != "$v" ]; then
+            echo "Versions differ: tauri.conf.json $v, package.json $pkg, Cargo.toml $cargo"
+            exit 1
+          fi
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "v$v" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match version $v"
+            exit 1
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build the app and .dmg
+        env:
+          CERT: ${{ secrets.APPLE_CERTIFICATE }}
+          CERT_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          API_KEY: ${{ secrets.APPLE_API_KEY }}
+          API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          if [ -n "$CERT" ]; then
+            export APPLE_CERTIFICATE="$CERT" APPLE_CERTIFICATE_PASSWORD="$CERT_PASSWORD"
+            export APPLE_SIGNING_IDENTITY="$SIGNING_IDENTITY"
+            if [ -n "$API_KEY_P8" ]; then
+              export APPLE_API_ISSUER="$API_ISSUER" APPLE_API_KEY="$API_KEY"
+              export APPLE_API_KEY_PATH="$RUNNER_TEMP/AuthKey_$API_KEY.p8"
+              printf '%s' "$API_KEY_P8" > "$APPLE_API_KEY_PATH"
+            fi
+          else
+            echo "No Apple certificate: building ad-hoc signed, not notarized."
+            export APPLE_SIGNING_IDENTITY="-"
+          fi
+          npm run tauri -- build --target universal-apple-darwin --bundles app,dmg
+
+      - name: Build the .pkg, and notarize the installers
+        env:
+          CERT: ${{ secrets.APPLE_CERTIFICATE }}
+          CERT_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          INSTALLER_IDENTITY: ${{ secrets.APPLE_INSTALLER_IDENTITY }}
+          API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          API_KEY: ${{ secrets.APPLE_API_KEY }}
+          API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          bundle=src-tauri/target/universal-apple-darwin/release/bundle
+          mkdir -p release
+          cp "$bundle"/dmg/*.dmg "release/Consus-Launcher-$VERSION-universal.dmg"
+          pkg="release/Consus-Launcher-$VERSION-universal.pkg"
+          if [ -n "$CERT" ] && [ -n "$INSTALLER_IDENTITY" ]; then
+            kc="$RUNNER_TEMP/installer.keychain-db"
+            security create-keychain -p "" "$kc"
+            security unlock-keychain -p "" "$kc"
+            printf '%s' "$CERT" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+            security import "$RUNNER_TEMP/cert.p12" -k "$kc" -P "$CERT_PASSWORD" -T /usr/bin/productbuild
+            rm "$RUNNER_TEMP/cert.p12"
+            security list-keychains -d user -s "$kc" $(security list-keychains -d user | tr -d '"')
+            productbuild --component "$bundle/macos/Consus Launcher.app" /Applications \
+              --sign "$INSTALLER_IDENTITY" --keychain "$kc" "$pkg"
+          else
+            productbuild --component "$bundle/macos/Consus Launcher.app" /Applications "$pkg"
+          fi
+          if [ -n "$CERT" ] && [ -n "$API_KEY_P8" ]; then
+            key="$RUNNER_TEMP/AuthKey_$API_KEY.p8"
+            printf '%s' "$API_KEY_P8" > "$key"
+            for f in release/*.dmg release/*.pkg; do
+              xcrun notarytool submit "$f" --key "$key" --key-id "$API_KEY" --issuer "$API_ISSUER" --wait
+              xcrun stapler staple "$f"
+            done
+          fi
+
+      - name: SBOMs and checksums
+        run: |
+          set -euo pipefail
+          cargo install cargo-cyclonedx --version "$CARGO_CYCLONEDX_VERSION" --locked
+          cargo cyclonedx --manifest-path src-tauri/Cargo.toml --format json
+          cp src-tauri/*.cdx.json release/consus-launcher-rust.cdx.json
+          npm sbom --sbom-format cyclonedx --omit dev > release/consus-launcher-npm.cdx.json
+          cd release && shasum -a 256 * > SHA256SUMS.txt && cat SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: consus-launcher-${{ steps.version.outputs.version }}-macos
+          path: release/
+          if-no-files-found: error
+
+      - name: Draft the GitHub Release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SIGNED: ${{ secrets.APPLE_CERTIFICATE != '' }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          {
+            echo "Consus Launcher $VERSION for macOS (Apple silicon and Intel)."
+            echo
+            echo "Download the .dmg, or the .pkg to install into /Applications."
+            echo "SHA256SUMS.txt lists the checksums; the .cdx.json files are the CycloneDX SBOMs."
+            if [ "$SIGNED" != "true" ]; then
+              echo
+              echo "This build is not yet signed by Apple. On first open, macOS will block it:"
+              echo "open System Settings, Privacy and Security, and click Open Anyway."
+            fi
+          } > "$RUNNER_TEMP/notes.md"
+          gh release create "$GITHUB_REF_NAME" --draft --verify-tag \
+            --title "Consus Launcher $VERSION" --notes-file "$RUNNER_TEMP/notes.md" release/*

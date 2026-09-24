@@ -124,7 +124,7 @@ Verify each tool's current config format against its documentation before writin
 ## 9. Signing and release
 Apple Developer Program enrollment for Consus Industries, Inc. is submitted (D-U-N-S on file) and pending Apple's authority check. Until it clears, builds are unsigned. On Eric's Mac, Gatekeeper will warn on first open; right-click, Open is the expected workaround during development and is not a bug. Set up the CI pipeline so that signing and notarization run when secrets are present and are skipped when absent. Windows: Azure Trusted Signing, not yet set up.
 
-Release artifacts: `.dmg` and `.pkg` (Mac), `.msi` (Windows), published to GitHub Releases with the updater manifest. Homebrew cask and winget manifests are a later step.
+Release artifacts: `.dmg` and `.pkg` (Mac), `.msi` (Windows), published to GitHub Releases with the updater manifest. Homebrew cask and winget manifests are a later step. Updated 2026-09-24 (Eric's calls): no in-app updater and no updater manifest for now, since an updater would be a network host beyond the two Consus hosts; releases are Mac only (universal `.dmg` and `.pkg`) until tool launching works on Windows; the workflow drafts each release for a person to review and publish.
 
 ## 10. Build order
 Each step is its own PR and must run on Eric's Mac before the next starts. **v1 is macOS.** Windows must compile in CI but nothing in this order waits on Windows testing. Eric's Mac has Claude Desktop, Claude Code, and VS Code installed for verification.
