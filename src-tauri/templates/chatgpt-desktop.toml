@@ -1,0 +1,73 @@
+# ChatGPT desktop app (and Codex CLI): ~/.codex/config.toml, merged key by key.
+# Verbatim from gov_open_router/docs/integrations/chatgpt-desktop.md, except the
+# key: env_http_headers instead of an inline http_headers, so it never lands in
+# the file. Docs checked: that guide and consus-key-portal
+# lib/deploy/templates/codex.ts, 2026-09-22. Verified on a real machine: macOS,
+# ChatGPT 26.915, 2026-09-22. The model line is added by chatgpt.rs.
+# Top-level keys must stay above the first [table] header.
+
+model_provider = "consus"
+model_reasoning_effort = "medium"
+model_reasoning_summary = "auto"
+web_search = "disabled"
+approval_policy = "on-request"
+approvals_reviewer = "user"
+sandbox_mode = "workspace-write"
+
+[sandbox_workspace_write]
+network_access = false
+
+[model_providers.consus]
+name = "Consus Gateway"
+base_url = "https://api.consus.io/v1"
+wire_api = "responses"
+env_http_headers = { "x-api-key" = "CONSUS_API_KEY" }
+
+[shell_environment_policy]
+inherit = "all"
+exclude = ["AWS_*", "AZURE_*", "GOOGLE_*", "GCP_*", "CONSUS_*", "OPENAI_*", "ANTHROPIC_*", "*_KEY", "*_TOKEN", "*_SECRET", "*PASSWORD*"]
+
+[features]
+computer_use = false
+browser_use = false
+browser_use_external = false
+browser_use_full_cdp_access = false
+in_app_browser = false
+image_generation = false
+realtime_conversation = false
+in_app_dictation = false
+apps = false
+remote_plugin = false
+plugin_sharing = false
+recommended_plugins = false
+tool_suggest = false
+skill_mcp_dependency_install = false
+memories = false
+
+[computer_use]
+default_app_access = "deny"
+
+[browser_use]
+allow_history_access = false
+
+[browser_use.default_origin_policy]
+access = "deny"
+uploads = "deny"
+downloads = "deny"
+full_cdp_access = "deny"
+
+[memories]
+use_memories = false
+generate_memories = false
+
+[analytics]
+enabled = false
+
+[feedback]
+enabled = false
+
+[otel]
+exporter = "none"
+trace_exporter = "none"
+metrics_exporter = "none"
+log_user_prompt = false

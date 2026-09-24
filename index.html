@@ -21,53 +21,6 @@
     <div class="body">
       <div class="glass" id="glass">
         <div class="empty" id="empty"><b>Connect, then pick a tool.</b><span>It opens here, configured for Consus. No setup.</span></div>
-
-        <div class="appwin" id="w-desktop">
-          <div class="apptop"><div class="lights"><i></i><i></i><i></i></div><span style="margin-left:6px">Claude</span></div>
-          <div class="banner"><i></i><span id="orgBanner">Company runs this on the Consus gateway. Cleared for ITAR and CUI work.</span></div>
-          <div style="flex:1;display:grid;grid-template-columns:150px minmax(0,1fr)">
-            <div style="background:#F3EFE6;border-right:1px solid #DDD6C6;padding:14px;font-size:12px;color:#5F564A;line-height:2">
-              <div style="font-weight:500;color:#1F1A16">Company AI</div><div>+ New chat</div><div>Projects</div><div>Recents</div>
-            </div>
-            <div style="display:flex;flex-direction:column;justify-content:center;padding:24px;gap:14px">
-              <div style="text-align:center;font-size:20px">What are you working on?</div>
-              <div class="prompt"><span>Summarize the RCS valve test plan</span><button class="send" data-send>Send</button></div>
-              <div style="display:flex;justify-content:center;gap:6px"><span class="chip">claude-sonnet-5:itar</span></div>
-            </div>
-          </div>
-        </div>
-
-        <div class="appwin" id="w-code">
-          <div class="apptop"><div class="lights"><i></i><i></i><i></i></div><span style="margin-left:6px">Terminal &middot; claude</span></div>
-          <div class="term">
-            <div><span class="o">&#10023;</span> Claude Code</div>
-            <div class="m">  endpoint  api.consus.ai (managed)</div>
-            <div class="m">  model     claude-sonnet-5:itar</div>
-            <br>
-            <div><span class="g">&gt;</span> explain the thermal model in sim/thermal.py</div>
-            <div class="m" id="codeOut">  Ready.</div>
-            <br>
-            <button class="send" data-send style="background:var(--orange)">Run</button>
-          </div>
-        </div>
-
-        <div class="appwin" id="w-vscode">
-          <div class="apptop"><div class="lights"><i></i><i></i><i></i></div><span style="margin-left:6px">VS Code &middot; gnc-sim</span></div>
-          <div class="code">
-            <div class="rail"></div>
-            <div class="ed">def attitude_error(q, q_ref):<br>&nbsp;&nbsp;&nbsp;&nbsp;q_err = quat_mult(q_ref.conj(), q)<br>&nbsp;&nbsp;&nbsp;&nbsp;return 2 * q_err.vec<br><br>def pd_torque(err, rate, kp, kd):<br>&nbsp;&nbsp;&nbsp;&nbsp;return -kp * err - kd * rate</div>
-            <div class="chat"><div style="color:#5F564A">Chat &middot; Consus</div><span class="chip" style="align-self:flex-start">gpt-5.6-terra:cui</span><div class="prompt" style="font-size:12px;padding:8px 10px"><span>Add a saturation limit</span><button class="send" data-send style="padding:5px 10px">Ask</button></div></div>
-          </div>
-        </div>
-        <div class="appwin" id="w-chatgpt">
-          <div class="apptop"><div class="lights"><i></i><i></i><i></i></div><span style="margin-left:6px">ChatGPT</span></div>
-          <div class="banner"><i></i><span>Company runs this on the Consus gateway. Cleared for ITAR and CUI work.</span></div>
-          <div style="flex:1;display:flex;flex-direction:column;justify-content:center;padding:24px 48px;gap:14px">
-            <div style="text-align:center;font-size:20px">What can I help with?</div>
-            <div class="prompt" style="border-radius:24px"><span>Draft a test readiness memo</span><button class="send" data-send style="border-radius:16px">Send</button></div>
-            <div style="display:flex;justify-content:center"><span class="chip">gpt-5.6-terra:itar</span></div>
-          </div>
-        </div>
       </div>
 
       <aside class="panel">
@@ -85,14 +38,14 @@
         </div>
 
         <div id="main" style="display:none;flex:1;min-height:0;flex-direction:column">
-        <div class="tabs" role="tablist"><button class="on" data-tab="open" role="tab" aria-selected="true">Open</button><button data-tab="keys" role="tab" aria-selected="false">Keys</button><button data-tab="traffic" role="tab" aria-selected="false">Log <span id="tcount"></span></button></div>
+        <div class="tabs" role="tablist"><button class="on" data-tab="open" role="tab" aria-selected="true">Open</button><button data-tab="keys" role="tab" aria-selected="false">Keys</button><button data-tab="traffic" role="tab" aria-selected="false">Log</button></div>
 
         <div class="tabpane on" id="p-open">
           <p class="h">Open with the right setup</p>
           <button class="tool" data-app="desktop"><span class="ic">C</span><span><div class="nm">Claude Desktop</div><div class="sb" data-sb="desktop">Chat, docs, analysis</div></span><span class="go">OPEN</span></button>
           <button class="tool" data-app="chatgpt"><span class="ic">G</span><span><div class="nm">ChatGPT</div><div class="sb" data-sb="chatgpt">Chat, docs, analysis</div></span><span class="go">OPEN</span></button>
           <button class="tool" data-app="code"><span class="ic">&gt;_</span><span><div class="nm">Claude Code</div><div class="sb" data-sb="code">Terminal agent</div></span><span class="go">OPEN</span></button>
-          <button class="tool missing" data-app="vscode" data-missing="1"><span class="ic">{ }</span><span><div class="nm">VS Code</div><div class="sb" data-sb="vscode">Not installed &middot; get it from code.visualstudio.com</div></span><span class="go">GET IT &#8599;</span></button>
+          <button class="tool locked" data-app="vscode" disabled><span class="ic">{ }</span><span><div class="nm">VS Code</div><div class="sb">Editor chat</div></span><span class="go">COMING SOON</span></button>
           <p class="note" id="whoNote"></p>
         </div>
 
@@ -106,8 +59,9 @@
         </div>
 
         <div class="tabpane log" id="p-traffic">
-          <div class="loghead"><span><i></i><span id="nDest">0</span> destination<span id="pl">s</span></span><span id="rate">idle</span></div>
-          <pre id="feed" aria-live="polite" aria-label="Request log"><span class="dim">// waiting for the first request</span>
+          <div class="loghead"><span><i></i>0 destinations</span><span>coming soon</span></div>
+          <pre id="feed" aria-label="Request log"><span class="dim">// coming soon: the request log needs a portal endpoint
+// that does not exist yet. Nothing is recorded here.</span>
 </pre>
           <div class="cursor"><span class="dim">consus &gt;</span> <b>_</b></div>
         </div>

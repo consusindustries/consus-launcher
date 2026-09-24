@@ -4,30 +4,33 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { listen } from "@tauri-apps/api/event";
 
 const PORTAL_URL = "https://portal.consus.io";
-// Tools the launcher really detects, configures, and launches. The rest of the
-// tiles are still the wireframe's demo until their build-order step lands.
-type RealTool = "desktop" | "chatgpt" | "code";
-const REAL_TOOLS: RealTool[] = ["desktop", "chatgpt", "code"];
-const DOWNLOAD: Record<RealTool, string> = {
+// Tools the launcher detects, configures, and launches. Any other tile is
+// marked Coming soon in the markup and does nothing.
+type Tool = "desktop" | "chatgpt" | "code";
+const TOOLS: Tool[] = ["desktop", "chatgpt", "code"];
+const NAME: Record<Tool, string> = {
+  desktop: "Claude Desktop",
+  chatgpt: "ChatGPT",
+  code: "Claude Code",
+};
+const DOWNLOAD: Record<Tool, string> = {
   desktop: "https://claude.ai/download",
   chatgpt: "https://openai.com/chatgpt/download/",
   code: "https://claude.com/claude-code",
 };
-const SUBTITLE: Record<RealTool, string> = {
+const SUBTITLE: Record<Tool, string> = {
   desktop: "Chat, docs, analysis",
   chatgpt: "Chat, docs, analysis",
   code: "Terminal agent",
 };
-const NOT_INSTALLED: Record<RealTool, string> = {
+const NOT_INSTALLED: Record<Tool, string> = {
   desktop: "Not installed · get it from claude.ai/download",
   chatgpt: "Not installed · get it from openai.com",
   code: "Not installed · get it from claude.com/claude-code",
 };
-const isRealTool = (k: string): k is RealTool => (REAL_TOOLS as string[]).includes(k);
-// Real tools the launcher has running right now; more than one can be up.
-const running = new Set<RealTool>();
-
-type ToolKey = "desktop" | "chatgpt" | "code" | "vscode";
+const isTool = (k: string): k is Tool => (TOOLS as string[]).includes(k);
+// Tools the launcher has running right now; more than one can be up.
+const running = new Set<Tool>();
 
 interface ConnectResult {
   models: unknown;
@@ -48,34 +51,13 @@ interface KeyInfo {
   added: string;
 }
 
-interface LogRow {
-  t: string;
-  host: string;
-  kb: number;
-  app: string;
-  m: string;
-  k: string;
-  ms: number;
-}
-
-const TOOLS: Record<ToolKey, [string, string]> = {
-  desktop: ["Claude Desktop", "claude-sonnet-5:itar"],
-  chatgpt: ["ChatGPT", "gpt-5.6-terra:itar"],
-  code: ["Claude Code", "claude-sonnet-5:itar"],
-  vscode: ["VS Code", "gpt-5.6-terra:cui"],
-};
-
 interface KeyStore {
   def: KeyInfo | null;
-  tool: Partial<Record<ToolKey, KeyInfo>>;
+  tool: Partial<Record<Tool, KeyInfo>>;
 }
 
-let cur: ToolKey | null = null;
-let rows: LogRow[] = [];
-let hosts: Record<string, 1> = {};
+let cur: Tool | null = null;
 let K: KeyStore = { def: null, tool: {} };
-let timer: ReturnType<typeof setInterval> | null = null;
-const last: Partial<Record<ToolKey, number>> = {};
 
 function $<T extends HTMLElement = HTMLElement>(id: string): T {
   const el = document.getElementById(id);
@@ -87,10 +69,6 @@ function esc(x: string): string {
   return String(x).replace(/[&<>"]/g, (c) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c] ?? c,
   );
-}
-
-function ts(): string {
-  return new Date().toTimeString().slice(0, 8);
 }
 
 function mask(k: string): string {
@@ -127,8 +105,9 @@ function applyConnectResult(rawKey: string, result: ConnectResult): KeyInfo {
   };
 }
 
-function info(k: string): KeyInfo {
-  return { key: k, mask: mask(k), user: "eric@company.com", models: 6, added: new Date().toLocaleDateString() };
+// Per-tool keys are held in memory only until build-order step 5 wires them.
+function perToolKey(k: string): KeyInfo {
+  return { key: k, mask: mask(k), user: mask(k), models: 0, added: new Date().toLocaleDateString() };
 }
 
 function setConnected(on: boolean): void {
@@ -153,7 +132,7 @@ function setConnected(on: boolean): void {
   }
 }
 
-function keyFor(a: ToolKey): KeyInfo {
+function keyFor(a: Tool): KeyInfo {
   return K.tool[a] ?? K.def!;
 }
 
@@ -163,19 +142,16 @@ function renderKeys(): void {
     '<div class="t"><span>' + esc(K.def.mask) + '</span><span class="tag own">DEFAULT</span></div>' +
     '<div class="m">' + esc(K.def.user) + " · " + K.def.models + " models · added " + K.def.added + "</div>" +
     '<div class="acts"><button class="mini" data-change="def">REPLACE</button></div><div id="edit-def"></div>';
-  $("toolKeys").innerHTML = (Object.keys(TOOLS) as ToolKey[])
-    .map((a) => {
-      const own = !!K.tool[a];
-      const k = keyFor(a);
-      return (
-        '<div class="krow"><div class="t"><span>' + TOOLS[a][0] + '</span><span class="tag' + (own ? " own" : "") + '">' +
-        (own ? "OWN KEY" : "DEFAULT") + '</span></div><div class="m">' + esc(k.mask) + '</div><div class="acts">' +
-        '<button class="mini" data-change="' + a + '">' + (own ? "REPLACE" : "USE A DIFFERENT KEY") + "</button>" +
-        (own ? '<button class="mini" data-reset="' + a + '">USE DEFAULT</button>' : "") +
-        '</div><div id="edit-' + a + '"></div></div>'
-      );
-    })
-    .join("");
+  $("toolKeys").innerHTML = TOOLS.map((a) => {
+    const own = !!K.tool[a];
+    return (
+      '<div class="krow"><div class="t"><span>' + NAME[a] + '</span><span class="tag' + (own ? " own" : "") + '">' +
+      (own ? "OWN KEY" : "DEFAULT") + '</span></div><div class="m">' + esc(keyFor(a).mask) + '</div><div class="acts">' +
+      '<button class="mini" data-change="' + a + '">' + (own ? "REPLACE" : "USE A DIFFERENT KEY") + "</button>" +
+      (own ? '<button class="mini" data-reset="' + a + '">USE DEFAULT</button>' : "") +
+      '</div><div id="edit-' + a + '"></div></div>'
+    );
+  }).join("");
 }
 
 function editor(slot: string): void {
@@ -194,74 +170,6 @@ function editor(slot: string): void {
   $("in-" + slot).focus();
 }
 
-function pad(x: string | number, n: number): string {
-  let s = String(x);
-  while (s.length < n) s += " ";
-  return s;
-}
-
-function render(): void {
-  const n = Object.keys(hosts).length;
-  $("nDest").textContent = String(n);
-  $("pl").textContent = n === 1 ? "" : "s";
-  $("tcount").textContent = rows.length ? "· " + rows.length : "";
-  if (!rows.length) {
-    $("feed").innerHTML = '<span class="dim">// waiting for the first request</span>\n';
-    return;
-  }
-  $("feed").innerHTML = rows
-    .slice(0, 60)
-    .map(
-      (r) =>
-        '<span class="l"><span class="t">' + r.t + '</span>  <span class="h">' + pad(r.host, 16) + "</span> " +
-        pad(r.kb + " kB", 7) + " " + pad(r.app, 15) + " " + pad(r.m, 22) + ' <span class="k">' + esc(r.k) + "</span>  " + r.ms + " ms</span>",
-    )
-    .join("");
-  $("feed").scrollTop = 0;
-}
-
-function stream(): void {
-  if (timer) clearInterval(timer);
-  if (!cur) return;
-  timer = setInterval(() => {
-    if (Math.random() < 0.55) req();
-  }, 1800);
-}
-
-function ago(a: ToolKey): string | null {
-  const t = last[a];
-  if (!t) return null;
-  const m = Math.round((Date.now() - t) / 60000);
-  return m < 1 ? "just now" : m + " min ago";
-}
-
-function subs(): void {
-  (Object.keys(TOOLS) as ToolKey[]).forEach((a) => {
-    const el = document.querySelector<HTMLElement>('[data-sb="' + a + '"]');
-    if (!el || el.closest(".tool")?.hasAttribute("data-missing")) return;
-    const t = ago(a);
-    el.textContent = t ? "Last used " + t : el.dataset.d ?? "";
-  });
-}
-
-function req(): void {
-  if (!cur) return;
-  last[cur] = Date.now();
-  subs();
-  hosts["api.consus.io"] = 1;
-  rows.unshift({
-    t: ts(),
-    host: "api.consus.io",
-    kb: Math.round(Math.random() * 38 + 3),
-    app: TOOLS[cur][0],
-    m: TOOLS[cur][1],
-    k: keyFor(cur).mask,
-    ms: Math.round(Math.random() * 900 + 300),
-  });
-  $("rate").textContent = "live";
-  render();
-}
-
 async function resetAll(): Promise<void> {
   for (const cmd of ["keychain_delete_key", "remove_tool_configs"]) {
     try {
@@ -272,20 +180,10 @@ async function resetAll(): Promise<void> {
   }
   K = { def: null, tool: {} };
   cur = null;
-  rows = [];
-  hosts = {};
-  for (const k of Object.keys(last) as ToolKey[]) delete last[k];
-  if (timer) clearInterval(timer);
-  $("rate").textContent = "idle";
-  render();
-  document.querySelectorAll<HTMLElement>(".appwin").forEach((w) => {
-    w.classList.remove("on");
-    w.style.display = "";
-  });
   $("empty").style.display = "";
   document.querySelectorAll<HTMLElement>(".tool").forEach((x) => {
     x.classList.remove("on");
-    x.querySelector(".go")!.textContent = "OPEN";
+    if (!x.classList.contains("locked")) x.querySelector(".go")!.textContent = "OPEN";
   });
   $("empty").querySelector("b")!.textContent = "Connect, then pick a tool.";
   $("empty").querySelector("span")!.textContent = "Paste your key on the right. One time.";
@@ -375,7 +273,7 @@ function wireKeysTab(): void {
       return;
     }
     if (t.dataset.reset) {
-      delete K.tool[t.dataset.reset as ToolKey];
+      delete K.tool[t.dataset.reset as Tool];
       renderKeys();
       return;
     }
@@ -389,7 +287,7 @@ function wireKeysTab(): void {
       }
       const rawKey = v.trim();
       if (slot !== "def") {
-        K.tool[slot as ToolKey] = info(rawKey);
+        K.tool[slot as Tool] = perToolKey(rawKey);
         renderKeys();
         return;
       }
@@ -418,7 +316,7 @@ function wireKeysTab(): void {
   });
 }
 
-function toolTile(key: RealTool): HTMLButtonElement {
+function toolTile(key: Tool): HTMLButtonElement {
   return document.querySelector<HTMLButtonElement>(`.tool[data-app="${key}"]`)!;
 }
 
@@ -429,7 +327,7 @@ interface ToolStatus {
 
 async function refreshTools(): Promise<void> {
   const status = await invoke<Record<string, ToolStatus>>("detect_tools");
-  for (const key of REAL_TOOLS) {
+  for (const key of TOOLS) {
     const st = status[key] ?? { installed: false, icon: null };
     const b = toolTile(key);
     const go = b.querySelector<HTMLElement>(".go")!;
@@ -479,29 +377,24 @@ async function glassRect(): Promise<{ x: number; y: number; w: number; h: number
   };
 }
 
-function activateTile(b: HTMLButtonElement, key: ToolKey): void {
+function activateTile(b: HTMLButtonElement, key: Tool): void {
   document.querySelectorAll<HTMLButtonElement>(".tool").forEach((x) => {
     x.classList.remove("on");
     const k = x.dataset.app ?? "";
-    const stillRunning = isRealTool(k) && running.has(k);
-    if (x !== b && !stillRunning) x.querySelector(".go")!.textContent = "OPEN";
+    const other = isTool(k) && x !== b && !running.has(k);
+    if (other) x.querySelector(".go")!.textContent = "OPEN";
   });
   b.classList.add("on");
   b.querySelector(".go")!.textContent = "RUNNING";
   cur = key;
   $("empty").style.display = "none";
-  document.querySelectorAll<HTMLElement>(".appwin").forEach((w) => {
-    w.classList.remove("on");
-    w.style.display = "";
-  });
 }
 
-async function launchTool(b: HTMLButtonElement, key: RealTool): Promise<void> {
+async function launchTool(b: HTMLButtonElement, key: Tool): Promise<void> {
   if (b.disabled) return;
   const go = b.querySelector<HTMLElement>(".go")!;
   const sb = b.querySelector<HTMLElement>("[data-sb]")!;
   b.disabled = true;
-  if (timer) clearInterval(timer);
   go.textContent = "OPENING…";
   try {
     await invoke("launch_tool", { tool: key, rect: await glassRect(), models: currentModels ?? [] });
@@ -520,46 +413,14 @@ async function launchTool(b: HTMLButtonElement, key: RealTool): Promise<void> {
 function wireTools(): void {
   document.querySelectorAll<HTMLButtonElement>(".tool").forEach((b) => {
     b.addEventListener("click", () => {
-      const a = b.dataset.app as ToolKey;
-      if (isRealTool(a)) {
-        if (b.dataset.missing) {
-          void openUrl(DOWNLOAD[a]);
-          b.querySelector("[data-sb]")!.textContent = "Download opened in your browser. Install it, then come back.";
-          return;
-        }
-        void launchTool(b, a);
-        return;
-      }
+      const a = b.dataset.app ?? "";
+      if (!isTool(a)) return;
       if (b.dataset.missing) {
-        b.querySelector(".go")!.textContent = "OPENING…";
+        void openUrl(DOWNLOAD[a]);
         b.querySelector("[data-sb]")!.textContent = "Download opened in your browser. Install it, then come back.";
-        setTimeout(() => {
-          delete b.dataset.missing;
-          b.classList.remove("missing");
-          b.querySelector(".go")!.textContent = "OPEN";
-          const sb = b.querySelector<HTMLElement>("[data-sb]")!;
-          sb.textContent = "Installed. Config written.";
-          sb.dataset.d = "Editor chat";
-          setTimeout(subs, 2500);
-        }, 3500);
         return;
       }
-      activateTile(b, a);
-      const w = $("w-" + a);
-      w.style.display = "flex";
-      requestAnimationFrame(() => w.classList.add("on"));
-      req();
-      stream();
-    });
-  });
-}
-
-function wireSend(): void {
-  document.querySelectorAll<HTMLButtonElement>("[data-send]").forEach((b) => {
-    b.addEventListener("click", () => {
-      req();
-      setTimeout(req, 450);
-      if (cur === "code") $("codeOut").textContent = "  Reading sim/thermal.py … explaining lumped-mass model";
+      void launchTool(b, a);
     });
   });
 }
@@ -604,21 +465,19 @@ async function restoreSession(): Promise<void> {
 }
 
 function init(): void {
-  document.querySelectorAll<HTMLElement>("[data-sb]").forEach((el) => {
-    if (!el.closest(".tool")?.hasAttribute("data-missing")) el.dataset.d = el.textContent ?? "";
+  document.querySelectorAll<HTMLElement>(".tool [data-sb]").forEach((el) => {
+    el.dataset.d = el.textContent ?? "";
   });
   document.querySelectorAll<HTMLElement>(".tool .ic").forEach((ic) => {
     ic.dataset.glyph = ic.textContent ?? "";
   });
-  setInterval(subs, 30000);
   wireWindowControls();
   wireConnect();
   wireKeysTab();
   wireTools();
-  wireSend();
   wireTabs();
   void listen<string>("tool-exited", (e) => {
-    if (!isRealTool(e.payload)) return;
+    if (!isTool(e.payload)) return;
     running.delete(e.payload);
     const b = toolTile(e.payload);
     b.classList.remove("on");
@@ -631,7 +490,7 @@ function init(): void {
     if (running.size === 0) $("empty").style.display = "";
   });
   void listen<{ tool: string; message: string }>("tool-notice", (e) => {
-    if (!isRealTool(e.payload.tool)) return;
+    if (!isTool(e.payload.tool)) return;
     const sb = toolTile(e.payload.tool).querySelector<HTMLElement>("[data-sb]")!;
     sb.textContent = e.payload.message;
     sb.dataset.d = e.payload.message;
