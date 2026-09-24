@@ -5,8 +5,10 @@ name: Release
 #
 # On a v* tag: a draft GitHub Release with the universal .dmg and .pkg, the
 # SBOMs, and SHA-256 checksums, for a person to review and publish.
-# On a pull request that changes this file, or when run by hand: the same
-# build as a dry run, with the files kept as workflow artifacts only.
+# On a pull request that touches the release or bundle settings, or when run
+# by hand: the same build as a dry run, with the files kept as workflow
+# artifacts only. Pull requests never see the Apple secrets; a run by hand
+# does, so signing can be tried before tagging.
 #
 # Signing and notarization run when the Apple secrets exist and are skipped
 # when they do not, in which case the app is ad-hoc signed. Secrets:
@@ -18,6 +20,7 @@ name: Release
 #   APPLE_API_ISSUER            App Store Connect API issuer id
 #   APPLE_API_KEY               App Store Connect API key id
 #   APPLE_API_KEY_P8            contents of that key's AuthKey_<id>.p8
+# The first four go together, and so do the last three.
 #
 # Mac only for now: tool launching is macOS only (Windows builds in build.yml).
 # No updater manifest: the app does not auto-update, because an updater would
@@ -27,7 +30,15 @@ on:
   push:
     tags: ["v*"]
   pull_request:
-    paths: [".github/workflows/release.yml"]
+    paths:
+      - ".github/workflows/release.yml"
+      - "package.json"
+      - "src-tauri/tauri.conf.json"
+      - "src-tauri/Info.plist"
+      - "src-tauri/Entitlements.plist"
+      - "src-tauri/Cargo.toml"
+      - "src-tauri/Cargo.lock"
+      - "src-tauri/icons/**"
   workflow_dispatch:
 
 permissions:
@@ -36,12 +47,23 @@ permissions:
 jobs:
   macos:
     runs-on: macos-latest
-    permissions:
-      contents: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      notarized: ${{ steps.installers.outputs.notarized }}
     env:
       CARGO_CYCLONEDX_VERSION: 0.5.9
+      # Empty on pull requests, so a dry run never holds signing material.
+      CERT: ${{ github.event_name != 'pull_request' && secrets.APPLE_CERTIFICATE || '' }}
+      CERT_PASSWORD: ${{ github.event_name != 'pull_request' && secrets.APPLE_CERTIFICATE_PASSWORD || '' }}
+      SIGNING_IDENTITY: ${{ github.event_name != 'pull_request' && secrets.APPLE_SIGNING_IDENTITY || '' }}
+      INSTALLER_IDENTITY: ${{ github.event_name != 'pull_request' && secrets.APPLE_INSTALLER_IDENTITY || '' }}
+      API_ISSUER: ${{ github.event_name != 'pull_request' && secrets.APPLE_API_ISSUER || '' }}
+      API_KEY: ${{ github.event_name != 'pull_request' && secrets.APPLE_API_KEY || '' }}
+      API_KEY_P8: ${{ github.event_name != 'pull_request' && secrets.APPLE_API_KEY_P8 || '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -53,18 +75,27 @@ jobs:
           rustup default stable
           rustup target add aarch64-apple-darwin x86_64-apple-darwin
 
-      - name: Check the version
+      - name: Check the version and the Apple secrets
         id: version
         run: |
           v=$(node -p "require('./src-tauri/tauri.conf.json').version")
           pkg=$(node -p "require('./package.json').version")
+          lock=$(node -p "require('./package-lock.json').version")
           cargo=$(sed -n 's/^version = "\(.*\)"/\1/p' src-tauri/Cargo.toml | head -1)
-          if [ "$pkg" != "$v" ] || [ "$cargo" != "$v" ]; then
-            echo "Versions differ: tauri.conf.json $v, package.json $pkg, Cargo.toml $cargo"
+          if [ "$pkg" != "$v" ] || [ "$lock" != "$v" ] || [ "$cargo" != "$v" ]; then
+            echo "Versions differ: tauri.conf.json $v, package.json $pkg, package-lock.json $lock, Cargo.toml $cargo"
             exit 1
           fi
           if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "v$v" ]; then
             echo "Tag $GITHUB_REF_NAME does not match version $v"
+            exit 1
+          fi
+          if [ -n "$CERT" ] && { [ -z "$CERT_PASSWORD" ] || [ -z "$SIGNING_IDENTITY" ] || [ -z "$INSTALLER_IDENTITY" ]; }; then
+            echo "APPLE_CERTIFICATE is set, so APPLE_CERTIFICATE_PASSWORD, APPLE_SIGNING_IDENTITY, and APPLE_INSTALLER_IDENTITY must be too."
+            exit 1
+          fi
+          if [ -n "$API_KEY_P8" ] && { [ -z "$API_KEY" ] || [ -z "$API_ISSUER" ] || [ -z "$CERT" ]; }; then
+            echo "APPLE_API_KEY_P8 is set, so APPLE_API_KEY, APPLE_API_ISSUER, and the certificate secrets must be too."
             exit 1
           fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
@@ -73,13 +104,6 @@ jobs:
         run: npm ci
 
       - name: Build the app and .dmg
-        env:
-          CERT: ${{ secrets.APPLE_CERTIFICATE }}
-          CERT_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-          API_KEY: ${{ secrets.APPLE_API_KEY }}
-          API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
         run: |
           if [ -n "$CERT" ]; then
             export APPLE_CERTIFICATE="$CERT" APPLE_CERTIFICATE_PASSWORD="$CERT_PASSWORD"
@@ -96,13 +120,8 @@ jobs:
           npm run tauri -- build --target universal-apple-darwin --bundles app,dmg
 
       - name: Build the .pkg, and notarize the installers
+        id: installers
         env:
-          CERT: ${{ secrets.APPLE_CERTIFICATE }}
-          CERT_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          INSTALLER_IDENTITY: ${{ secrets.APPLE_INSTALLER_IDENTITY }}
-          API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-          API_KEY: ${{ secrets.APPLE_API_KEY }}
-          API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
@@ -110,27 +129,40 @@ jobs:
           mkdir -p release
           cp "$bundle"/dmg/*.dmg "release/Consus-Launcher-$VERSION-universal.dmg"
           pkg="release/Consus-Launcher-$VERSION-universal.pkg"
-          if [ -n "$CERT" ] && [ -n "$INSTALLER_IDENTITY" ]; then
+          if [ -n "$CERT" ]; then
             kc="$RUNNER_TEMP/installer.keychain-db"
             security create-keychain -p "" "$kc"
             security unlock-keychain -p "" "$kc"
             printf '%s' "$CERT" | base64 --decode > "$RUNNER_TEMP/cert.p12"
             security import "$RUNNER_TEMP/cert.p12" -k "$kc" -P "$CERT_PASSWORD" -T /usr/bin/productbuild
             rm "$RUNNER_TEMP/cert.p12"
+            # Lets Apple's tools use the key without a prompt no one can answer.
+            security set-key-partition-list -S apple-tool:,apple: -s -k "" "$kc" > /dev/null
             security list-keychains -d user -s "$kc" $(security list-keychains -d user | tr -d '"')
             productbuild --component "$bundle/macos/Consus Launcher.app" /Applications \
               --sign "$INSTALLER_IDENTITY" --keychain "$kc" "$pkg"
           else
             productbuild --component "$bundle/macos/Consus Launcher.app" /Applications "$pkg"
           fi
-          if [ -n "$CERT" ] && [ -n "$API_KEY_P8" ]; then
+          notarized=false
+          if [ -n "$API_KEY_P8" ]; then
             key="$RUNNER_TEMP/AuthKey_$API_KEY.p8"
             printf '%s' "$API_KEY_P8" > "$key"
             for f in release/*.dmg release/*.pkg; do
-              xcrun notarytool submit "$f" --key "$key" --key-id "$API_KEY" --issuer "$API_ISSUER" --wait
+              xcrun notarytool submit "$f" --key "$key" --key-id "$API_KEY" --issuer "$API_ISSUER" \
+                --wait --output-format json > "$RUNNER_TEMP/notary.json"
+              status=$(jq -r .status "$RUNNER_TEMP/notary.json")
+              if [ "$status" != "Accepted" ]; then
+                echo "Notarization of $f: $status"
+                xcrun notarytool log "$(jq -r .id "$RUNNER_TEMP/notary.json")" \
+                  --key "$key" --key-id "$API_KEY" --issuer "$API_ISSUER" || true
+                exit 1
+              fi
               xcrun stapler staple "$f"
             done
+            notarized=true
           fi
+          echo "notarized=$notarized" >> "$GITHUB_OUTPUT"
 
       - name: SBOMs and checksums
         run: |
@@ -147,21 +179,34 @@ jobs:
           path: release/
           if-no-files-found: error
 
+  # Only this job can write to the repository, and it runs no build code.
+  draft:
+    if: github.ref_type == 'tag'
+    needs: macos
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: consus-launcher-${{ needs.macos.outputs.version }}-macos
+          path: release
+
       - name: Draft the GitHub Release
-        if: github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ github.token }}
-          SIGNED: ${{ secrets.APPLE_CERTIFICATE != '' }}
-          VERSION: ${{ steps.version.outputs.version }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.macos.outputs.version }}
+          NOTARIZED: ${{ needs.macos.outputs.notarized }}
         run: |
           {
             echo "Consus Launcher $VERSION for macOS (Apple silicon and Intel)."
             echo
             echo "Download the .dmg, or the .pkg to install into /Applications."
             echo "SHA256SUMS.txt lists the checksums; the .cdx.json files are the CycloneDX SBOMs."
-            if [ "$SIGNED" != "true" ]; then
+            if [ "$NOTARIZED" != "true" ]; then
               echo
-              echo "This build is not yet signed by Apple. On first open, macOS will block it:"
+              echo "This build is not yet notarized by Apple. On first open, macOS will block it:"
               echo "open System Settings, Privacy and Security, and click Open Anyway."
             fi
           } > "$RUNNER_TEMP/notes.md"

@@ -15,9 +15,10 @@ Consus Launcher is a small open source desktop app for macOS. It writes each too
 | Pi | Terminal | `~/.pi-consus-gateway/` (its own profile) |
 
 - **Your own setup is left alone.** Claude Code, Codex CLI, and Pi each get a separate profile folder, so `~/.claude` and `~/.pi` are never touched and Codex CLI runs apart from `~/.codex`. ChatGPT has no such option: its settings are merged into `~/.codex/config.toml`, which your own `codex` also reads. Terminal tools start in an empty `~/Consus` folder.
-- **Models:** each tool lists the ITAR models your key can use, from `GET /v1/models`.
+- **Models:** each tool is set up with the ITAR models your key can use, from `GET /v1/models` (ChatGPT starts on one; the others list them all).
 - **The key** lives in the macOS Keychain and is never written to a file. Tools fetch it through the launcher itself (a keychain helper), or receive it in the environment of the process the launcher starts.
 - **Windows:** a tool opens inside the launcher's glass area, then moves freely. Quitting the launcher quits the tools it started, never ones you opened yourself.
+- **Claude and ChatGPT restart once.** If either app is already open when you click it, the launcher asks it to quit and reopens it in gateway mode, because both read their settings only at startup.
 - **Sign out** removes the launcher's settings from each tool and keeps everything else, including your history.
 - A tool that is not installed links to its vendor. Consus never installs software.
 
@@ -32,7 +33,7 @@ Consus Launcher is a small open source desktop app for macOS. It writes each too
 
 ## What it connects to
 
-The launcher makes one kind of network request: `GET https://api.consus.io/v1/models` when you connect, to check the key and list your models. `https://portal.consus.io` only ever opens in your browser.
+The launcher makes one kind of network request: `GET https://api.consus.io/v1/models`, when you connect and each time the launcher starts, to check the key and list your models. `https://portal.consus.io` only ever opens in your browser.
 
 The tools you open send their requests to `api.consus.io` with the settings the launcher writes. What else a tool does is up to the tool. For ChatGPT and Codex, the launcher's config turns off analytics, feedback, and OpenTelemetry export, and Codex's update check; for Pi, install telemetry and the update check. On its first run, Pi downloads `fd` and `ripgrep` from GitHub, because its search tools need them.
 
@@ -41,7 +42,7 @@ The tools you open send their requests to `api.consus.io` with the settings the 
 Requires macOS on Apple silicon or Intel (tested on macOS 26), and a Consus API key from your Consus admin.
 
 1. Download the `.dmg` (drag to Applications) or the `.pkg` (installs to `/Applications`) from [Releases](https://github.com/consusindustries/consus-launcher/releases).
-2. Optionally, check the download against `SHA256SUMS.txt` with `shasum -a 256 -c SHA256SUMS.txt`.
+2. Optionally, check the download against `SHA256SUMS.txt` with `shasum -a 256 -c --ignore-missing SHA256SUMS.txt`.
 3. Open Consus Launcher and paste your key.
 
 **Until releases are signed by Apple,** macOS blocks the first open. Go to System Settings, Privacy and Security, and click Open Anyway.
@@ -73,11 +74,11 @@ Release builds are made only in GitHub Actions ([`release.yml`](.github/workflow
 - `consus-launcher-rust.cdx.json` and `consus-launcher-npm.cdx.json`: CycloneDX SBOMs for the Rust crates and the npm packages in the app
 - `SHA256SUMS.txt`
 
-Signing and notarization run in that same workflow once the Apple secrets are set; the secret names are listed at the top of `release.yml`.
+Signing and notarization run in that same workflow once the Apple secrets are set; the secret names are listed at the top of `release.yml`. Run the workflow by hand (Actions, Release, Run workflow) to try signing before tagging.
 
 To cut a release:
 
-1. Set the same version in `src-tauri/tauri.conf.json`, `package.json`, and `src-tauri/Cargo.toml`, and commit it with the updated `Cargo.lock`.
+1. Set the new version with `npm version --no-git-tag-version <version>` (updates `package.json` and `package-lock.json`), then in `src-tauri/tauri.conf.json` and `src-tauri/Cargo.toml`. Commit it with the updated `Cargo.lock`. The workflow refuses to build if any of these differ.
 2. Tag the commit `v<version>` and push the tag.
 3. The workflow drafts a GitHub Release with the files above. Review it, then publish.
 

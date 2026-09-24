@@ -213,7 +213,9 @@ mod tests {
     fn no_catalog_means_no_catalog_key() {
         let home = temp_home("nocatalog");
         fs::create_dir_all(profile_dir(&home)).unwrap();
-        fs::write(config_path(&home), format!("model_catalog_json = \"{}\"\n", catalog_path(&home).display())).unwrap();
+        let mut old = DocumentMut::new();
+        old["model_catalog_json"] = value(catalog_path(&home).display().to_string());
+        fs::write(config_path(&home), old.to_string()).unwrap();
         write_config(&home, &serde_json::from_str(MODELS).unwrap(), None).unwrap();
         let doc: DocumentMut = fs::read_to_string(config_path(&home)).unwrap().parse().unwrap();
         assert!(doc.get("model_catalog_json").is_none());
