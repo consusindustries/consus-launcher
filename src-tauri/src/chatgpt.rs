@@ -1,11 +1,6 @@
 // ChatGPT desktop app (ChatGPT Work and Codex modes): ~/.codex/config.toml,
-// one per-user file shared with Codex CLI, which the app also writes to.
-//
-// Docs checked: gov_open_router/docs/integrations/chatgpt-desktop.md and
-//   consus-key-portal lib/deploy/templates/codex.ts (2026-09-22)
-// Verified on a real machine: macOS, ChatGPT 26.915, 2026-09-22. Launched from
-//   the launcher with the key in the environment; a request was answered and the
-//   app's footer read "Consus Gateway".
+// one per-user file shared with Codex CLI, which the app also writes to. The
+// template and its provenance live in templates/chatgpt-desktop.toml.
 //
 // The launcher spawns the app itself, so the key travels in that process's
 // environment (env_http_headers) and is never written to the file. The
@@ -26,73 +21,8 @@ use crate::models::{self, REGIME, REGIME_TAG};
 // in preference order. The models endpoint does not expose this.
 const RESPONSES_MODELS: [&str; 5] = ["gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.6-luna", "gpt-5.4", "gpt-5.1"];
 
-// Verbatim from the guide, minus the inline key: env_http_headers instead.
-const TEMPLATE: &str = r#"model_provider = "consus"
-model_reasoning_effort = "medium"
-model_reasoning_summary = "auto"
-web_search = "disabled"
-approval_policy = "on-request"
-approvals_reviewer = "user"
-sandbox_mode = "workspace-write"
-
-[sandbox_workspace_write]
-network_access = false
-
-[model_providers.consus]
-name = "Consus Gateway"
-base_url = "https://api.consus.io/v1"
-wire_api = "responses"
-env_http_headers = { "x-api-key" = "CONSUS_API_KEY" }
-
-[shell_environment_policy]
-inherit = "all"
-exclude = ["AWS_*", "AZURE_*", "GOOGLE_*", "GCP_*", "CONSUS_*", "OPENAI_*", "ANTHROPIC_*", "*_KEY", "*_TOKEN", "*_SECRET", "*PASSWORD*"]
-
-[features]
-computer_use = false
-browser_use = false
-browser_use_external = false
-browser_use_full_cdp_access = false
-in_app_browser = false
-image_generation = false
-realtime_conversation = false
-in_app_dictation = false
-apps = false
-remote_plugin = false
-plugin_sharing = false
-recommended_plugins = false
-tool_suggest = false
-skill_mcp_dependency_install = false
-memories = false
-
-[computer_use]
-default_app_access = "deny"
-
-[browser_use]
-allow_history_access = false
-
-[browser_use.default_origin_policy]
-access = "deny"
-uploads = "deny"
-downloads = "deny"
-full_cdp_access = "deny"
-
-[memories]
-use_memories = false
-generate_memories = false
-
-[analytics]
-enabled = false
-
-[feedback]
-enabled = false
-
-[otel]
-exporter = "none"
-trace_exporter = "none"
-metrics_exporter = "none"
-log_user_prompt = false
-"#;
+// The guide's config, minus the inline key. Provenance is in the file.
+const TEMPLATE: &str = include_str!("../templates/chatgpt-desktop.toml");
 
 /// The one model the app starts on: the most preferred Responses-served GPT
 /// model this key can use in the regime, as a bare id ("gpt-5.6-terra:itar").
@@ -305,6 +235,7 @@ followUpQueueMode = "steer"
         assert!(out.contains("followUpQueueMode"));
         assert!(out.contains("# Consus Gateway: compliance baseline"));
         assert!(!home.join(".codex/config.toml.consus-bak").exists(), "no snapshot of a key-bearing file");
+        assert!(!out.contains("Docs checked"), "the template's own header comment stays in the template");
 
         let first_table = out.find("\n[").unwrap();
         for key in ["model = ", "model_provider = ", "model_catalog_json", "notify = ["] {
