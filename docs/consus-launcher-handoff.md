@@ -21,7 +21,7 @@ It is a front door, not a gateway and not an enforcement agent. It writes config
 - **No local database.** Settings are one JSON file. Log is a live view, not stored.
 - **Log is metadata only.** Host, time, size, tool, model, key suffix, latency. Never request or response content. v1 sources the log from the portal's request feed for the user's keys, not from a local proxy.
 - **Self-hosted, open source.** Public repo, permissive license. Signed builds on GitHub Releases.
-- **Tool list for v1:** Claude Desktop, Claude Code, VS Code (Copilot chat harness with `customendpoint`). ChatGPT is in the UI as a fourth tool but ships in v1.1, once Eric confirms how ChatGPT desktop is pointed at a custom endpoint; until then it shows "Coming soon" and does nothing. Pi is not in the launcher. Updated 2026-09-24: ChatGPT desktop shipped (confirmed via `~/.codex/config.toml`), Pi is in (Eric's call), VS Code is deferred, Codex CLI is next.
+- **Tool list for v1:** Claude Desktop, Claude Code, VS Code (Copilot chat harness with `customendpoint`). ChatGPT is in the UI as a fourth tool but ships in v1.1, once Eric confirms how ChatGPT desktop is pointed at a custom endpoint; until then it shows "Coming soon" and does nothing. Pi is not in the launcher. Updated 2026-09-24: ChatGPT desktop shipped (confirmed via `~/.codex/config.toml`), Pi and Codex CLI are in, and VS Code is dropped (all Eric's calls).
 - **Templates are built in for v1.** One file per tool in `src-tauri/templates/`, with a placeholder for the model list. The launcher fills the list from `GET /v1/models` and writes the file. Later, when the portal exposes a templates endpoint for the Deployment page, the launcher prefers that and falls back to the built-in copies. Not a v1 concern.
 
 ## 3. Repo

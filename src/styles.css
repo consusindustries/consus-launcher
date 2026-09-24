@@ -59,7 +59,6 @@ body{display:flex}
 .tool .sb{font-size:12px;color:var(--side-h)}
 .tool .go{font-family:var(--mono);font-size:10px;letter-spacing:.1em;color:var(--side-h)}
 .tool.on .go{color:var(--orange)}
-.tool.locked{cursor:default;opacity:.6}.tool.locked .ic{background:var(--side-3);color:var(--side-h)}
 .note{font-size:12px;color:var(--side-h);border-top:1px solid var(--side-3);padding-top:12px;margin-top:6px}
 .foot{padding:12px 16px;border-top:1px solid var(--side-3);font-family:var(--mono);font-size:10px;color:var(--side-h);letter-spacing:.04em}
 .connect{padding:18px 16px;flex:1;overflow:auto}

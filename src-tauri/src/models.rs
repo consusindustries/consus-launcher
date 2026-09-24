@@ -17,6 +17,17 @@ pub fn bare(id: &str) -> &str {
     id.strip_prefix("consus/").unwrap_or(id)
 }
 
+/// Every model id this key can use, bare.
+pub fn ids(models_json: &Value) -> Vec<&str> {
+    models_json
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|m| m.get("id").and_then(Value::as_str))
+        .map(bare)
+        .collect()
+}
+
 /// One Claude model in the regime, as a template sees it.
 pub struct ClaudeModel {
     /// Bare id with suffix: "claude-opus-4-8:itar".
