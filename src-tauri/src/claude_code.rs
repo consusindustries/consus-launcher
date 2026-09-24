@@ -52,7 +52,7 @@ fn settings_path(home: &Path) -> PathBuf {
 /// A missing or empty file is an empty object. Any other read or parse
 /// failure is an error, never an empty object that would then overwrite
 /// the user's settings.
-fn read_object(path: &Path) -> Result<Map<String, Value>, String> {
+pub fn read_object(path: &Path) -> Result<Map<String, Value>, String> {
     let s = match fs::read_to_string(path) {
         Ok(s) => s,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Map::new()),

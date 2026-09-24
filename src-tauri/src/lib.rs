@@ -3,6 +3,7 @@ mod claude_code;
 mod config;
 mod keychain;
 mod models;
+mod pi;
 mod portal;
 mod tools;
 
@@ -15,7 +16,7 @@ fn helper_mode() -> Option<bool> {
     let name = std::path::Path::new(&arg0).file_name()?.to_str()?;
     match name {
         tools::HELPER_NAME => Some(true),
-        tools::CODE_HELPER_NAME => Some(false),
+        tools::CODE_HELPER_NAME | tools::PI_HELPER_NAME => Some(false),
         _ => None,
     }
 }

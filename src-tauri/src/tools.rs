@@ -11,31 +11,37 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{LazyLock, Mutex};
 use std::thread;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 use tauri::{AppHandle, Emitter, Manager};
 
-use crate::{chatgpt, claude_code, config, keychain};
+use crate::{chatgpt, claude_code, config, keychain, pi};
 
 /// Claude Desktop runs the launcher binary under this name to fetch the key.
 pub const HELPER_NAME: &str = "claude-key-helper";
 /// Claude Code's apiKeyHelper runs it under this name and wants the bare key.
 pub const CODE_HELPER_NAME: &str = "claude-code-key-helper";
+/// Pi's models.json runs it under this name, also for the bare key.
+pub const PI_HELPER_NAME: &str = "pi-key-helper";
 const TERMINAL_APP: &str = "/System/Applications/Utilities/Terminal.app";
+/// Pi's mark from pi.dev on its site's background color.
+const PI_ICON: &str = include_str!("../assets/pi.svg");
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Tool {
     Desktop,
     ChatGpt,
     Code,
+    Pi,
 }
 
-const TOOLS: [Tool; 3] = [Tool::Desktop, Tool::ChatGpt, Tool::Code];
+const TOOLS: [Tool; 4] = [Tool::Desktop, Tool::ChatGpt, Tool::Code, Tool::Pi];
 
 fn key(t: Tool) -> &'static str {
     match t {
         Tool::Desktop => "desktop",
         Tool::ChatGpt => "chatgpt",
         Tool::Code => "code",
+        Tool::Pi => "pi",
     }
 }
 
@@ -44,6 +50,7 @@ fn name(t: Tool) -> &'static str {
         Tool::Desktop => "Claude",
         Tool::ChatGpt => "ChatGPT",
         Tool::Code => "Claude Code",
+        Tool::Pi => "Pi",
     }
 }
 
@@ -74,7 +81,7 @@ fn app_spec(t: Tool) -> Option<AppSpec> {
             bundle: "com.openai.codex",
             process: "ChatGPT",
         }),
-        Tool::Code => None,
+        Tool::Code | Tool::Pi => None,
     }
 }
 
@@ -108,28 +115,41 @@ fn app_path(app: &AppHandle, s: &AppSpec) -> Option<PathBuf> {
     user.exists().then_some(user)
 }
 
-static CLAUDE_CLI: LazyLock<Mutex<Option<PathBuf>>> = LazyLock::new(|| Mutex::new(None));
+/// Per program: the last answer and when the login shell gave it.
+type Cache<T> = LazyLock<Mutex<HashMap<&'static str, T>>>;
+static CLIS: Cache<(Option<PathBuf>, Instant)> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
-/// `claude` as the user's terminal would find it. A GUI app's PATH is
-/// minimal, so look in the usual places, then ask the login shell. The
-/// answer is remembered, so focus-driven refreshes cost one stat.
-fn claude_cli(app: &AppHandle) -> Option<PathBuf> {
-    if let Some(p) = CLAUDE_CLI.lock().unwrap().clone().filter(|p| p.exists()) {
-        return Some(p);
+/// How long "not installed" from the login shell stands before asking again.
+const SHELL_RECHECK: Duration = Duration::from_secs(60);
+
+/// A command-line tool as the user's terminal would find it. A GUI app's
+/// PATH is minimal, so look in the usual places, then ask the login shell.
+/// Answers are remembered, a miss for a minute, so focus-driven refreshes
+/// cost a few stats, not a shell (about a second with nvm in the rc file).
+fn cli(app: &AppHandle, program: &'static str) -> Option<PathBuf> {
+    let cached = CLIS.lock().unwrap().get(program).cloned();
+    if let Some((Some(p), _)) = &cached {
+        if p.exists() {
+            return Some(p.clone());
+        }
     }
     let home = app.path().home_dir().ok()?;
-    let fixed = [home.join(".local/bin/claude"), "/opt/homebrew/bin/claude".into(), "/usr/local/bin/claude".into()];
-    let found = fixed.into_iter().find(|p| p.exists()).or_else(shell_lookup);
-    *CLAUDE_CLI.lock().unwrap() = found.clone();
+    let fixed = [home.join(".local/bin"), "/opt/homebrew/bin".into(), "/usr/local/bin".into()];
+    let found = fixed.into_iter().map(|d| d.join(program)).find(|p| p.exists());
+    if found.is_none() && matches!(cached, Some((None, at)) if at.elapsed() < SHELL_RECHECK) {
+        return None;
+    }
+    let found = found.or_else(|| shell_lookup(program));
+    CLIS.lock().unwrap().insert(program, (found.clone(), Instant::now()));
     found
 }
 
-/// Asks the user's login shell where claude is. Capped at three seconds and
-/// given no stdin, so an rc file that waits for input cannot hang the app.
-fn shell_lookup() -> Option<PathBuf> {
+/// Asks the user's login shell where a program is. Capped at three seconds
+/// and given no stdin, so an rc file that waits for input cannot hang the app.
+fn shell_lookup(program: &str) -> Option<PathBuf> {
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
     let mut child = Command::new(shell)
-        .args(["-ilc", "command -v claude"])
+        .args(["-ilc", &format!("command -v {program}")])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -158,8 +178,7 @@ type Signature = (SystemTime, u64);
 
 /// Per tool: the .icns the icon came from, that file's signature, and the
 /// data URL, so repeat calls cost one stat instead of process spawns.
-static ICONS: LazyLock<Mutex<HashMap<&'static str, (PathBuf, Signature, String)>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+static ICONS: Cache<(PathBuf, Signature, String)> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
 fn signature(p: &Path) -> Option<Signature> {
     let m = fs::metadata(p).ok()?;
@@ -246,10 +265,17 @@ pub async fn detect_tools(app: AppHandle) -> HashMap<String, ToolStatus> {
                 let icon = dir.as_deref().and_then(|d| app_icon(&app, t, d));
                 ToolStatus { installed: dir.is_some(), icon }
             } else {
-                // No app bundle of its own; it opens in Terminal, so it
-                // wears Terminal's icon.
-                let icon = app_icon(&app, t, Path::new(TERMINAL_APP));
-                ToolStatus { installed: claude_cli(&app).is_some(), icon }
+                let installed = terminal_process(t).is_some_and(|p| cli(&app, p).is_some());
+                // Pi has a logo of its own; Claude Code opens in Terminal,
+                // so it wears Terminal's icon.
+                let icon = match t {
+                    Tool::Pi => Some(format!(
+                        "data:image/svg+xml;base64,{}",
+                        base64::engine::general_purpose::STANDARD.encode(PI_ICON)
+                    )),
+                    _ => app_icon(&app, t, Path::new(TERMINAL_APP)),
+                };
+                ToolStatus { installed, icon }
             };
             (key(t).to_string(), status)
         })
@@ -297,6 +323,20 @@ fn tty_busy(tty: &str) -> bool {
         .output()
         .map(|o| !String::from_utf8_lossy(&o.stdout).trim().is_empty())
         .unwrap_or(false)
+}
+
+/// The pids of `program` on a tty. From ps, not pgrep: macOS pgrep -t
+/// matches nothing for ttys0NN names. ps may print a full path.
+fn tty_pids(tty: &str, program: &str) -> Vec<String> {
+    let Ok(o) = Command::new("ps").args(["-t", tty, "-o", "pid=,comm="]).output() else {
+        return Vec::new();
+    };
+    String::from_utf8_lossy(&o.stdout)
+        .lines()
+        .filter_map(|l| l.trim().split_once(' '))
+        .filter(|(_, comm)| Path::new(comm.trim()).file_name().is_some_and(|n| n == program))
+        .map(|(pid, _)| pid.to_string())
+        .collect()
 }
 
 fn ask_to_quit(bundle: &str) {
@@ -357,30 +397,6 @@ fn place_terminal(window: i64, rect: &Rect) -> Result<(), String> {
          end tell"
     ))
     .map(|_| ())
-}
-
-/// Closes Terminal's own startup window for a few seconds after the launcher
-/// started Terminal: any single-tab window other than ours whose tab holds
-/// nothing but a login shell ("login", "-zsh"). Only runs when Terminal was
-/// not running, so no window of the user's exists yet. `busy` is not used:
-/// Terminal reports it false even while claude runs.
-fn close_startup_windows(ours: i64) {
-    for _ in 0..12 {
-        let _ = osascript(&format!(
-            "tell application \"Terminal\"\n\
-               set ids to (get id of every window)\n\
-               repeat with wid in ids\n\
-                 set wid to contents of wid\n\
-                 set w to window id wid\n\
-                 if wid is not {ours} and (count of tabs of w) is 1 then\n\
-                   set p to processes of selected tab of w\n\
-                   if (count of p) is 2 and (item 2 of p) starts with \"-\" then close w\n\
-                 end if\n\
-               end repeat\n\
-             end tell"
-        ));
-        thread::sleep(Duration::from_millis(250));
-    }
 }
 
 /// Closes the launcher's Terminal window, but only while it still has just
@@ -476,7 +492,7 @@ fn launch_app(app: AppHandle, t: Tool, s: AppSpec, rect: Rect, models: &Value) -
             chatgpt::write_config(&home, models)?;
             env = Some(("CONSUS_API_KEY", k));
         }
-        Tool::Code => return Err("Claude Code is not a desktop app.".into()),
+        Tool::Code | Tool::Pi => return Err(format!("{} is not a desktop app.", name(t))),
     }
 
     // The app's own output is not the launcher's to read or keep.
@@ -507,20 +523,32 @@ fn inherited_claude_var(name: &str) -> bool {
     name.starts_with("CLAUDE") || name.starts_with("ANTHROPIC")
 }
 
-/// The same scrub in shell, for a Terminal window, whose environment the
-/// launcher cannot set directly.
-const SCRUB: &str =
-    "for v in $(env | grep -oE \"^(CLAUDE|ANTHROPIC)[A-Za-z0-9_]*=\" | tr -d =); do unset \"$v\"; done;";
+/// Unsets, in shell, every variable whose name matches the pattern, for a
+/// Terminal window, whose environment the launcher cannot set directly.
+fn scrub(names: &str) -> String {
+    format!("for v in $(env | grep -oE \"^({names})=\" | tr -d =); do unset \"$v\"; done;")
+}
+
+/// The same scrub as inherited_claude_var, for Claude Code.
+const CLAUDE_VARS: &str = "(CLAUDE|ANTHROPIC)[A-Za-z0-9_]*";
+
+/// Every credential Pi would otherwise use to offer another provider's
+/// models next to Consus (its env-api-keys list: *_API_KEY, the cloud SDK
+/// variables, HF_TOKEN, COPILOT_GITHUB_TOKEN), and the user's own
+/// CONSUS_API_KEY, which Pi does not need and the agent's shell should not see.
+const PI_VARS: &str = "(CLAUDE|ANTHROPIC|AWS|GOOGLE|GCLOUD|AZURE)[A-Za-z0-9_]*|[A-Za-z0-9_]*_API_KEY|HF_TOKEN|COPILOT_GITHUB_TOKEN";
 
 fn applescript_string(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
-/// The program a terminal tool runs, as `ps` names it. Exhaustive on
-/// purpose: a new tool must say whether it is a terminal tool.
+/// The program a terminal tool runs, as PATH and `ps` name it (Pi, a Node
+/// script, sets its process title to "pi"). Exhaustive on purpose: a new
+/// tool must say whether it is a terminal tool.
 fn terminal_process(t: Tool) -> Option<&'static str> {
     match t {
         Tool::Code => Some("claude"),
+        Tool::Pi => Some("pi"),
         Tool::Desktop | Tool::ChatGpt => None,
     }
 }
@@ -529,22 +557,45 @@ fn terminal_process(t: Tool) -> Option<&'static str> {
 /// window runs. The per-tool part; everything around it is shared.
 fn terminal_script(app: &AppHandle, t: Tool, models: &Value) -> Result<String, String> {
     let home = app.path().home_dir().map_err(|e| e.to_string())?;
+    let helper_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    // Both start in the same empty folder, so nothing of the user's is the
+    // project: Claude Code would read ~/.claude as project settings from home.
+    let work = claude_code::work_dir(&home);
     match t {
         Tool::Code => {
-            let cli = claude_cli(app).ok_or("Claude Code is not installed.")?;
-            let helper = app.path().app_config_dir().map_err(|e| e.to_string())?.join(CODE_HELPER_NAME);
+            let cli = cli(app, "claude").ok_or("Claude Code is not installed.")?;
+            let helper = helper_dir.join(CODE_HELPER_NAME);
             config::write_helper(&helper)?;
             claude_code::write_settings(&home, &helper, models)?;
-            // The user's own ~/.claude is never involved: an isolated profile,
-            // a scrubbed environment, and an empty working folder, because
-            // Claude Code treats its starting folder as the project and home
-            // would pull in ~/.claude as project settings.
-            let work = claude_code::work_dir(&home);
             fs::create_dir_all(&work).map_err(|e| format!("{}: {e}", work.display()))?;
+            // The user's own ~/.claude is never involved: an isolated profile
+            // and a scrubbed environment.
             Ok(format!(
-                "cd \"{}\" || exit 1; {SCRUB} export CLAUDE_CONFIG_DIR=\"{}\"; clear; exec \"{}\"",
+                "cd \"{}\" || exit 1; {} export CLAUDE_CONFIG_DIR=\"{}\"; clear; exec \"{}\"",
                 work.display(),
+                scrub(CLAUDE_VARS),
                 claude_code::profile_dir(&home).display(),
+                cli.display()
+            ))
+        }
+        Tool::Pi => {
+            let cli = cli(app, "pi").ok_or("Pi is not installed.")?;
+            let helper = helper_dir.join(PI_HELPER_NAME);
+            config::write_helper(&helper)?;
+            pi::write_config(&home, &helper, models)?;
+            fs::create_dir_all(&work).map_err(|e| format!("{}: {e}", work.display()))?;
+            // pi is a Node script; the node it was installed with (nvm, the
+            // installer's own) sits next to it. The two PI_ switches turn off
+            // Pi's calls to pi.dev (install telemetry, update check). Not
+            // PI_OFFLINE: that also stops Pi fetching fd and ripgrep, and its
+            // find and grep tools fail without them.
+            let bin = cli.parent().ok_or("Pi is not installed.")?;
+            Ok(format!(
+                "cd \"{}\" || exit 1; {} export PATH=\"{}:$PATH\" PI_CODING_AGENT_DIR=\"{}\" PI_TELEMETRY=0 PI_SKIP_VERSION_CHECK=1; clear; exec \"{}\"",
+                work.display(),
+                scrub(PI_VARS),
+                bin.display(),
+                pi::profile_dir(&home).display(),
                 cli.display()
             ))
         }
@@ -574,32 +625,28 @@ fn launch_terminal(app: AppHandle, t: Tool, rect: Rect, models: &Value) -> Resul
     }
     let cmd = applescript_string(&format!("exec /bin/sh -c '{inner}'"));
     // Always a window of our own, found by its tab's tty, never by which
-    // window is in front. If this call is what started Terminal, Terminal
-    // also opens its startup window, on a schedule we cannot predict; that
-    // one is closed below rather than raced.
+    // window is in front. A Terminal that a tell block starts also opens
+    // its default window, so a Terminal that is not running is started with
+    // `launch` first, which opens none (tested cold, 2026-09-24).
     let out = osascript(&format!(
-        "set wasRunning to application \"Terminal\" is running\n\
+        "if application \"Terminal\" is not running then launch application \"Terminal\"\n\
          tell application \"Terminal\"\n\
            set t to do script \"{cmd}\"\n\
            set tt to tty of t\n\
            repeat with w in windows\n\
              repeat with x in tabs of w\n\
-               if tty of x is tt then return (id of w as text) & \" \" & tt & \" \" & wasRunning\n\
+               if tty of x is tt then return (id of w as text) & \" \" & tt\n\
              end repeat\n\
            end repeat\n\
-           return \"0 \" & tt & \" \" & wasRunning\n\
+           return \"0 \" & tt\n\
          end tell"
     ))?;
     let mut parts = out.split_whitespace();
-    let (window, tty, was_running) = (|| {
+    let (window, tty) = (|| {
         let w = parts.next()?.parse::<i64>().ok().filter(|w| *w != 0)?;
-        let tty = parts.next()?.trim_start_matches("/dev/").to_string();
-        Some((w, tty, parts.next()? == "true"))
+        Some((w, parts.next()?.trim_start_matches("/dev/").to_string()))
     })()
     .ok_or_else(|| format!("Terminal gave an unexpected answer: {out}"))?;
-    if !was_running {
-        thread::spawn(move || close_startup_windows(window));
-    }
     if let Err(e) = place_terminal(window, &rect) {
         notice(&app, t, &e);
     }
@@ -634,7 +681,8 @@ pub fn remove_tool_configs(app: AppHandle) -> Result<(), String> {
     let claude = config::remove_claude_desktop(&home);
     let chatgpt = chatgpt::remove_config(&home);
     let code = claude_code::remove_settings(&home);
-    claude.and(chatgpt).and(code)
+    let pi = pi::remove_config(&home);
+    claude.and(chatgpt).and(code).and(pi)
 }
 
 /// On launcher exit the apps it started are asked to quit, then killed if
@@ -646,12 +694,15 @@ pub fn terminate_children(app: &AppHandle) {
         let guard = children.0.lock().unwrap();
         guard.iter().cloned().collect()
     };
-    // Only claude on the tracked tty: if that tty was freed and reused by
-    // the time the launcher quits, whatever else is on it is not ours.
+    // Only the tool's own program on the tracked tty: if that tty was freed
+    // and reused by the time the launcher quits, whatever else is on it is
+    // not ours.
     for r in &mine {
         if let Some((window, tty)) = &r.terminal {
             if let Some(program) = terminal_process(r.tool) {
-                let _ = Command::new("pkill").args(["-x", "-t", tty, program]).status();
+                for pid in tty_pids(tty, program) {
+                    let _ = Command::new("kill").arg(pid).status();
+                }
             }
             for _ in 0..10 {
                 if !tty_busy(tty) {
