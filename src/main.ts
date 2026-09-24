@@ -8,20 +8,10 @@ const PORTAL_URL = "https://portal.consus.io";
 // marked Coming soon in the markup and does nothing.
 type Tool = "desktop" | "chatgpt" | "code";
 const TOOLS: Tool[] = ["desktop", "chatgpt", "code"];
-const NAME: Record<Tool, string> = {
-  desktop: "Claude Desktop",
-  chatgpt: "ChatGPT",
-  code: "Claude Code",
-};
 const DOWNLOAD: Record<Tool, string> = {
   desktop: "https://claude.ai/download",
   chatgpt: "https://openai.com/chatgpt/download/",
   code: "https://claude.com/claude-code",
-};
-const SUBTITLE: Record<Tool, string> = {
-  desktop: "Chat, docs, analysis",
-  chatgpt: "Chat, docs, analysis",
-  code: "Terminal agent",
 };
 const NOT_INSTALLED: Record<Tool, string> = {
   desktop: "Not installed · get it from claude.ai/download",
@@ -53,11 +43,10 @@ interface KeyInfo {
 
 interface KeyStore {
   def: KeyInfo | null;
-  tool: Partial<Record<Tool, KeyInfo>>;
 }
 
 let cur: Tool | null = null;
-let K: KeyStore = { def: null, tool: {} };
+let K: KeyStore = { def: null };
 
 function $<T extends HTMLElement = HTMLElement>(id: string): T {
   const el = document.getElementById(id);
@@ -105,11 +94,6 @@ function applyConnectResult(rawKey: string, result: ConnectResult): KeyInfo {
   };
 }
 
-// Per-tool keys are held in memory only until build-order step 5 wires them.
-function perToolKey(k: string): KeyInfo {
-  return { key: k, mask: mask(k), user: mask(k), models: 0, added: new Date().toLocaleDateString() };
-}
-
 function setConnected(on: boolean): void {
   $("connect").style.display = on ? "none" : "block";
   $("main").style.display = on ? "flex" : "none";
@@ -132,26 +116,12 @@ function setConnected(on: boolean): void {
   }
 }
 
-function keyFor(a: Tool): KeyInfo {
-  return K.tool[a] ?? K.def!;
-}
-
 function renderKeys(): void {
   if (!K.def) return;
   $("defRow").innerHTML =
     '<div class="t"><span>' + esc(K.def.mask) + '</span><span class="tag own">DEFAULT</span></div>' +
     '<div class="m">' + esc(K.def.user) + " · " + K.def.models + " models · added " + K.def.added + "</div>" +
     '<div class="acts"><button class="mini" data-change="def">REPLACE</button></div><div id="edit-def"></div>';
-  $("toolKeys").innerHTML = TOOLS.map((a) => {
-    const own = !!K.tool[a];
-    return (
-      '<div class="krow"><div class="t"><span>' + NAME[a] + '</span><span class="tag' + (own ? " own" : "") + '">' +
-      (own ? "OWN KEY" : "DEFAULT") + '</span></div><div class="m">' + esc(keyFor(a).mask) + '</div><div class="acts">' +
-      '<button class="mini" data-change="' + a + '">' + (own ? "REPLACE" : "USE A DIFFERENT KEY") + "</button>" +
-      (own ? '<button class="mini" data-reset="' + a + '">USE DEFAULT</button>' : "") +
-      '</div><div id="edit-' + a + '"></div></div>'
-    );
-  }).join("");
 }
 
 function editor(slot: string): void {
@@ -178,7 +148,7 @@ async function resetAll(): Promise<void> {
       // best-effort; UI state still resets below
     }
   }
-  K = { def: null, tool: {} };
+  K = { def: null };
   cur = null;
   $("empty").style.display = "";
   document.querySelectorAll<HTMLElement>(".tool").forEach((x) => {
@@ -264,19 +234,6 @@ function wireKeysTab(): void {
       void openUrl(PORTAL_URL);
       return;
     }
-    if (t.id === "adv") {
-      const b = $("advBox");
-      const o = b.style.display === "none";
-      b.style.display = o ? "block" : "none";
-      t.setAttribute("aria-expanded", o ? "true" : "false");
-      t.textContent = o ? "HIDE PER-TOOL KEYS" : "ADVANCED: ONE KEY PER TOOL";
-      return;
-    }
-    if (t.dataset.reset) {
-      delete K.tool[t.dataset.reset as Tool];
-      renderKeys();
-      return;
-    }
     if (t.dataset.save) {
       const slot = t.dataset.save;
       const v = ($("in-" + slot) as HTMLInputElement).value;
@@ -286,11 +243,6 @@ function wireKeysTab(): void {
         return;
       }
       const rawKey = v.trim();
-      if (slot !== "def") {
-        K.tool[slot as Tool] = perToolKey(rawKey);
-        renderKeys();
-        return;
-      }
       const btn = t as HTMLButtonElement;
       btn.textContent = "SAVING…";
       (async () => {
@@ -353,7 +305,7 @@ async function refreshTools(): Promise<void> {
       delete b.dataset.missing;
       b.classList.remove("missing");
       if (go.textContent !== "RUNNING") go.textContent = "OPEN";
-      sb.textContent = sb.dataset.d ?? SUBTITLE[key];
+      sb.textContent = sb.dataset.d ?? "";
     } else {
       b.dataset.missing = "1";
       b.classList.add("missing");
@@ -381,7 +333,7 @@ function activateTile(b: HTMLButtonElement, key: Tool): void {
   document.querySelectorAll<HTMLButtonElement>(".tool").forEach((x) => {
     x.classList.remove("on");
     const k = x.dataset.app ?? "";
-    const other = isTool(k) && x !== b && !running.has(k);
+    const other = isTool(k) && x !== b && !running.has(k) && !x.dataset.missing;
     if (other) x.querySelector(".go")!.textContent = "OPEN";
   });
   b.classList.add("on");
@@ -400,8 +352,7 @@ async function launchTool(b: HTMLButtonElement, key: Tool): Promise<void> {
     await invoke("launch_tool", { tool: key, rect: await glassRect(), models: currentModels ?? [] });
     running.add(key);
     activateTile(b, key);
-    sb.textContent = SUBTITLE[key];
-    sb.dataset.d = SUBTITLE[key];
+    sb.textContent = sb.dataset.d ?? "";
   } catch (err) {
     go.textContent = "OPEN";
     sb.textContent = String(err);
@@ -488,12 +439,12 @@ function init(): void {
       if (next) toolTile(next).classList.add("on");
     }
     if (running.size === 0) $("empty").style.display = "";
+    void refreshTools();
   });
   void listen<{ tool: string; message: string }>("tool-notice", (e) => {
     if (!isTool(e.payload.tool)) return;
     const sb = toolTile(e.payload.tool).querySelector<HTMLElement>("[data-sb]")!;
     sb.textContent = e.payload.message;
-    sb.dataset.d = e.payload.message;
   });
   void getCurrentWindow().onFocusChanged(({ payload: focused }) => {
     if (focused && K.def) void refreshTools();

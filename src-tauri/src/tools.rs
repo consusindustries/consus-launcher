@@ -359,6 +359,30 @@ fn place_terminal(window: i64, rect: &Rect) -> Result<(), String> {
     .map(|_| ())
 }
 
+/// Closes Terminal's own startup window for a few seconds after the launcher
+/// started Terminal: any single-tab window other than ours whose tab holds
+/// nothing but a login shell ("login", "-zsh"). Only runs when Terminal was
+/// not running, so no window of the user's exists yet. `busy` is not used:
+/// Terminal reports it false even while claude runs.
+fn close_startup_windows(ours: i64) {
+    for _ in 0..12 {
+        let _ = osascript(&format!(
+            "tell application \"Terminal\"\n\
+               set ids to (get id of every window)\n\
+               repeat with wid in ids\n\
+                 set wid to contents of wid\n\
+                 set w to window id wid\n\
+                 if wid is not {ours} and (count of tabs of w) is 1 then\n\
+                   set p to processes of selected tab of w\n\
+                   if (count of p) is 2 and (item 2 of p) starts with \"-\" then close w\n\
+                 end if\n\
+               end repeat\n\
+             end tell"
+        ));
+        thread::sleep(Duration::from_millis(250));
+    }
+}
+
 /// Closes the launcher's Terminal window, but only while it still has just
 /// the one tab: a tab the user added is theirs.
 fn close_terminal_window(window: i64) {
@@ -452,10 +476,12 @@ fn launch_app(app: AppHandle, t: Tool, s: AppSpec, rect: Rect, models: &Value) -
             chatgpt::write_config(&home, models)?;
             env = Some(("CONSUS_API_KEY", k));
         }
-        Tool::Code => unreachable!("Claude Code is a terminal program"),
+        Tool::Code => return Err("Claude Code is not a desktop app.".into()),
     }
 
+    // The app's own output is not the launcher's to read or keep.
     let mut cmd = Command::new(&bin);
+    cmd.stdout(Stdio::null()).stderr(Stdio::null());
     for (k, _) in std::env::vars_os() {
         if inherited_claude_var(&k.to_string_lossy()) {
             cmd.env_remove(k);
@@ -490,11 +516,12 @@ fn applescript_string(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
-/// The program a terminal tool runs, as `ps` names it.
-fn terminal_process(t: Tool) -> &'static str {
+/// The program a terminal tool runs, as `ps` names it. Exhaustive on
+/// purpose: a new tool must say whether it is a terminal tool.
+fn terminal_process(t: Tool) -> Option<&'static str> {
     match t {
-        Tool::Code => "claude",
-        _ => unreachable!("{} is not a terminal tool", name(t)),
+        Tool::Code => Some("claude"),
+        Tool::Desktop | Tool::ChatGpt => None,
     }
 }
 
@@ -521,7 +548,7 @@ fn terminal_script(app: &AppHandle, t: Tool, models: &Value) -> Result<String, S
                 cli.display()
             ))
         }
-        _ => unreachable!("{} is not a terminal tool", name(t)),
+        Tool::Desktop | Tool::ChatGpt => Err(format!("{} is not a terminal tool.", name(t))),
     }
 }
 
@@ -546,40 +573,33 @@ fn launch_terminal(app: AppHandle, t: Tool, rect: Rect, models: &Value) -> Resul
         return Err("A path contains a quote character, which the launcher cannot pass to Terminal.".into());
     }
     let cmd = applescript_string(&format!("exec /bin/sh -c '{inner}'"));
-    // A Terminal that was not running opens its own window on launch; use
-    // that one instead of opening a second, unless it restored several. The
-    // window is found by the tab's tty, never by which window is in front.
+    // Always a window of our own, found by its tab's tty, never by which
+    // window is in front. If this call is what started Terminal, Terminal
+    // also opens its startup window, on a schedule we cannot predict; that
+    // one is closed below rather than raced.
     let out = osascript(&format!(
         "set wasRunning to application \"Terminal\" is running\n\
          tell application \"Terminal\"\n\
-           if wasRunning then\n\
-             set t to do script \"{cmd}\"\n\
-           else\n\
-             activate\n\
-             repeat 50 times\n\
-               if (count of windows) > 0 then exit repeat\n\
-               delay 0.1\n\
-             end repeat\n\
-             if (count of windows) is 1 then\n\
-               set t to do script \"{cmd}\" in window 1\n\
-             else\n\
-               set t to do script \"{cmd}\"\n\
-             end if\n\
-           end if\n\
+           set t to do script \"{cmd}\"\n\
            set tt to tty of t\n\
            repeat with w in windows\n\
              repeat with x in tabs of w\n\
-               if tty of x is tt then return (id of w as text) & \" \" & tt\n\
+               if tty of x is tt then return (id of w as text) & \" \" & tt & \" \" & wasRunning\n\
              end repeat\n\
            end repeat\n\
-           return \"0 \" & tt\n\
+           return \"0 \" & tt & \" \" & wasRunning\n\
          end tell"
     ))?;
-    let (window, tty) = out
-        .split_once(' ')
-        .and_then(|(w, tty)| Some((w.parse::<i64>().ok()?, tty.trim().trim_start_matches("/dev/").to_string())))
-        .filter(|(w, _)| *w != 0)
-        .ok_or_else(|| format!("Terminal gave an unexpected answer: {out}"))?;
+    let mut parts = out.split_whitespace();
+    let (window, tty, was_running) = (|| {
+        let w = parts.next()?.parse::<i64>().ok().filter(|w| *w != 0)?;
+        let tty = parts.next()?.trim_start_matches("/dev/").to_string();
+        Some((w, tty, parts.next()? == "true"))
+    })()
+    .ok_or_else(|| format!("Terminal gave an unexpected answer: {out}"))?;
+    if !was_running {
+        thread::spawn(move || close_startup_windows(window));
+    }
     if let Err(e) = place_terminal(window, &rect) {
         notice(&app, t, &e);
     }
@@ -630,7 +650,9 @@ pub fn terminate_children(app: &AppHandle) {
     // the time the launcher quits, whatever else is on it is not ours.
     for r in &mine {
         if let Some((window, tty)) = &r.terminal {
-            let _ = Command::new("pkill").args(["-x", "-t", tty, terminal_process(r.tool)]).status();
+            if let Some(program) = terminal_process(r.tool) {
+                let _ = Command::new("pkill").args(["-x", "-t", tty, program]).status();
+            }
             for _ in 0..10 {
                 if !tty_busy(tty) {
                     break;

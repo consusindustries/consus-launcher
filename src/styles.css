@@ -87,8 +87,6 @@ body{display:flex}
 .tabpane.log{padding:0;display:none;flex-direction:column;background:#120F0C}
 .tabpane.log.on{display:flex}
 .loghead{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;font-family:var(--mono);font-size:11px;letter-spacing:.08em;color:#A6C86A;border-bottom:1px solid var(--side-3);text-transform:uppercase}
-.loghead i{width:7px;height:7px;border-radius:50%;background:var(--green);display:inline-block;margin-right:8px;animation:pulse 1.6s infinite}
-@keyframes pulse{50%{opacity:.3}}
 #feed{flex:1;margin:0;padding:12px 14px;overflow:auto;font-family:var(--mono);font-size:11px;line-height:1.75;color:#A6C86A;white-space:pre;scrollbar-width:thin;scrollbar-color:var(--side-3) transparent}
 #feed .dim{color:#7E7466}
 .cursor{padding:8px 14px 10px;font-family:var(--mono);font-size:11px;color:#A6C86A;border-top:1px solid var(--side-3)}
