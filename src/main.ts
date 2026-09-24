@@ -6,19 +6,22 @@ import { listen } from "@tauri-apps/api/event";
 const PORTAL_URL = "https://portal.consus.io";
 // Tools the launcher really detects, configures, and launches. The rest of the
 // tiles are still the wireframe's demo until their build-order step lands.
-type RealTool = "desktop" | "chatgpt";
-const REAL_TOOLS: RealTool[] = ["desktop", "chatgpt"];
+type RealTool = "desktop" | "chatgpt" | "code";
+const REAL_TOOLS: RealTool[] = ["desktop", "chatgpt", "code"];
 const DOWNLOAD: Record<RealTool, string> = {
   desktop: "https://claude.ai/download",
   chatgpt: "https://openai.com/chatgpt/download/",
+  code: "https://claude.com/claude-code",
 };
 const SUBTITLE: Record<RealTool, string> = {
   desktop: "Chat, docs, analysis",
   chatgpt: "Chat, docs, analysis",
+  code: "Terminal agent",
 };
 const NOT_INSTALLED: Record<RealTool, string> = {
   desktop: "Not installed · get it from claude.ai/download",
   chatgpt: "Not installed · get it from openai.com",
+  code: "Not installed · get it from claude.com/claude-code",
 };
 const isRealTool = (k: string): k is RealTool => (REAL_TOOLS as string[]).includes(k);
 // Real tools the launcher has running right now; more than one can be up.

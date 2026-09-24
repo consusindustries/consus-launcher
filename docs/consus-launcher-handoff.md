@@ -41,7 +41,7 @@ consus-launcher/
   README.md
   LICENSE
 ```
-Keep the Rust side small enough to read in one sitting. Target: under 1,500 lines total. If a change pushes past that, stop and ask.
+Keep the Rust side small enough to read in one sitting. Target: under 1,500 lines total, counting app code only (`#[cfg(test)]` modules excluded, decided 2026-09-24). If a change pushes past that, stop and ask.
 
 ### Supply chain and network rules (customers review this)
 - **Network:** the launcher talks to `portal.consus.io` and `api.consus.io` only. No other host, ever, including at build time for assets the app loads at runtime. Fonts (Archivo Black, JetBrains Mono, Space Grotesk; all open license) are bundled in the app, not loaded from Google Fonts. Remove the Google Fonts link when porting the wireframe.

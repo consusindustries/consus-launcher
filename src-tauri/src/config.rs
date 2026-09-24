@@ -13,59 +13,15 @@ use serde_json::{json, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::models::{self, REGIME, REGIME_TAG};
+use crate::models::{self, GATEWAY, REGIME_TAG};
 
 const ENTRY_ID: &str = "6c3e2a4e-0b1d-4f7a-9e8c-5a1c0f2d3b47";
 const ENTRY_NAME: &str = "Consus Launcher";
-const GATEWAY: &str = "https://api.consus.io";
-const FAMILIES: [&str; 3] = ["opus", "sonnet", "haiku"];
-
-struct ClaudeModel {
-    name: String,
-    family: String,
-    version: Vec<u32>,
-    label: String,
-}
-
-// "consus/claude-opus-4-8:itar" -> name "claude-opus-4-8:itar", label "Opus 4.8 ITAR"
-fn parse(id: &str) -> Option<ClaudeModel> {
-    let bare = models::bare(id);
-    let (base, suffix) = bare.split_once(':')?;
-    if suffix != REGIME {
-        return None;
-    }
-    let mut parts = base.strip_prefix("claude-")?.split('-');
-    let family = parts.next()?.to_string();
-    if !FAMILIES.contains(&family.as_str()) {
-        return None;
-    }
-    let version: Vec<u32> = parts.map(|p| p.parse().ok()).collect::<Option<_>>()?;
-    let mut fam = family.clone();
-    fam.replace_range(..1, &family[..1].to_uppercase());
-    let ver = version.iter().map(u32::to_string).collect::<Vec<_>>().join(".");
-    Some(ClaudeModel {
-        name: bare.to_string(),
-        family,
-        version,
-        label: format!("{fam} {ver} {REGIME_TAG}"),
-    })
-}
-
 /// The models a Claude Desktop picker lists: Claude only, this regime only,
 /// newest per family first and marked as that family's default.
-pub fn select_models(models: &Value) -> Vec<Value> {
-    let mut picked: Vec<ClaudeModel> = models
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|m| m.get("id").and_then(Value::as_str))
-        .filter_map(parse)
-        .collect();
-    let rank = |f: &str| FAMILIES.iter().position(|x| *x == f).unwrap_or(9);
-    picked.sort_by(|a, b| rank(&a.family).cmp(&rank(&b.family)).then(b.version.cmp(&a.version)));
-
+pub fn select_models(models_json: &Value) -> Vec<Value> {
     let mut seen: Vec<String> = Vec::new();
-    picked
+    models::claude_models(models_json)
         .into_iter()
         .map(|m| {
             let first = !seen.contains(&m.family);
@@ -73,8 +29,8 @@ pub fn select_models(models: &Value) -> Vec<Value> {
                 seen.push(m.family.clone());
             }
             let mut v = json!({
-                "name": m.name,
-                "labelOverride": m.label,
+                "name": m.id,
+                "labelOverride": m.label(),
                 "anthropicFamilyTier": m.family,
             });
             if first {
