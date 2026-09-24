@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# SBOMs are generated in CI
+*.cdx.json
