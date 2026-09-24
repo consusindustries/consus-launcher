@@ -6,17 +6,19 @@ import { listen } from "@tauri-apps/api/event";
 const PORTAL_URL = "https://portal.consus.io";
 // Tools the launcher detects, configures, and launches. Any other tile is
 // marked Coming soon in the markup and does nothing.
-type Tool = "desktop" | "chatgpt" | "code";
-const TOOLS: Tool[] = ["desktop", "chatgpt", "code"];
+type Tool = "desktop" | "chatgpt" | "code" | "pi";
+const TOOLS: Tool[] = ["desktop", "chatgpt", "code", "pi"];
 const DOWNLOAD: Record<Tool, string> = {
   desktop: "https://claude.ai/download",
   chatgpt: "https://openai.com/chatgpt/download/",
   code: "https://claude.com/claude-code",
+  pi: "https://pi.dev",
 };
 const NOT_INSTALLED: Record<Tool, string> = {
   desktop: "Not installed · get it from claude.ai/download",
   chatgpt: "Not installed · get it from openai.com",
   code: "Not installed · get it from claude.com/claude-code",
+  pi: "Not installed · get it from pi.dev",
 };
 const isTool = (k: string): k is Tool => (TOOLS as string[]).includes(k);
 // Tools the launcher has running right now; more than one can be up.
