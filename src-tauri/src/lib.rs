@@ -1,4 +1,5 @@
 mod chatgpt;
+mod claude_code;
 mod config;
 mod keychain;
 mod models;
@@ -7,19 +8,22 @@ mod tools;
 
 use std::sync::Mutex;
 
-// Claude Desktop runs this binary through a link named HELPER_NAME to get
-// the key; in that case there is no window, just JSON on stdout.
-fn invoked_as_helper() -> bool {
-    std::env::args_os()
-        .next()
-        .map(|a| std::path::Path::new(&a).file_name() == Some(std::ffi::OsStr::new(tools::HELPER_NAME)))
-        .unwrap_or(false)
+// Tools run this binary through a link to get the key; which name they use
+// decides the output shape. In that case there is no window, just stdout.
+fn helper_mode() -> Option<bool> {
+    let arg0 = std::env::args_os().next()?;
+    let name = std::path::Path::new(&arg0).file_name()?.to_str()?;
+    match name {
+        tools::HELPER_NAME => Some(true),
+        tools::CODE_HELPER_NAME => Some(false),
+        _ => None,
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    if invoked_as_helper() {
-        std::process::exit(keychain::print_helper_json());
+    if let Some(json) = helper_mode() {
+        std::process::exit(keychain::print_helper(json));
     }
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())

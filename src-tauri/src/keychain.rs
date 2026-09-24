@@ -29,15 +29,20 @@ pub fn keychain_delete_key() -> Result<(), String> {
     }
 }
 
-/// Credential-helper mode: print the key for a tool that asked for it.
+/// Credential-helper modes: print the key for a tool that asked for it, as
+/// JSON with headers (Claude Desktop) or bare (Claude Code's apiKeyHelper).
 /// Returns the process exit code.
-pub fn print_helper_json() -> i32 {
-    match entry().and_then(|e| e.get_password().map_err(|e| e.to_string())) {
-        Ok(k) if !k.is_empty() => {
-            println!("{}", serde_json::json!({ "token": k, "headers": { "x-api-key": k } }));
+pub fn print_helper(json: bool) -> i32 {
+    match get_key() {
+        Some(k) => {
+            if json {
+                println!("{}", serde_json::json!({ "token": k, "headers": { "x-api-key": k } }));
+            } else {
+                println!("{k}");
+            }
             0
         }
-        _ => {
+        None => {
             eprintln!("No Consus key in the keychain");
             1
         }
