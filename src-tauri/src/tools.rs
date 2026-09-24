@@ -6,8 +6,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::{LazyLock, Mutex};
 use std::thread;
 use std::time::{Duration, SystemTime};
@@ -106,20 +107,50 @@ fn app_path(app: &AppHandle, s: &AppSpec) -> Option<PathBuf> {
     user.exists().then_some(user)
 }
 
+static CLAUDE_CLI: LazyLock<Mutex<Option<PathBuf>>> = LazyLock::new(|| Mutex::new(None));
+
 /// `claude` as the user's terminal would find it. A GUI app's PATH is
-/// minimal, so look in the usual places, then ask the login shell.
+/// minimal, so look in the usual places, then ask the login shell. The
+/// answer is remembered, so focus-driven refreshes cost one stat.
 fn claude_cli(app: &AppHandle) -> Option<PathBuf> {
-    let home = app.path().home_dir().ok()?;
-    for p in [home.join(".local/bin/claude"), "/opt/homebrew/bin/claude".into(), "/usr/local/bin/claude".into()] {
-        if p.exists() {
-            return Some(p);
-        }
+    if let Some(p) = CLAUDE_CLI.lock().unwrap().clone().filter(|p| p.exists()) {
+        return Some(p);
     }
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
-    let out = Command::new(shell).args(["-ilc", "command -v claude"]).output().ok()?;
-    let found = String::from_utf8_lossy(&out.stdout).lines().last()?.trim().to_string();
-    let p = PathBuf::from(found);
-    p.exists().then_some(p)
+    let home = app.path().home_dir().ok()?;
+    let fixed = [home.join(".local/bin/claude"), "/opt/homebrew/bin/claude".into(), "/usr/local/bin/claude".into()];
+    let found = fixed.into_iter().find(|p| p.exists()).or_else(shell_lookup);
+    *CLAUDE_CLI.lock().unwrap() = found.clone();
+    found
+}
+
+/// Asks the user's login shell where claude is. Capped at three seconds and
+/// given no stdin, so an rc file that waits for input cannot hang the app.
+fn shell_lookup() -> Option<PathBuf> {
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
+    let mut child = Command::new(shell)
+        .args(["-ilc", "command -v claude"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let mut done = false;
+    for _ in 0..30 {
+        if child.try_wait().ok()?.is_some() {
+            done = true;
+            break;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    if !done {
+        let _ = child.kill();
+        let _ = child.wait();
+        return None;
+    }
+    let mut out = String::new();
+    child.stdout.take()?.read_to_string(&mut out).ok()?;
+    let p = PathBuf::from(out.lines().last()?.trim());
+    (p.is_absolute() && p.exists()).then_some(p)
 }
 
 type Signature = (SystemTime, u64);
@@ -324,8 +355,14 @@ fn place_terminal(window: i64, rect: &Rect) -> Result<(), String> {
     .map(|_| ())
 }
 
+/// Closes the launcher's Terminal window, but only while it still has just
+/// the one tab: a tab the user added is theirs.
 fn close_terminal_window(window: i64) {
-    let _ = osascript(&format!("tell application \"Terminal\" to close window id {window}"));
+    let _ = osascript(&format!(
+        "tell application \"Terminal\"\n\
+           if (count of tabs of window id {window}) is 1 then close window id {window}\n\
+         end tell"
+    ));
 }
 
 fn notice(app: &AppHandle, t: Tool, err: &str) {
@@ -401,8 +438,8 @@ fn launch_app(app: AppHandle, t: Tool, s: AppSpec, rect: Rect, models: &Value) -
     }
 
     let mut cmd = Command::new(&bin);
-    for (k, _) in std::env::vars() {
-        if inherited_claude_var(&k) {
+    for (k, _) in std::env::vars_os() {
+        if inherited_claude_var(&k.to_string_lossy()) {
             cmd.env_remove(k);
         }
     }
@@ -440,7 +477,7 @@ fn applescript_string(s: &str) -> String {
 
 fn launch_code(app: AppHandle, rect: Rect, models: &Value) -> Result<(), String> {
     let t = Tool::Code;
-    claude_cli(&app).ok_or("Claude Code is not installed.")?;
+    let cli = claude_cli(&app).ok_or("Claude Code is not installed.")?;
     let home = app.path().home_dir().map_err(|e| e.to_string())?;
 
     // Already ours: bring the terminal back into the glass.
@@ -465,21 +502,27 @@ fn launch_code(app: AppHandle, rect: Rect, models: &Value) -> Result<(), String>
     // session the launcher was started from; and an empty working folder,
     // because Claude Code treats its starting folder as the project and home
     // would pull in ~/.claude as project settings. The shell does the
-    // clearing, since the Terminal window's environment is not ours to set.
+    // clearing, since the Terminal window's environment is not ours to set,
+    // and it is always /bin/sh whatever the user's login shell is (fish and
+    // nushell do not parse POSIX syntax). The inner script is single-quoted,
+    // so it must not contain a single quote; macOS account names cannot.
     let profile = claude_code::profile_dir(&home);
     let work = claude_code::work_dir(&home);
     fs::create_dir_all(&work).map_err(|e| format!("{}: {e}", work.display()))?;
-    let command = format!(
-        "cd \"{}\"; for v in $(env | grep -oE '^(CLAUDE|ANTHROPIC)[A-Za-z0-9_]*=' | tr -d =); do unset \"$v\"; done; \
-         export CLAUDE_CONFIG_DIR=\"{}\"; clear; exec claude",
+    let inner = format!(
+        "cd \"{}\" || exit 1; for v in $(env | grep -oE \"^(CLAUDE|ANTHROPIC)[A-Za-z0-9_]*=\" | tr -d =); do unset \"$v\"; done; \
+         export CLAUDE_CONFIG_DIR=\"{}\"; clear; exec \"{}\"",
         work.display(),
-        profile.display()
+        profile.display(),
+        cli.display()
     );
-    let cmd = applescript_string(&command);
-    let (x1, y1) = (rect.x.round(), rect.y.round());
-    let (x2, y2) = ((rect.x + rect.w).round(), (rect.y + rect.h).round());
+    if inner.contains('\'') {
+        return Err("A path contains a quote character, which the launcher cannot pass to Terminal.".into());
+    }
+    let cmd = applescript_string(&format!("exec /bin/sh -c '{inner}'"));
     // A Terminal that was not running opens its own window on launch; use
-    // that one instead of opening a second.
+    // that one instead of opening a second, unless it restored several. The
+    // window is found by the tab's tty, never by which window is in front.
     let out = osascript(&format!(
         "set wasRunning to application \"Terminal\" is running\n\
          tell application \"Terminal\"\n\
@@ -491,21 +534,29 @@ fn launch_code(app: AppHandle, rect: Rect, models: &Value) -> Result<(), String>
                if (count of windows) > 0 then exit repeat\n\
                delay 0.1\n\
              end repeat\n\
-             if (count of windows) > 0 then\n\
+             if (count of windows) is 1 then\n\
                set t to do script \"{cmd}\" in window 1\n\
              else\n\
                set t to do script \"{cmd}\"\n\
              end if\n\
            end if\n\
-           activate\n\
-           set bounds of front window to {{{x1}, {y1}, {x2}, {y2}}}\n\
-           return (id of front window as text) & \" \" & (tty of t)\n\
+           set tt to tty of t\n\
+           repeat with w in windows\n\
+             repeat with x in tabs of w\n\
+               if tty of x is tt then return (id of w as text) & \" \" & tt\n\
+             end repeat\n\
+           end repeat\n\
+           return \"0 \" & tt\n\
          end tell"
     ))?;
     let (window, tty) = out
         .split_once(' ')
         .and_then(|(w, tty)| Some((w.parse::<i64>().ok()?, tty.trim().trim_start_matches("/dev/").to_string())))
+        .filter(|(w, _)| *w != 0)
         .ok_or_else(|| format!("Terminal gave an unexpected answer: {out}"))?;
+    if let Err(e) = place_terminal(window, &rect) {
+        notice(&app, t, &e);
+    }
 
     app.state::<Children>()
         .0
@@ -560,9 +611,17 @@ pub fn terminate_children(app: &AppHandle) {
         let guard = children.0.lock().unwrap();
         guard.iter().cloned().collect()
     };
+    // Only claude on the tracked tty: if that tty was freed and reused by
+    // the time the launcher quits, whatever else is on it is not ours.
     for r in &mine {
         if let Some((window, tty)) = &r.terminal {
-            let _ = Command::new("pkill").args(["-t", tty]).status();
+            let _ = Command::new("pkill").args(["-x", "-t", tty, "claude"]).status();
+            for _ in 0..10 {
+                if !tty_busy(tty) {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(200));
+            }
             close_terminal_window(*window);
         }
     }

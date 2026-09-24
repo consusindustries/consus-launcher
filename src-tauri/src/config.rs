@@ -13,11 +13,10 @@ use serde_json::{json, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::models::{self, REGIME_TAG};
+use crate::models::{self, GATEWAY, REGIME_TAG};
 
 const ENTRY_ID: &str = "6c3e2a4e-0b1d-4f7a-9e8c-5a1c0f2d3b47";
 const ENTRY_NAME: &str = "Consus Launcher";
-const GATEWAY: &str = "https://api.consus.io";
 /// The models a Claude Desktop picker lists: Claude only, this regime only,
 /// newest per family first and marked as that family's default.
 pub fn select_models(models_json: &Value) -> Vec<Value> {

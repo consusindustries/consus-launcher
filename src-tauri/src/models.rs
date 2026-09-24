@@ -2,6 +2,9 @@
 
 use serde_json::Value;
 
+/// The Anthropic-surface root of the gateway (OpenAI-compatible under /v1).
+pub const GATEWAY: &str = "https://api.consus.io";
+
 // Fixed to ITAR for now by decision (2026-09-22); a regime rule is a later
 // conversation, and this is the one place it will change.
 pub const REGIME: &str = "itar";

@@ -17,12 +17,11 @@ use serde_json::{json, Map, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::models::{self, REGIME_TAG};
+use crate::models::{self, GATEWAY, REGIME_TAG};
 
 pub const PROFILE_DIR: &str = ".claude-consus-gateway";
 /// Where a session starts: empty, visible, and nothing of the user's in scope.
 pub const WORK_DIR: &str = "Consus";
-const GATEWAY: &str = "https://api.consus.io";
 
 // Claude Code's background model must support structured outputs, which the
 // gateway does not offer on Sonnet 5 (see the guide). Haiku when the regime
@@ -50,14 +49,22 @@ fn settings_path(home: &Path) -> PathBuf {
     profile_dir(home).join("settings.json")
 }
 
+/// A missing or empty file is an empty object. Any other read or parse
+/// failure is an error, never an empty object that would then overwrite
+/// the user's settings.
 fn read_object(path: &Path) -> Result<Map<String, Value>, String> {
-    match fs::read_to_string(path) {
-        Ok(s) if !s.trim().is_empty() => match serde_json::from_str::<Value>(&s) {
-            Ok(Value::Object(m)) => Ok(m),
-            Ok(_) => Err(format!("{}: not a JSON object", path.display())),
-            Err(e) => Err(format!("{}: {e}", path.display())),
-        },
-        _ => Ok(Map::new()),
+    let s = match fs::read_to_string(path) {
+        Ok(s) => s,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Map::new()),
+        Err(e) => return Err(format!("{}: {e}", path.display())),
+    };
+    if s.trim().is_empty() {
+        return Ok(Map::new());
+    }
+    match serde_json::from_str::<Value>(&s) {
+        Ok(Value::Object(m)) => Ok(m),
+        Ok(_) => Err(format!("{}: not a JSON object", path.display())),
+        Err(e) => Err(format!("{}: {e}", path.display())),
     }
 }
 
@@ -214,6 +221,17 @@ mod tests {
         remove_settings(&home).unwrap();
         assert!(!settings_path(&home).exists());
         assert!(profile_dir(&home).exists());
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn an_unreadable_settings_file_is_an_error_not_a_wipe() {
+        let home = temp_home("unreadable");
+        fs::create_dir_all(profile_dir(&home)).unwrap();
+        let bad: &[u8] = b"{ \"theme\": \"dark\xff\" }";
+        fs::write(settings_path(&home), bad).unwrap();
+        assert!(write_settings(&home, &helper(), &serde_json::from_str(MODELS).unwrap()).is_err());
+        assert_eq!(fs::read(settings_path(&home)).unwrap(), bad, "file must be left untouched");
         let _ = fs::remove_dir_all(&home);
     }
 
