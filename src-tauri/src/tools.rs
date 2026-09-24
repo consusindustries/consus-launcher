@@ -151,13 +151,15 @@ fn cli(app: &AppHandle, program: &'static str) -> Option<PathBuf> {
 
 /// A command's stdout if it succeeds within `limit`. No stdin, so nothing
 /// can wait on input; stdout is read as it comes, so a large output cannot
-/// fill the pipe and stall the command.
+/// fill the pipe and stall the command. The read is bounded too: something
+/// the command left running in the background can hold the pipe open.
 fn output_within(cmd: &mut Command, limit: Duration) -> Option<String> {
     let mut child = cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().ok()?;
     let mut pipe = child.stdout.take()?;
-    let reader = thread::spawn(move || {
+    let (tx, rx) = std::sync::mpsc::channel();
+    thread::spawn(move || {
         let mut out = String::new();
-        pipe.read_to_string(&mut out).ok().map(|_| out)
+        let _ = tx.send(pipe.read_to_string(&mut out).ok().map(|_| out));
     });
     let start = Instant::now();
     let status = loop {
@@ -171,7 +173,7 @@ fn output_within(cmd: &mut Command, limit: Duration) -> Option<String> {
         }
         thread::sleep(Duration::from_millis(50));
     };
-    let out = reader.join().ok()??;
+    let out = rx.recv_timeout(limit.saturating_sub(start.elapsed())).ok()??;
     status.success().then_some(out)
 }
 
@@ -627,27 +629,43 @@ fn terminal_script(app: &AppHandle, t: Tool, models: &Value) -> Result<String, S
         }
         Tool::Codex => {
             let cli = codex_cli(app).ok_or("Codex is not installed.")?;
+            keychain::get_key().ok_or("No key in the keychain. Connect first.")?;
             let helper = helper_dir.join(CODEX_HELPER_NAME);
             config::write_helper(&helper)?;
             let profile = codex::profile_dir(&home);
             fs::create_dir_all(&profile).map_err(|e| format!("{}: {e}", profile.display()))?;
+            // An npm install is a Node script; its node sits next to it, and
+            // an app started from Finder has no node on its PATH.
+            let bin = cli.parent().ok_or("Codex is not installed.")?;
+            let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap_or_default());
             // The catalog is cloned from this Codex's own model list.
             let bundled = output_within(
-                Command::new(&cli).args(["debug", "models", "--bundled"]).env("CODEX_HOME", &profile),
+                Command::new(&cli)
+                    .args(["debug", "models", "--bundled"])
+                    .env("CODEX_HOME", &profile)
+                    .env("PATH", path),
                 Duration::from_secs(10),
             )
             .and_then(|s| serde_json::from_str::<Value>(&s).ok());
+            if bundled.is_none() {
+                let _ = app.emit(
+                    "tool-notice",
+                    json!({ "tool": key(t), "message": "Codex could not list its models, so /model will not show the Consus ones this time." }),
+                );
+            }
             codex::write_config(&home, models, bundled.as_ref())?;
             fs::create_dir_all(&work).map_err(|e| format!("{}: {e}", work.display()))?;
             // Codex reads the key from CONSUS_API_KEY (env_http_headers), so
             // the script fetches it from the keychain helper into Codex's
             // environment only; the template's shell_environment_policy
-            // keeps CONSUS_* out of every command the agent runs.
+            // keeps CONSUS_* out of every command the agent runs. No key, no
+            // Codex: it would start and fail every request with no reason shown.
             Ok(format!(
-                "cd \"{}\" || exit 1; {} CONSUS_API_KEY=\"$(\"{}\")\"; export CONSUS_API_KEY CODEX_HOME=\"{}\"; clear; exec \"{}\"",
+                "cd \"{}\" || exit 1; {} CONSUS_API_KEY=\"$(\"{}\")\" || exit 1; export PATH=\"{}:$PATH\" CONSUS_API_KEY CODEX_HOME=\"{}\"; clear; exec \"{}\"",
                 work.display(),
                 scrub(CODEX_VARS),
                 helper.display(),
+                bin.display(),
                 profile.display(),
                 cli.display()
             ))
