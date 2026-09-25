@@ -115,42 +115,80 @@ fn terminal_cli(t: Tool) -> Option<PathBuf> {
     }
 }
 
-/// A PNG from a Store package as a data URL, for the tile.
-fn package_icon(package: &'static str, files: &[&str]) -> Option<String> {
-    let dir = package_dir(package)?;
-    let bytes = files.iter().find_map(|f| std::fs::read(dir.join(f)).ok())?;
-    Some(format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes)))
+/// A file somewhere in a folder tree, found by name (a Store package puts
+/// its logos in Assets, assets, or Images).
+fn find_file(dir: &Path, file: &str, depth: u32) -> Option<PathBuf> {
+    let entries: Vec<_> = std::fs::read_dir(dir).ok()?.flatten().collect();
+    if let Some(e) = entries.iter().find(|e| e.file_name().to_string_lossy().eq_ignore_ascii_case(file)) {
+        return Some(e.path());
+    }
+    if depth == 0 {
+        return None;
+    }
+    entries
+        .iter()
+        .filter(|e| e.path().is_dir() && e.file_name() != "node_modules")
+        .find_map(|e| find_file(&e.path(), file, depth - 1))
 }
 
-const CLAUDE_ICONS: [&str; 2] = ["Assets\\Square310x310Logo.png", "Assets\\Square150x150Logo.png"];
-const CHATGPT_ICONS: [&str; 2] = ["assets\\Square44x44Logo.targetsize-256_altform-unplated.png", "assets\\icon.png"];
+fn b64(bytes: &[u8]) -> String {
+    base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
+/// Per tool: the tile icon, worked out once per run.
+static ICONS: LazyLock<Mutex<HashMap<&'static str, Option<String>>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// The tile icon. The Store packages' own app icons: Claude's full icon;
+/// ChatGPT ships its logo only without a background, so it goes on a white
+/// rounded square like the Mac icon. Terminal tools wear Windows Terminal's.
+fn icon(t: Tool) -> Option<String> {
+    let k = super::key(t);
+    if let Some(i) = ICONS.lock().unwrap().get(k) {
+        return i.clone();
+    }
+    let png = |package: &'static str, file: &str| {
+        let dir = package_dir(package)?;
+        std::fs::read(find_file(&dir, file, 3)?).ok()
+    };
+    let made = match t {
+        Tool::Desktop => png("Claude", "Square44x44Logo.targetsize-256.png").map(|b| format!("data:image/png;base64,{}", b64(&b))),
+        Tool::ChatGpt => png("OpenAI.Codex", "Square44x44Logo.targetsize-256_altform-lightunplated.png").map(|b| {
+            let svg = format!(
+                "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256'><rect width='256' height='256' rx='58' fill='#fff'/><image href='data:image/png;base64,{}' x='44' y='44' width='168' height='168'/></svg>",
+                b64(&b)
+            );
+            format!("data:image/svg+xml;base64,{}", b64(svg.as_bytes()))
+        }),
+        Tool::Code | Tool::Codex => png("Microsoft.WindowsTerminal", "Square44x44Logo.targetsize-256.png")
+            .map(|b| format!("data:image/png;base64,{}", b64(&b))),
+        Tool::Pi => Some(format!("data:image/svg+xml;base64,{}", b64(PI_ICON.as_bytes()))),
+    };
+    ICONS.lock().unwrap().insert(k, made.clone());
+    made
+}
 
 /// Installed, and the tile's icon.
 pub fn status(t: Tool) -> (bool, Option<String>) {
-    match t {
-        Tool::Desktop => (claude_desktop_exe().is_some(), package_icon("Claude", &CLAUDE_ICONS)),
-        Tool::ChatGpt => (chatgpt_exe().is_some(), package_icon("OpenAI.Codex", &CHATGPT_ICONS)),
-        Tool::Codex => (terminal_cli(t).is_some(), package_icon("OpenAI.Codex", &CHATGPT_ICONS)),
-        Tool::Pi => (
-            terminal_cli(t).is_some(),
-            Some(format!(
-                "data:image/svg+xml;base64,{}",
-                base64::engine::general_purpose::STANDARD.encode(PI_ICON)
-            )),
-        ),
-        Tool::Code => (terminal_cli(t).is_some(), None),
-    }
+    let installed = match t {
+        Tool::Desktop => claude_desktop_exe().is_some(),
+        Tool::ChatGpt => chatgpt_exe().is_some(),
+        Tool::Code | Tool::Codex | Tool::Pi => terminal_cli(t).is_some(),
+    };
+    (installed, icon(t))
 }
 
-/// Process ids running an image ("Claude.exe").
-fn pids(image: &str) -> Vec<u32> {
-    let Ok(out) = hidden("tasklist").args(["/FI", &format!("IMAGENAME eq {image}"), "/FO", "CSV", "/NH"]).output() else {
+/// Process ids running from inside a folder. By folder, not by name:
+/// Windows matches names without case, and Claude Code's claude.exe would
+/// otherwise count as Claude Desktop's Claude.exe.
+fn pids_in(dir: &Path) -> Vec<u32> {
+    let script = format!(
+        "Get-CimInstance Win32_Process | Where-Object {{ $_.ExecutablePath -and $_.ExecutablePath.StartsWith('{}', [StringComparison]::OrdinalIgnoreCase) }} | ForEach-Object {{ $_.ProcessId }}",
+        dir.display().to_string().replace('\'', "''")
+    );
+    let Ok(out) = hidden("powershell").args(["-NoProfile", "-NonInteractive", "-Command", &script]).output() else {
         return Vec::new();
     };
-    String::from_utf8_lossy(&out.stdout)
-        .lines()
-        .filter_map(|l| l.split("\",\"").nth(1).and_then(|p| p.trim_matches('"').parse().ok()))
-        .collect()
+    String::from_utf8_lossy(&out.stdout).lines().filter_map(|l| l.trim().parse().ok()).collect()
 }
 
 fn alive(pid: u32) -> bool {
@@ -161,20 +199,45 @@ fn alive(pid: u32) -> bool {
         .unwrap_or(false)
 }
 
-/// Asks a running app to close, the way its window's close button would,
-/// and waits. These apps read their config only at startup.
-fn quit_running(t: Tool, image: &str) -> Result<(), String> {
-    if pids(image).is_empty() {
+/// Closes a running app so it rereads its config: these apps read it only
+/// at startup. Asked first, the way its close button would; but closing the
+/// window only hides these apps to the tray, so after a moment it is ended.
+/// It is reopened right away, and its conversations live on the server.
+fn quit_running(t: Tool, dir: &Path) -> Result<(), String> {
+    let running = pids_in(dir);
+    if running.is_empty() {
         return Ok(());
     }
-    let _ = hidden("taskkill").args(["/IM", image]).output();
-    for _ in 0..40 {
-        if pids(image).is_empty() {
+    let kill = |force: bool| {
+        for pid in &running {
+            let mut c = hidden("taskkill");
+            c.args(["/PID", &pid.to_string(), "/T"]);
+            if force {
+                c.arg("/F");
+            }
+            let _ = c.output();
+        }
+    };
+    kill(false);
+    for round in 0..20 {
+        thread::sleep(Duration::from_millis(250));
+        if !running.iter().any(|p| alive(*p)) {
             return Ok(());
         }
-        thread::sleep(Duration::from_millis(200));
+        if round == 8 {
+            kill(true);
+        }
     }
     Err(format!("{} is still running. Close it and try again.", name(t)))
+}
+
+/// The folder an app runs from: its Store package, or a classic install.
+fn app_dir(t: Tool) -> Option<PathBuf> {
+    match t {
+        Tool::Desktop => package_dir("Claude").or_else(|| env_dir("LOCALAPPDATA").map(|l| l.join("AnthropicClaude"))),
+        Tool::ChatGpt => package_dir("OpenAI.Codex"),
+        _ => None,
+    }
 }
 
 /// Removes the variables a tool must not inherit: another session's, or
@@ -227,7 +290,9 @@ pub fn launch(app: AppHandle, t: Tool, models: &Value, target: &Target) -> Resul
     let mut cmd = match t {
         Tool::Desktop => {
             let exe = claude_desktop_exe().ok_or("Claude is not installed.")?;
-            quit_running(t, "Claude.exe")?;
+            if let Some(dir) = app_dir(t) {
+                quit_running(t, &dir)?;
+            }
             let helper = helper_path(&helper_dir, HELPER_NAME);
             config::write_helper(&helper)?;
             config::write_claude_desktop(&home, &helper, models, target)?;
@@ -237,7 +302,9 @@ pub fn launch(app: AppHandle, t: Tool, models: &Value, target: &Target) -> Resul
         }
         Tool::ChatGpt => {
             let exe = chatgpt_exe().ok_or("ChatGPT is not installed.")?;
-            quit_running(t, "ChatGPT.exe")?;
+            if let Some(dir) = app_dir(t) {
+                quit_running(t, &dir)?;
+            }
             let key = keychain::get_key().ok_or("No key in the keychain. Connect first.")?;
             chatgpt::write_config(&home, models, target)?;
             let mut c = Command::new(exe);
