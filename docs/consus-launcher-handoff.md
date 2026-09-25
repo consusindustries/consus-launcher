@@ -29,7 +29,7 @@ Decided since (Eric's calls):
 - **Compliance level is ITAR by default** (2026-09-22); an org can set another level through org settings (2026-09-24).
 - **Terminal.app only** for terminal tools on macOS; a terminal picker is later.
 - **One key.** The per-tool key override and the Log tab placeholder were removed (2026-09-24); org settings and the portal's usage view cover those needs.
-- **No auto-update, Mac-only releases, drafted for review** (2026-09-24). See section 9.
+- **No auto-update, drafted releases** (2026-09-24). Releases were Mac-only until Windows support landed; they now include a Windows `.msi` (preview, 2026-09-25). See section 9.
 - **Line count** (2026-09-24): about 1,500 lines of app code is a guideline, not a limit.
 
 ## 3. Repo
@@ -105,7 +105,7 @@ Each template, or the module that embeds it, records the doc it was checked agai
 - `release.yml` builds a universal `.dmg` and `.pkg` on a `v*` tag, attaches SBOMs and checksums, and drafts the GitHub Release for a person to publish.
 - **Signing and notarization** run when the Apple secrets exist (names at the top of `release.yml`) and are skipped otherwise. The Apple Developer enrollment for Consus Industries, Inc. is pending.
 - **Until notarized,** current macOS blocks a browser-downloaded build. On one test Mac it hung with no approval dialog, while a command-line download installed and ran normally. The first public release waits for notarization; a command-line installer is the interim path.
-- **Windows:** compiles in CI; releases wait for Windows tool launching and Azure Trusted Signing.
+- **Windows:** `.msi` for x64 and ARM64 in each release (preview). Not code-signed until Azure Trusted Signing is set up; window placement in the glass is not planned on Windows (Eric, 2026-09-25).
 - **No in-app updater:** it would be a network host beyond the Consus hosts.
 
 ## 10. Status and what's next
@@ -115,7 +115,7 @@ Next, in order:
 1. Org settings from the portal, fetched with the user's key, once the portal serves them; and removing the launcher's settings from a tool an admin turns off. The design is kept with the Consus services.
 2. Model limits from the gateway's `/v1/models`, replacing the Pi and Codex tables (which today reuse the ITAR rows for other levels).
 3. Signed, notarized releases once Apple enrollment clears; device-management kit (`.pkg` plus configuration profile).
-4. Windows: tool detection, configs, launch, and quit-with-launcher work (preview, 2026-09-25); window placement, org settings from the registry, and `.msi` releases remain.
+4. Windows: tool detection, configs, launch, quit-with-launcher, org settings from the registry, and `.msi` releases (preview, 2026-09-25). Code signing waits on Azure Trusted Signing.
 
 ## 11. Working style
 Plan before building. One PR at a time, reviewed, with CI green before merge. Ask before a decision that changes scope; if something is not in these notes, the default answer is no. Short commit messages. No em dashes anywhere in copy or comments.

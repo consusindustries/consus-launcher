@@ -22,7 +22,8 @@ name: Release
 #   APPLE_API_KEY_P8            contents of that key's AuthKey_<id>.p8
 # The first four go together, and so do the last three.
 #
-# Mac only for now: tool launching is macOS only (Windows builds in build.yml).
+# Windows gets an .msi for x64 and ARM64. It is not code-signed yet (Azure
+# Trusted Signing is not set up), so Windows SmartScreen warns on first run.
 # No updater manifest: the app does not auto-update, because an updater would
 # be a network host beyond the two Consus hosts.
 
@@ -179,18 +180,75 @@ jobs:
           path: release/
           if-no-files-found: error
 
+  windows:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-pc-windows-msvc
+            arch: x64
+          - target: aarch64-pc-windows-msvc
+            arch: arm64
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 20
+
+      - name: Rust for ${{ matrix.target }}
+        shell: bash
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add ${{ matrix.target }}
+
+      - name: Version
+        id: version
+        shell: bash
+        run: echo "version=$(node -p "require('./src-tauri/tauri.conf.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build the .msi
+        run: npm run tauri -- build --target ${{ matrix.target }} --bundles msi
+
+      - name: Collect the installer
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          cp src-tauri/target/${{ matrix.target }}/release/bundle/msi/*.msi "release/Consus-Launcher-$VERSION-${{ matrix.arch }}.msi"
+          ls -la release
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: consus-launcher-${{ steps.version.outputs.version }}-windows-${{ matrix.arch }}
+          path: release/
+          if-no-files-found: error
+
   # Only this job can write to the repository, and it runs no build code.
   draft:
     if: github.ref_type == 'tag'
-    needs: macos
+    needs: [macos, windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: consus-launcher-${{ needs.macos.outputs.version }}-macos
+          pattern: consus-launcher-${{ needs.macos.outputs.version }}-*
           path: release
+          merge-multiple: true
+
+      - name: Checksums for every file
+        run: cd release && rm -f SHA256SUMS.txt && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt
 
       - name: Draft the GitHub Release
         env:
@@ -200,10 +258,13 @@ jobs:
           NOTARIZED: ${{ needs.macos.outputs.notarized }}
         run: |
           {
-            echo "Consus Launcher $VERSION for macOS (Apple silicon and Intel)."
+            echo "Consus Launcher $VERSION for macOS (Apple silicon and Intel) and Windows (x64 and ARM64, preview)."
             echo
-            echo "Download the .dmg, or the .pkg to install into /Applications."
+            echo "macOS: the .dmg, or the .pkg to install into /Applications. Windows: the .msi for your PC."
             echo "SHA256SUMS.txt lists the checksums; the .cdx.json files are the CycloneDX SBOMs."
+            echo
+            echo "The Windows installers are not code-signed yet, so Windows SmartScreen warns on first run:"
+            echo "choose More info, then Run anyway."
             echo
             echo "Or install from Terminal (checks the checksum first):"
             echo
