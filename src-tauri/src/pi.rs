@@ -1,12 +1,14 @@
 // Pi: an isolated agent directory at ~/.pi-consus-gateway, set through
 // PI_CODING_AGENT_DIR, so the user's own ~/.pi is never touched.
 //
-// Docs checked: the Consus integration guide for Pi (its ITAR example is
-//   templates/pi-models-itar.json, verbatim), and Pi 0.84.1's own
-//   docs/models.md and core/resolve-config-value.js (2026-09-24).
+// Docs checked: the Consus integration guide for Pi (the provider settings
+//   below are its example's), and Pi 0.84.1's own docs/models.md and
+//   core/resolve-config-value.js (2026-09-24).
 //
-// Two changes from the guide. The model list is trimmed to what this key can
-// use. And x-api-key is not "$CONSUS_API_KEY" from the environment: it is
+// Two changes from the guide. The model list is built from what the gateway
+// reports for this key at the org's level (names, limits, reasoning,
+// pricing), not copied from the guide's ITAR table. And x-api-key is not
+// "$CONSUS_API_KEY" from the environment: it is
 // "!<helper>", a command Pi runs at request time, so the key is not in the
 // environment every command the agent runs inherits. The agent can still run
 // the helper itself, as with Claude Code's apiKeyHelper: this keeps the key
@@ -27,9 +29,6 @@ use crate::models::{self, Target};
 pub const PROFILE_DIR: &str = ".pi-consus-gateway";
 const PROVIDER: &str = "consus";
 
-// The guide's ITAR example. For another level the same models get that
-// level's suffix and label, until the gateway reports each model's limits.
-const TEMPLATE: &str = include_str!("../templates/pi-models-itar.json");
 
 pub fn profile_dir(home: &Path) -> PathBuf {
     home.join(PROFILE_DIR)
@@ -56,29 +55,73 @@ fn write_object(path: &Path, doc: Map<String, Value>) -> Result<(), String> {
         })
 }
 
-/// The guide's provider block for this key, helper, and target.
+/// Pi's reasoning levels, mapped onto the efforts a model takes; a level the
+/// model lacks is null, so Pi does not offer it. "minimal" uses the lowest.
+fn thinking_map(efforts: &[String]) -> Value {
+    let has = |e: &str| efforts.iter().any(|x| x == e).then(|| e.to_string());
+    json!({
+        "off": "none",
+        "minimal": efforts.first(),
+        "low": has("low"),
+        "medium": has("medium"),
+        "high": has("high"),
+        "xhigh": has("xhigh"),
+    })
+}
+
+/// Claude first, then GPT, Gemini, Grok, and the rest, by name within each.
+fn maker_rank(maker: &str) -> usize {
+    ["anthropic", "openai", "google", "xai"].iter().position(|m| *m == maker).unwrap_or(4)
+}
+
+/// The guide's provider block, with one row per model this key has at the
+/// target level.
 fn provider(helper: &Path, models_json: &Value, t: &Target) -> Result<Value, String> {
-    let have = models::ids(models_json);
     let tag = t.tag();
-    let mut doc: Value = serde_json::from_str(TEMPLATE).expect("template is valid JSON");
-    let mut p = doc["providers"][PROVIDER].take();
-    let list = p["models"].as_array_mut().expect("template lists models");
-    for m in list.iter_mut() {
-        let base = m["id"].as_str().and_then(|id| id.strip_suffix(":itar")).map(String::from);
-        let name = m["name"].as_str().and_then(|n| n.strip_suffix(" (ITAR)")).map(String::from);
-        if let (Some(base), Some(name)) = (base, name) {
-            m["id"] = json!(format!("{base}:{}", t.level));
-            m["name"] = json!(format!("{name} ({tag})"));
-        }
-    }
-    list.retain(|m| m["id"].as_str().is_some_and(|id| have.contains(&id)));
+    let mut list = models::at_level(models_json, t);
     if list.is_empty() {
         return Err(format!("No {tag} models for Pi are available to this key."));
     }
-    p["baseUrl"] = json!(t.v1());
-    // Pi runs this through the shell; the path can contain a space.
-    p["headers"]["x-api-key"] = json!(format!("!\"{}\"", crate::config::command_path(helper)));
-    Ok(p)
+    list.sort_by(|(_, a), (_, b)| maker_rank(&a.maker).cmp(&maker_rank(&b.maker)).then(a.name.cmp(&b.name)));
+    let rows: Vec<Value> = list
+        .into_iter()
+        .map(|(id, d)| {
+            let mut m = json!({
+                "id": id,
+                "name": format!("{} ({tag})", d.name),
+                "reasoning": !d.efforts.is_empty(),
+                "input": if d.image { json!(["text", "image"]) } else { json!(["text"]) },
+                "contextWindow": d.context,
+                "maxTokens": d.max_output,
+                "cost": {
+                    "input": d.pricing[0],
+                    "output": d.pricing[1],
+                    "cacheRead": d.pricing[2],
+                    "cacheWrite": d.pricing[3],
+                },
+            });
+            if !d.efforts.is_empty() {
+                m["thinkingLevelMap"] = thinking_map(&d.efforts);
+            }
+            m
+        })
+        .collect();
+    Ok(json!({
+        "baseUrl": t.v1(),
+        "api": "openai-completions",
+        "apiKey": "consus",
+        // Pi runs this through the shell; the path can contain a space.
+        "headers": { "x-api-key": format!("!\"{}\"", crate::config::command_path(helper)) },
+        "compat": {
+            "supportsDeveloperRole": false,
+            "supportsReasoningEffort": true,
+            "thinkingFormat": "openai",
+            "supportsStore": false,
+            "supportsStrictMode": false,
+            "maxTokensField": "max_tokens",
+        },
+        "models": rows,
+    }))
 }
 
 pub fn write_config(home: &Path, helper: &Path, models_json: &Value, t: &Target) -> Result<(), String> {
@@ -106,7 +149,7 @@ pub fn write_config(home: &Path, helper: &Path, models_json: &Value, t: &Target)
     let keep = sdoc.get("defaultProvider").and_then(Value::as_str) == Some(PROVIDER)
         && sdoc.get("defaultModel").and_then(Value::as_str).is_some_and(|m| ids.iter().any(|id| id == m));
     if !keep {
-        // Newest Opus when the key has one, else the guide's first model.
+        // Newest Opus when the key has one, else the first model.
         let default = models::claude_models(models_json, t)
             .into_iter()
             .map(|m| m.id)
@@ -235,7 +278,10 @@ mod tests {
     fn follows_the_target_level_and_endpoint() {
         let home = temp_home("target");
         let t = Target { endpoint: "https://ai-proxy.acme.example".into(), level: "fedramp-high".into() };
-        let models = json!([{ "id": "consus/claude-opus-5-5:fedramp-high" }, { "id": "consus/claude-opus-5-5:itar" }]);
+        let models = json!([
+            { "id": "consus/claude-opus-5-5:fedramp-high", "display_name": "Claude Opus 5.5" },
+            { "id": "consus/claude-opus-5-5:itar", "display_name": "Claude Opus 5.5" }
+        ]);
         write_config(&home, &helper(), &models, &t).unwrap();
         let p = &read(&models_path(&home))["providers"]["consus"];
         assert_eq!(p["baseUrl"], "https://ai-proxy.acme.example/v1");
@@ -247,13 +293,37 @@ mod tests {
     }
 
     #[test]
-    fn every_template_model_can_take_another_level() {
-        // The rewrite to another compliance level relies on these suffixes;
-        // a row without them would keep :itar in a non-ITAR list.
-        let doc: Value = serde_json::from_str(TEMPLATE).unwrap();
-        for m in doc["providers"][PROVIDER]["models"].as_array().unwrap() {
-            assert!(m["id"].as_str().unwrap().ends_with(":itar"), "{}", m["id"]);
-            assert!(m["name"].as_str().unwrap().ends_with(" (ITAR)"), "{}", m["name"]);
-        }
+    fn rows_carry_the_gateways_limits_reasoning_and_pricing() {
+        let models = json!([
+            { "id": "consus/grok-4.6:itar", "owned_by": "xai", "display_name": "Grok 4.6", "context_window": 500000,
+              "max_output_tokens": 500000, "input_modalities": ["text", "image"], "reasoning_efforts": ["low", "medium", "high", "xhigh"],
+              "pricing": { "input": 2.64, "output": 7.92, "cache_read": 0.66, "cache_write": 0.0 } },
+            { "id": "consus/claude-sonnet-4-5:itar", "owned_by": "anthropic", "display_name": "Claude Sonnet 4.5", "context_window": 200000,
+              "max_output_tokens": 64000, "input_modalities": ["text", "image", "pdf"], "reasoning_efforts": ["low", "medium", "high"],
+              "pricing": { "input": 3.6, "output": 18.0, "cache_read": 0.36, "cache_write": 4.5 } },
+            { "id": "consus/gpt-4.1:itar", "owned_by": "openai", "display_name": "GPT-4.1", "context_window": 300000,
+              "max_output_tokens": 32768, "input_modalities": ["text", "image"], "reasoning_efforts": [] },
+            { "id": "consus/titan-embed-text-v2:itar", "owned_by": "amazon", "max_output_tokens": null }
+        ]);
+        let p = provider(&helper(), &models, &Target::default()).unwrap();
+        let rows = p["models"].as_array().unwrap();
+        let ids: Vec<&str> = rows.iter().map(|m| m["id"].as_str().unwrap()).collect();
+        assert_eq!(ids, ["claude-sonnet-4-5:itar", "gpt-4.1:itar", "grok-4.6:itar"], "Claude first, no embeddings");
+
+        let sonnet = &rows[0];
+        assert_eq!(sonnet["name"], "Claude Sonnet 4.5 (ITAR)");
+        assert_eq!((sonnet["contextWindow"].as_u64(), sonnet["maxTokens"].as_u64()), (Some(200_000), Some(64_000)));
+        assert_eq!(sonnet["input"], json!(["text", "image"]));
+        assert_eq!(sonnet["cost"], json!({ "input": 3.6, "output": 18.0, "cacheRead": 0.36, "cacheWrite": 4.5 }));
+        assert_eq!(
+            sonnet["thinkingLevelMap"],
+            json!({ "off": "none", "minimal": "low", "low": "low", "medium": "medium", "high": "high", "xhigh": null })
+        );
+        assert_eq!(rows[2]["thinkingLevelMap"]["xhigh"], "xhigh");
+        assert_eq!(rows[2]["maxTokens"].as_u64(), Some(500_000));
+
+        let gpt = &rows[1];
+        assert_eq!(gpt["reasoning"], false);
+        assert!(gpt.get("thinkingLevelMap").is_none(), "no efforts, no reasoning levels to offer");
     }
 }
