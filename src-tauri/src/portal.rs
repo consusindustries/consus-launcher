@@ -17,13 +17,26 @@ pub enum ConnectError {
     Rejected { message: String },
 }
 
+/// The whole cause chain: reqwest's own message is only "error sending
+/// request for url", and the reason (DNS, TLS, proxy) is in its sources.
+fn network(e: impl std::error::Error) -> ConnectError {
+    let mut message = e.to_string();
+    let mut cause = e.source();
+    while let Some(c) = cause {
+        message.push_str(": ");
+        message.push_str(&c.to_string());
+        cause = c.source();
+    }
+    ConnectError::Network { message }
+}
+
 #[tauri::command]
 pub async fn validate_key(key: String) -> Result<ConnectResult, ConnectError> {
     let client = reqwest::Client::builder()
         .user_agent(USER_AGENT)
         .timeout(std::time::Duration::from_secs(15))
         .build()
-        .map_err(|e| ConnectError::Network { message: e.to_string() })?;
+        .map_err(network)?;
 
     let target = crate::settings::current()
         .map_err(|message| ConnectError::Rejected { message })?
@@ -34,7 +47,7 @@ pub async fn validate_key(key: String) -> Result<ConnectResult, ConnectError> {
         .header("accept", "application/json")
         .send()
         .await
-        .map_err(|e| ConnectError::Network { message: e.to_string() })?;
+        .map_err(network)?;
 
     let status = resp.status();
     if !status.is_success() {
@@ -49,7 +62,7 @@ pub async fn validate_key(key: String) -> Result<ConnectResult, ConnectError> {
     let body: serde_json::Value = resp
         .json()
         .await
-        .map_err(|e| ConnectError::Network { message: e.to_string() })?;
+        .map_err(network)?;
 
     // The gateway returns an OpenAI-style listing: {"object":"list","data":[...]}
     let models = body

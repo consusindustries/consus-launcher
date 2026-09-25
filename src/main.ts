@@ -79,7 +79,10 @@ const REVOKED_MESSAGE = "This key was revoked. Paste a new one from the portal."
 // Portal commands reject with a ConnectError object; keychain commands reject with a string.
 function connectErrorMessage(err: unknown): string {
   if (typeof err === "string") return "The portal accepted the key, but it could not be saved to your keychain.";
-  if ((err as ConnectError).kind === "Network") return "Could not reach the portal. Check your connection.";
+  if ((err as ConnectError).kind === "Network") {
+    const detail = (err as { message?: string }).message;
+    return "Could not reach the portal. Check your connection." + (detail ? " (" + detail + ")" : "");
+  }
   if (settingsError) return settingsError;
   return "That key was not accepted by the portal.";
 }
