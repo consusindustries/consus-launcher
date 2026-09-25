@@ -61,24 +61,41 @@ struct Raw {
     managed: bool,
 }
 
-fn string(v: Option<Value>, key: &str) -> Result<Option<String>, String> {
+/// A string setting. Absent is None. Blank is None only where that cannot
+/// silently change where requests go; for the others it is an error.
+fn string(v: Option<Value>, key: &str, blank_ok: bool) -> Result<Option<String>, String> {
     match v {
         None => Ok(None),
-        Some(Value::String(s)) if s.trim().is_empty() => Ok(None),
+        Some(Value::String(s)) if s.trim().is_empty() => {
+            if blank_ok {
+                Ok(None)
+            } else {
+                Err(format!("{key} is set but empty."))
+            }
+        }
         Some(Value::String(s)) => Ok(Some(s.trim().to_string())),
         Some(_) => Err(format!("{key} must be a string.")),
     }
 }
 
-/// "https://proxy.example.com/" or ".../v1" -> "https://proxy.example.com".
+/// "https://proxy.example.com/" or ".../v1/" -> "https://proxy.example.com".
 /// https only, except plain http to this machine for a local proxy. No
 /// query, fragment, credentials, spaces, or quotes: the value is written
 /// into several tools' config files.
 pub fn normalize_endpoint(raw: &str) -> Result<String, String> {
     let bad = || format!("EndpointURL {raw:?} is not a valid https URL.");
-    let mut s = raw.trim().trim_end_matches('/').to_string();
-    if let Some(stripped) = s.strip_suffix("/v1") {
-        s = stripped.to_string();
+    let mut s = raw.trim().to_string();
+    loop {
+        let before = s.len();
+        s.truncate(s.trim_end_matches('/').len());
+        if let Some(i) = s.len().checked_sub(3).filter(|&i| s.is_char_boundary(i)) {
+            if s[i..].eq_ignore_ascii_case("/v1") {
+                s.truncate(i);
+            }
+        }
+        if s.len() == before {
+            break;
+        }
     }
     if s.chars().any(|c| c.is_whitespace() || c.is_control() || "\"'\\`<>?#@{}|^".contains(c)) {
         return Err(bad());
@@ -88,7 +105,9 @@ pub fn normalize_endpoint(raw: &str) -> Result<String, String> {
     } else if let Some(r) = s.strip_prefix("http://") {
         let host = r.split(['/', ':']).next().unwrap_or("");
         if host != "localhost" && host != "127.0.0.1" {
-            return Err(format!("EndpointURL {raw:?} must use https (plain http is allowed only to localhost)."));
+            return Err(format!(
+                "EndpointURL {raw:?} must use https (plain http is allowed only to localhost or 127.0.0.1)."
+            ));
         }
         r
     } else {
@@ -102,16 +121,16 @@ pub fn normalize_endpoint(raw: &str) -> Result<String, String> {
 }
 
 fn parse(raw: Raw) -> Result<Settings, String> {
-    let endpoint = match string(raw.endpoint, "EndpointURL")? {
+    let endpoint = match string(raw.endpoint, "EndpointURL", false)? {
         Some(e) => normalize_endpoint(&e)?,
         None => DEFAULT_ENDPOINT.to_string(),
     };
-    let level = match string(raw.level, "ComplianceLevel")? {
+    let level = match string(raw.level, "ComplianceLevel", false)? {
         Some(l) if valid_level(&l) => l,
         Some(l) => return Err(format!("ComplianceLevel {l:?} is not a compliance level the gateway knows.")),
         None => DEFAULT_LEVEL.to_string(),
     };
-    let tools = match raw.tools {
+    let listed: Option<Vec<String>> = match raw.tools {
         None => None,
         Some(Value::String(s)) => Some(s.split(',').map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect()),
         Some(Value::Array(a)) => Some(
@@ -120,24 +139,40 @@ fn parse(raw: Raw) -> Result<Settings, String> {
                 .collect::<Result<Vec<_>, _>>()?,
         ),
         Some(_) => return Err("Tools must be a list of tool ids.".into()),
-    }
-    .map(|ids: Vec<String>| {
-        // Unknown ids are skipped, so a newer tool id cannot break an older launcher.
-        ids.iter()
-            .filter_map(|id| TOOL_IDS.iter().find(|(pid, _)| pid == id).map(|(_, key)| key.to_string()))
-            .collect()
-    });
+    };
+    let tools = match listed {
+        None => None,
+        Some(ids) => {
+            // Unknown ids are skipped, so a newer tool id cannot break an
+            // older launcher; but a list with no id this launcher knows is
+            // a typo, not "no tools".
+            let keys: Vec<String> = ids
+                .iter()
+                .filter_map(|id| TOOL_IDS.iter().find(|(pid, _)| pid == id).map(|(_, key)| key.to_string()))
+                .collect();
+            if keys.is_empty() && !ids.is_empty() {
+                let known: Vec<&str> = TOOL_IDS.iter().map(|(pid, _)| *pid).collect();
+                return Err(format!(
+                    "Tools lists no tool this launcher knows ({}). Use: {}.",
+                    ids.join(", "),
+                    known.join(", ")
+                ));
+            }
+            Some(keys)
+        }
+    };
     Ok(Settings {
         target: Target { endpoint, level },
         tools,
-        org_name: string(raw.org_name, "OrgName")?,
+        org_name: string(raw.org_name, "OrgName", true)?,
         managed: raw.managed,
     })
 }
 
 /// One key from a plist, via the system's plutil. Arrays come out as JSON;
 /// plutil will not write a lone string as JSON, so plain values come out
-/// raw and are read as strings.
+/// raw and are read as strings. The file was already checked to be readable
+/// (see `read`), so a failure here means the key is not set.
 fn plist_value(path: &Path, key: &str) -> Option<Value> {
     let extract = |format: &str| {
         let out = Command::new("plutil").args(["-extract", key, format, "-o", "-"]).arg(path).output().ok()?;
@@ -150,25 +185,43 @@ fn plist_value(path: &Path, key: &str) -> Option<Value> {
     Some(Value::String(String::from_utf8_lossy(&raw).trim_end_matches('\n').to_string()))
 }
 
-/// Where the values come from, first match wins: the user's managed
-/// preferences, the machine's, then the user's own preferences.
+/// Where the values come from, first match wins, as macOS itself orders
+/// them: the user's managed preferences, the machine's, then the user's own
+/// preferences, then the machine's (`sudo defaults write /Library/Preferences/...`).
 fn sources(home: &Path) -> Vec<(PathBuf, bool)> {
     let file = format!("{DOMAIN}.plist");
     let managed = Path::new("/Library/Managed Preferences");
+    let user = std::env::var("USER").ok().or_else(|| home.file_name().map(|n| n.to_string_lossy().into_owned()));
     let mut out = Vec::new();
-    if let Ok(user) = std::env::var("USER") {
+    if let Some(user) = user {
         out.push((managed.join(user).join(&file), true));
     }
     out.push((managed.join(&file), true));
     out.push((home.join("Library/Preferences").join(&file), false));
+    out.push((Path::new("/Library/Preferences").join(&file), false));
     out
 }
 
-fn read(home: &Path) -> Raw {
+/// A settings file that exists but cannot be read is an error, not an
+/// empty file: treating it as empty would send every tool to the defaults.
+fn read(home: &Path) -> Result<Raw, (String, bool)> {
+    read_from(sources(home))
+}
+
+fn read_from(sources: Vec<(PathBuf, bool)>) -> Result<Raw, (String, bool)> {
     let mut raw = Raw::default();
-    for (path, is_managed) in sources(home) {
+    for (path, is_managed) in sources {
         if !path.exists() {
             continue;
+        }
+        let lint = Command::new("plutil").arg("-lint").arg(&path).output();
+        match lint {
+            Ok(out) if out.status.success() => {}
+            Ok(out) => {
+                let why = String::from_utf8_lossy(&out.stderr).trim().to_string();
+                return Err((format!("{} could not be read ({why}).", path.display()), is_managed));
+            }
+            Err(e) => return Err((format!("{} could not be checked ({e}).", path.display()), is_managed)),
         }
         let slots: [(&str, &mut Option<Value>); 4] = [
             ("EndpointURL", &mut raw.endpoint),
@@ -185,24 +238,41 @@ fn read(home: &Path) -> Raw {
             }
         }
     }
-    raw
+    Ok(raw)
 }
 
-static SETTINGS: OnceLock<Result<Settings, String>> = OnceLock::new();
+/// The settings for this run, and whether device management supplied any
+/// of them (so an error can say who can fix it).
+static SETTINGS: OnceLock<(Result<Settings, String>, bool)> = OnceLock::new();
 
-/// The settings for this run of the launcher, read on first use. Other
-/// platforms get the defaults until they have a settings source.
+fn load() -> &'static (Result<Settings, String>, bool) {
+    SETTINGS.get_or_init(|| {
+        let read = if cfg!(target_os = "macos") {
+            std::env::var_os("HOME").map(|h| read(Path::new(&h))).unwrap_or(Ok(Raw::default()))
+        } else {
+            Ok(Raw::default())
+        };
+        let (result, managed) = match read {
+            Err((e, managed)) => (Err(e), managed),
+            Ok(raw) => {
+                let managed = raw.managed;
+                (parse(raw), managed)
+            }
+        };
+        let who = if managed {
+            "Your organization's launcher settings"
+        } else {
+            "The launcher settings in your io.consus.launcher preferences"
+        };
+        (result.map_err(|e| format!("{who} are invalid: {e}")), managed)
+    })
+}
+
+/// The settings for this run of the launcher, read on first use; restart the
+/// launcher to pick up a change. Other platforms get the defaults until they
+/// have a settings source.
 pub fn current() -> Result<Settings, String> {
-    SETTINGS
-        .get_or_init(|| {
-            let raw = if cfg!(target_os = "macos") {
-                std::env::var_os("HOME").map(|h| read(Path::new(&h))).unwrap_or_default()
-            } else {
-                Raw::default()
-            };
-            parse(raw).map_err(|e| format!("Your organization's launcher settings are invalid: {e}"))
-        })
-        .clone()
+    load().0.clone()
 }
 
 #[derive(Serialize)]
@@ -212,11 +282,13 @@ pub struct SettingsView {
     pub error: Option<String>,
 }
 
+/// Async so the first read (a few plutil runs) happens off the UI thread.
 #[tauri::command]
-pub fn get_settings() -> SettingsView {
-    match current() {
-        Ok(s) => SettingsView { org_name: s.org_name, managed: s.managed, error: None },
-        Err(e) => SettingsView { org_name: None, managed: true, error: Some(e) },
+pub async fn get_settings() -> SettingsView {
+    let (result, managed) = load();
+    match result {
+        Ok(s) => SettingsView { org_name: s.org_name.clone(), managed: *managed, error: None },
+        Err(e) => SettingsView { org_name: None, managed: *managed, error: Some(e.clone()) },
     }
 }
 
@@ -290,6 +362,40 @@ mod tests {
         assert!(parse(raw(Some(json!(42)), None, None)).is_err());
         assert!(parse(raw(None, Some(json!("cui")), None)).is_err());
         assert!(parse(raw(None, None, Some(json!({"a": 1})))).is_err());
+        // Blank would silently mean api.consus.io or ITAR.
+        assert!(parse(raw(Some(json!("  ")), None, None)).is_err());
+        assert!(parse(raw(None, Some(json!("")), None)).is_err());
+        // A list with no known tool is a typo, not "no tools".
+        let err = parse(raw(None, None, Some(json!("claude_code, codex_cli")))).unwrap_err();
+        assert!(err.contains("claude_code"), "{err}");
+        // An empty list does mean no tools.
+        assert_eq!(parse(raw(None, None, Some(json!([])))).unwrap().tools, Some(vec![]));
+    }
+
+    #[test]
+    fn v1_is_stripped_however_it_is_written() {
+        for (input, out) in [
+            ("https://x.example//v1", "https://x.example"),
+            ("https://x.example/V1/", "https://x.example"),
+            ("https://x.example/v1/v1", "https://x.example"),
+            ("https://x.example/consus/v1", "https://x.example/consus"),
+        ] {
+            assert_eq!(normalize_endpoint(input).unwrap(), out, "{input}");
+        }
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn an_unreadable_settings_file_is_an_error() {
+        let dir = std::env::temp_dir().join(format!("consus-launcher-badplist-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("io.consus.launcher.plist");
+        std::fs::write(&path, "<plist><dict><key>EndpointURL</key><string>https://proxy").unwrap();
+        let err = read_from(vec![(path.clone(), true)]).err().expect("a truncated file must not read as empty");
+        assert!(err.1, "the error remembers the file was managed");
+        assert!(read_from(vec![(dir.join("absent.plist"), true)]).is_ok());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

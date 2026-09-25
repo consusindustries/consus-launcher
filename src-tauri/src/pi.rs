@@ -245,4 +245,15 @@ mod tests {
         assert_eq!(read(&settings_path(&home))["defaultModel"], "claude-opus-5-5:fedramp-high");
         let _ = fs::remove_dir_all(&home);
     }
+
+    #[test]
+    fn every_template_model_can_take_another_level() {
+        // The rewrite to another compliance level relies on these suffixes;
+        // a row without them would keep :itar in a non-ITAR list.
+        let doc: Value = serde_json::from_str(TEMPLATE).unwrap();
+        for m in doc["providers"][PROVIDER]["models"].as_array().unwrap() {
+            assert!(m["id"].as_str().unwrap().ends_with(":itar"), "{}", m["id"]);
+            assert!(m["name"].as_str().unwrap().ends_with(" (ITAR)"), "{}", m["name"]);
+        }
+    }
 }

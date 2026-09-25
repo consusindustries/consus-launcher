@@ -39,16 +39,16 @@ The tools you open send their requests to `api.consus.io`, or to your organizati
 
 ## For IT admins: org settings
 
-The launcher reads settings for the `io.consus.launcher` preferences domain. Push them in a configuration profile with your device management (Jamf, Intune, and so on); a value from a profile wins over the user's own preferences. Every key is optional.
+The launcher reads settings for the `io.consus.launcher` preferences domain. Push them in a configuration profile with your device management (Jamf, Intune, and so on); a value from a profile wins over the user's own preferences, which win over the machine's (`/Library/Preferences`). Every key is optional.
 
 | Key | Type | What it does |
 |---|---|---|
-| `EndpointURL` | string | Where every tool sends its requests, for example your own logging proxy. Default `https://api.consus.io`. Must be `https://` (plain `http://` only to `localhost`). |
-| `ComplianceLevel` | string | The compliance level every tool is set up for: `itar` (default), `fedramp-high`, `fedramp-high+itar`, and the other levels the gateway supports. |
+| `EndpointURL` | string | Where every tool sends its requests, for example your own logging proxy. Default `https://api.consus.io`. Must be `https://` (plain `http://` only to `localhost` or `127.0.0.1`). |
+| `ComplianceLevel` | string | The compliance level every tool is set up for: `itar` (default), `fedramp-low`, `fedramp-moderate`, `fedramp-high`, `il2`, `il4`, or `il5`, each optionally with `+itar` (for example `fedramp-high+itar`). |
 | `Tools` | array of strings | The tools shown: `claude-desktop`, `chatgpt-desktop`, `claude-code`, `codex-cli`, `pi`. Default: all. |
 | `OrgName` | string | Shown in the launcher's header. |
 
-The launcher reads these when it starts. If a value is present but invalid, the launcher explains the problem and sets nothing up, rather than falling back to defaults. Hiding a tool here is a convenience, not a control: what a key can do is enforced by the Consus gateway.
+The launcher reads these when it starts; restart it after a change. If a value is present but invalid or blank, or a settings file cannot be read, the launcher explains the problem and sets nothing up, rather than falling back to defaults. Hiding a tool here is a convenience, not a control: what a key can do is enforced by the Consus gateway.
 
 To try settings on one Mac without a profile:
 
@@ -60,7 +60,7 @@ defaults delete io.consus.launcher    # back to defaults
 
 ## Install
 
-Requires macOS on Apple silicon or Intel (tested on macOS 26), and a Consus API key from your Consus admin.
+Requires macOS 12 or later on Apple silicon or Intel (tested on macOS 26), and a Consus API key from your Consus admin.
 
 **From Terminal** (recommended until releases are notarized by Apple):
 

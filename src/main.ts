@@ -99,7 +99,7 @@ interface SettingsView {
 async function loadSettings(): Promise<void> {
   const s = await invoke<SettingsView>("get_settings");
   $("orgName").textContent = s.org_name ?? "Consus";
-  settingsError = s.error ? s.error + " Contact your IT admin." : null;
+  settingsError = s.error ? s.error + (s.managed ? " Contact your IT admin." : "") : null;
   if (settingsError) {
     $("empty").querySelector("b")!.textContent = "Launcher settings need attention.";
     $("empty").querySelector("span")!.textContent = settingsError;
@@ -483,7 +483,9 @@ function init(): void {
   void getCurrentWindow().onFocusChanged(({ payload: focused }) => {
     if (focused && K.def) void refreshTools();
   });
-  void loadSettings().then(restoreSession);
+  void loadSettings()
+    .catch(() => undefined)
+    .then(restoreSession);
 }
 
 init();

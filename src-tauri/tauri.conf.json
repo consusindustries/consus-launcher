@@ -46,7 +46,8 @@
     "shortDescription": "Opens AI tools already configured for the Consus gateway.",
     "homepage": "https://github.com/consusindustries/consus-launcher",
     "macOS": {
-      "entitlements": "./Entitlements.plist"
+      "entitlements": "./Entitlements.plist",
+      "minimumSystemVersion": "12.0"
     }
   }
 }
