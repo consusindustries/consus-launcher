@@ -88,11 +88,20 @@ fn chatgpt_exe() -> Option<PathBuf> {
     exe.exists().then_some(exe)
 }
 
-/// The Codex engine inside the ChatGPT app: its model catalog comes from
-/// it, and it stands in for Codex CLI when that is not installed.
+/// The ChatGPT app's Codex engine: its model catalog comes from it, and it
+/// stands in for Codex CLI when that is not installed. Windows refuses to
+/// run it from inside the Store package ("Access is denied"; only the app's
+/// entry point may run from there), so this is the runnable copy the app
+/// keeps in %LOCALAPPDATA%\\OpenAI\\Codex\\bin\\<version>, the newest one.
+/// None until ChatGPT has run once.
 fn chatgpt_codex() -> Option<PathBuf> {
-    let exe = package_dir("OpenAI.Codex")?.join("app\\resources\\codex.exe");
-    exe.exists().then_some(exe)
+    let bin = env_dir("LOCALAPPDATA")?.join("OpenAI\\Codex\\bin");
+    std::fs::read_dir(bin)
+        .ok()?
+        .flatten()
+        .map(|e| e.path().join("codex.exe"))
+        .filter(|p| p.exists())
+        .max_by_key(|p| p.metadata().and_then(|m| m.modified()).ok())
 }
 
 /// A command-line tool, from where its installers put it, else the PATH.
