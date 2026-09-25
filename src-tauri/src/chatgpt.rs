@@ -8,7 +8,9 @@
 // the file stay, and sign out removes only the template's own keys. In TOML,
 // top-level keys must sit above the first [table] header; toml_edit keeps
 // them there. The app rewrites this file on quit, so callers write it only
-// while the app is not running.
+// while the app is not running. When the launcher builds a model catalog,
+// model_catalog_json points at it; sign out removes that line only if it
+// still points at the launcher's file.
 
 use serde_json::Value;
 use std::fs;
@@ -109,8 +111,20 @@ fn strip_from(dst: &mut dyn TableLike, src: &Table) {
     }
 }
 
-pub fn write_config(home: &Path, models_json: &Value, t: &Target) -> Result<(), String> {
-    write_config_at(&config_path(home), models_json, &Table::new(), t)
+/// The launcher's one key beyond the template: the model catalog, which
+/// lets the app name Consus models and list them in its picker.
+fn extra(catalog: Option<&Path>) -> Table {
+    let mut t = Table::new();
+    if let Some(c) = catalog {
+        t.insert("model_catalog_json", value(c.display().to_string()));
+    }
+    t
+}
+
+/// `catalog` is a catalog file the launcher wrote (see codex::catalog), or
+/// None to leave whatever the file has.
+pub fn write_config(home: &Path, models_json: &Value, t: &Target, catalog: Option<&Path>) -> Result<(), String> {
+    write_config_at(&config_path(home), models_json, &extra(catalog), t)
 }
 
 /// The template, then `extra` (keys only this file carries), merged into
@@ -154,8 +168,16 @@ pub fn write_config_at(path: &Path, models_json: &Value, extra: &Table, t: &Targ
 /// Removes the launcher's keys and leaves everything else; a comment
 /// attached to a removed key goes with it. A file with nothing left in it
 /// is deleted.
-pub fn remove_config(home: &Path) -> Result<(), String> {
-    remove_config_at(&config_path(home), &Table::new())
+/// `catalog` is the launcher's catalog file: model_catalog_json is removed
+/// only when it points there, so a catalog the user set up stays.
+pub fn remove_config(home: &Path, catalog: &Path) -> Result<(), String> {
+    let path = config_path(home);
+    let ours = fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| s.parse::<DocumentMut>().ok())
+        .and_then(|d| d.get("model_catalog_json").and_then(|v| v.as_str()).map(String::from))
+        .is_some_and(|v| Path::new(&v) == catalog);
+    remove_config_at(&path, &extra(ours.then_some(catalog)))
 }
 
 pub fn remove_config_at(path: &Path, extra: &Table) -> Result<(), String> {
@@ -228,7 +250,7 @@ followUpQueueMode = "steer"
     fn merge_keeps_user_content_and_drops_inline_key() {
         let home = temp_home("merge");
         fs::write(config_path(&home), EXISTING).unwrap();
-        write_config(&home, &serde_json::from_str(MODELS).unwrap(), &Target::default()).unwrap();
+        write_config(&home, &serde_json::from_str(MODELS).unwrap(), &Target::default(), None).unwrap();
         let out = fs::read_to_string(config_path(&home)).unwrap();
 
         assert!(out.contains("model = \"gpt-5.6-terra:itar\""));
@@ -255,8 +277,8 @@ followUpQueueMode = "steer"
     fn remove_strips_only_the_launchers_keys() {
         let home = temp_home("remove");
         fs::write(config_path(&home), EXISTING).unwrap();
-        write_config(&home, &serde_json::from_str(MODELS).unwrap(), &Target::default()).unwrap();
-        remove_config(&home).unwrap();
+        write_config(&home, &serde_json::from_str(MODELS).unwrap(), &Target::default(), None).unwrap();
+        remove_config(&home, Path::new("/nowhere/chatgpt-models.json")).unwrap();
         let out = fs::read_to_string(config_path(&home)).unwrap();
 
         for gone in ["model = ", "model_provider = ", "env_http_headers", "[model_providers.consus]", "[sandbox_workspace_write]", "[otel]"] {
@@ -272,9 +294,9 @@ followUpQueueMode = "steer"
     #[test]
     fn fresh_machine_ends_with_no_file() {
         let home = temp_home("fresh");
-        write_config(&home, &json!([{ "id": "consus/gpt-5.4:itar" }]), &Target::default()).unwrap();
+        write_config(&home, &json!([{ "id": "consus/gpt-5.4:itar" }]), &Target::default(), None).unwrap();
         assert!(config_path(&home).exists());
-        remove_config(&home).unwrap();
+        remove_config(&home, Path::new("/nowhere/chatgpt-models.json")).unwrap();
         assert!(!config_path(&home).exists());
         let _ = fs::remove_dir_all(&home);
     }
@@ -283,7 +305,7 @@ followUpQueueMode = "steer"
     fn a_non_table_in_the_way_is_an_error_not_a_panic() {
         let home = temp_home("conflict");
         fs::write(config_path(&home), "features = 1\n").unwrap();
-        let err = write_config(&home, &json!([{ "id": "consus/gpt-5.4:itar" }]), &Target::default()).unwrap_err();
+        let err = write_config(&home, &json!([{ "id": "consus/gpt-5.4:itar" }]), &Target::default(), None).unwrap_err();
         assert!(err.contains("features"), "{err}");
         let _ = fs::remove_dir_all(&home);
     }
@@ -304,12 +326,25 @@ followUpQueueMode = "steer"
         let home = std::env::temp_dir().join(format!("consus-launcher-chatgpt-target-{}", std::process::id()));
         let _ = fs::remove_dir_all(&home);
         let t = Target { endpoint: "https://ai-proxy.acme.example".into(), level: "fedramp-high".into() };
-        write_config(&home, &json!([{ "id": "consus/gpt-5.4:fedramp-high" }]), &t).unwrap();
+        write_config(&home, &json!([{ "id": "consus/gpt-5.4:fedramp-high" }]), &t, None).unwrap();
         let doc: DocumentMut = fs::read_to_string(config_path(&home)).unwrap().parse().unwrap();
         assert_eq!(doc["model_providers"]["consus"]["base_url"].as_str(), Some("https://ai-proxy.acme.example/v1"));
         assert_eq!(doc["model"].as_str(), Some("gpt-5.4:fedramp-high"));
-        remove_config(&home).unwrap();
+        remove_config(&home, Path::new("/nowhere/chatgpt-models.json")).unwrap();
         assert!(!config_path(&home).exists());
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn the_launchers_catalog_is_set_and_removed_on_sign_out() {
+        let home = std::env::temp_dir().join(format!("consus-launcher-chatgpt-catalog-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&home);
+        let catalog = home.join("chatgpt-models.json");
+        write_config(&home, &json!([{ "id": "consus/gpt-5.4:itar" }]), &Target::default(), Some(&catalog)).unwrap();
+        let doc: DocumentMut = fs::read_to_string(config_path(&home)).unwrap().parse().unwrap();
+        assert_eq!(doc["model_catalog_json"].as_str(), Some(catalog.to_str().unwrap()));
+        remove_config(&home, &catalog).unwrap();
+        assert!(!config_path(&home).exists(), "nothing of the user's was in it, so the file goes");
         let _ = fs::remove_dir_all(&home);
     }
 }

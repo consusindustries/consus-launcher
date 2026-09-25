@@ -191,6 +191,35 @@ fn output_within(cmd: &mut Command, limit: Duration) -> Option<String> {
     status.success().then_some(out)
 }
 
+/// The ChatGPT app's model catalog, built like Codex CLI's from the Codex
+/// engine inside the app, into the launcher's own folder. Without it the app
+/// shows Consus models as "Custom" and cannot list them. None when the
+/// engine cannot list its models.
+fn chatgpt_catalog(app: &AppHandle, engine: &Path, models: &Value, target: &Target) -> Option<PathBuf> {
+    let dir = app.path().app_config_dir().ok()?;
+    // An empty home of its own, so the listing never reads the user's ~/.codex.
+    let probe = dir.join("codex-probe");
+    fs::create_dir_all(&probe).ok()?;
+    let mut cmd = Command::new(engine);
+    cmd.args(["debug", "models", "--bundled"]).env("CODEX_HOME", &probe);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000);
+    }
+    let bundled: Value = serde_json::from_str(&output_within(&mut cmd, Duration::from_secs(20))?).ok()?;
+    let list = codex::catalog(&bundled, models, target);
+    if list.is_empty() {
+        return None;
+    }
+    let path = dir.join(CHATGPT_CATALOG);
+    let text = serde_json::to_string_pretty(&json!({ "models": list })).ok()?;
+    fs::write(&path, text + "\n").ok()?;
+    Some(path)
+}
+
+const CHATGPT_CATALOG: &str = "chatgpt-models.json";
+
 /// Asks the user's login shell where a program is, for at most three
 /// seconds, so an rc file that hangs cannot hang the app.
 fn shell_lookup(program: &str) -> Option<PathBuf> {
@@ -556,7 +585,8 @@ fn launch_app(app: AppHandle, t: Tool, s: AppSpec, rect: Rect, models: &Value, t
         }
         Tool::ChatGpt => {
             let k = keychain::get_key().ok_or("No key in the keychain. Connect first.")?;
-            chatgpt::write_config(&home, models, target)?;
+            let catalog = chatgpt_catalog(&app, &bundle_dir.join("Contents/Resources/codex"), models, target);
+            chatgpt::write_config(&home, models, target, catalog.as_deref())?;
             env = Some(("CONSUS_API_KEY", k));
         }
         Tool::Code | Tool::Codex | Tool::Pi => return Err(format!("{} is not a desktop app.", name(t))),
@@ -798,10 +828,12 @@ pub async fn launch_tool(app: AppHandle, tool: String, rect: Rect, models: Value
 pub fn remove_tool_configs(app: AppHandle) -> Result<(), String> {
     let home = app.path().home_dir().map_err(|e| e.to_string())?;
     let claude = config::remove_claude_desktop(&home);
-    let chatgpt = chatgpt::remove_config(&home);
+    let catalog = app.path().app_config_dir().map(|d| d.join(CHATGPT_CATALOG)).unwrap_or_default();
+    let chatgpt = chatgpt::remove_config(&home, &catalog);
     let code = claude_code::remove_settings(&home);
     let codex = codex::remove_config(&home);
     let pi = pi::remove_config(&home);
+    let _ = fs::remove_file(&catalog);
     claude.and(chatgpt).and(code).and(codex).and(pi)
 }
 

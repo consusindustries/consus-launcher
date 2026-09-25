@@ -22,8 +22,8 @@ use serde_json::Value;
 use tauri::{AppHandle, Manager};
 
 use super::{
-    helper_path, name, ours, output_within, track, Running, Tool, CODE_HELPER_NAME, HELPER_NAME, PI_HELPER_NAME,
-    PI_ICON,
+    chatgpt_catalog, helper_path, name, ours, output_within, track, Running, Tool, CODE_HELPER_NAME, HELPER_NAME,
+    PI_HELPER_NAME, PI_ICON,
 };
 use crate::models::Target;
 use crate::{chatgpt, claude_code, codex, config, keychain, pi};
@@ -88,6 +88,13 @@ fn chatgpt_exe() -> Option<PathBuf> {
     exe.exists().then_some(exe)
 }
 
+/// The Codex engine inside the ChatGPT app: its model catalog comes from
+/// it, and it stands in for Codex CLI when that is not installed.
+fn chatgpt_codex() -> Option<PathBuf> {
+    let exe = package_dir("OpenAI.Codex")?.join("app\\resources\\codex.exe");
+    exe.exists().then_some(exe)
+}
+
 /// A command-line tool, from where its installers put it, else the PATH.
 fn cli(program: &str) -> Option<PathBuf> {
     let home = env_dir("USERPROFILE");
@@ -109,7 +116,7 @@ fn cli(program: &str) -> Option<PathBuf> {
 fn terminal_cli(t: Tool) -> Option<PathBuf> {
     match t {
         Tool::Code => cli("claude"),
-        Tool::Codex => cli("codex"),
+        Tool::Codex => cli("codex").or_else(chatgpt_codex),
         Tool::Pi => cli("pi"),
         Tool::Desktop | Tool::ChatGpt => None,
     }
@@ -191,6 +198,17 @@ fn pids_in(dir: &Path) -> Vec<u32> {
     String::from_utf8_lossy(&out.stdout).lines().filter_map(|l| l.trim().parse().ok()).collect()
 }
 
+/// Every running process id, from one tasklist call.
+fn all_pids() -> Vec<u32> {
+    let Ok(out) = hidden("tasklist").args(["/FO", "CSV", "/NH"]).output() else {
+        return Vec::new();
+    };
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|l| l.split("\",\"").nth(1).and_then(|p| p.trim_matches('"').parse().ok()))
+        .collect()
+}
+
 fn alive(pid: u32) -> bool {
     hidden("tasklist")
         .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
@@ -221,7 +239,8 @@ fn quit_running(t: Tool, dir: &Path) -> Result<(), String> {
     kill(false);
     for round in 0..20 {
         thread::sleep(Duration::from_millis(250));
-        if !running.iter().any(|p| alive(*p)) {
+        let now = all_pids();
+        if !running.iter().any(|p| now.contains(p)) {
             return Ok(());
         }
         if round == 8 {
@@ -306,7 +325,8 @@ pub fn launch(app: AppHandle, t: Tool, models: &Value, target: &Target) -> Resul
                 quit_running(t, &dir)?;
             }
             let key = keychain::get_key().ok_or("No key in the keychain. Connect first.")?;
-            chatgpt::write_config(&home, models, target)?;
+            let catalog = chatgpt_codex().and_then(|engine| chatgpt_catalog(&app, &engine, models, target));
+            chatgpt::write_config(&home, models, target, catalog.as_deref())?;
             let mut c = Command::new(exe);
             scrub(&mut c, claude_var);
             // The template's shell_environment_policy keeps CONSUS_* out of
