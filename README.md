@@ -2,7 +2,7 @@
 
 Paste your Consus API key once. Click a tool, and it opens already configured for the Consus gateway.
 
-Consus Launcher is a small open source desktop app for macOS. It writes each tool's configuration and launches it. It is a front door, not a gateway and not an enforcement agent.
+Consus Launcher is a small open source desktop app for macOS, with Windows support in preview. It writes each tool's configuration and launches it. It is a front door, not a gateway and not an enforcement agent.
 
 ## Tools
 
@@ -15,12 +15,14 @@ Consus Launcher is a small open source desktop app for macOS. It writes each too
 | Pi | Terminal | `~/.pi-consus-gateway/` (its own profile) |
 
 - **Your own setup is left alone.** Claude Code, Codex CLI, and Pi each get a separate profile folder, so `~/.claude` and `~/.pi` are never touched and Codex CLI runs apart from `~/.codex`. ChatGPT has no such option: its settings are merged into `~/.codex/config.toml`, which your own `codex` also reads. Terminal tools start in an empty `~/Consus` folder.
-- **Models:** each tool is set up with the ITAR models your key can use, from `GET /v1/models` (ChatGPT starts on one; the others list them all).
-- **The key** lives in the macOS Keychain and is never written to a file. Tools fetch it through the launcher itself (a keychain helper), or receive it in the environment of the process the launcher starts.
-- **Windows:** a tool opens inside the launcher's glass area, then moves freely. Quitting the launcher quits the tools it started, never ones you opened yourself.
-- **Claude and ChatGPT restart once.** If either app is already open when you click it, the launcher asks it to quit and reopens it in gateway mode, because both read their settings only at startup.
+- **Models:** each tool is set up with the ITAR models your key can use, from `GET /v1/models`. ChatGPT and Codex also get a model catalog built from ChatGPT's own Codex engine, so their pickers list the Consus models by name.
+- **The key** lives in the macOS Keychain (Windows Credential Manager on Windows) and is never written to a file. Tools fetch it through the launcher itself (a keychain helper), or receive it in the environment of the process the launcher starts.
+- **App windows:** on macOS a tool opens inside the launcher's glass area, then moves freely (not yet on Windows). Quitting the launcher quits the tools it started, never ones you opened yourself.
+- **Claude and ChatGPT restart once.** If either app is already open when you click it, the launcher asks it to quit and reopens it in gateway mode, because both read their settings only at startup. On Windows, where closing these apps only hides them to the tray, the launcher ends them if they do not quit.
 - **Sign out** removes the launcher's settings from each tool and keeps everything else, including your history.
 - A tool that is not installed links to its vendor. Consus never installs software.
+
+**On Windows (preview):** Claude Desktop's settings go to `%LOCALAPPDATA%\Claude-3p`; ChatGPT's to `%USERPROFILE%\.codex\config.toml`; the terminal tools' profile folders and `Consus` folder are in `%USERPROFILE%`, and each opens in its own console window. Releases are macOS only for now; on Windows, build from source.
 
 ## What it does not do
 

@@ -77,7 +77,7 @@ fn provider(helper: &Path, models_json: &Value, t: &Target) -> Result<Value, Str
     }
     p["baseUrl"] = json!(t.v1());
     // Pi runs this through the shell; the path can contain a space.
-    p["headers"]["x-api-key"] = json!(format!("!\"{}\"", helper.display()));
+    p["headers"]["x-api-key"] = json!(format!("!\"{}\"", crate::config::command_path(helper)));
     Ok(p)
 }
 

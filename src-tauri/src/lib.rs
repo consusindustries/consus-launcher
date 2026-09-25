@@ -13,9 +13,10 @@ use std::sync::Mutex;
 
 // Tools run this binary through a link to get the key; which name they use
 // decides the output shape. In that case there is no window, just stdout.
+// The stem, so a Windows link's ".exe" does not matter.
 fn helper_mode() -> Option<bool> {
     let arg0 = std::env::args_os().next()?;
-    let name = std::path::Path::new(&arg0).file_name()?.to_str()?;
+    let name = std::path::Path::new(&arg0).file_stem()?.to_str()?;
     match name {
         tools::HELPER_NAME => Some(true),
         tools::CODE_HELPER_NAME | tools::CODEX_HELPER_NAME | tools::PI_HELPER_NAME => Some(false),

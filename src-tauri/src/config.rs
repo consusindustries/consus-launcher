@@ -41,8 +41,17 @@ pub fn select_models(models_json: &Value, t: &Target) -> Vec<Value> {
         .collect()
 }
 
+/// Where Claude Desktop's gateway mode keeps its config. On Windows the app
+/// reads %LOCALAPPDATA%\Claude-3p itself (checked in the app's code, 2026-09-25).
 fn profile_dir(home: &Path) -> PathBuf {
-    home.join("Library/Application Support/Claude-3p")
+    if cfg!(windows) {
+        std::env::var_os("LOCALAPPDATA")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join("AppData").join("Local"))
+            .join("Claude-3p")
+    } else {
+        home.join("Library/Application Support/Claude-3p")
+    }
 }
 
 fn library_dir(home: &Path) -> PathBuf {
@@ -67,7 +76,8 @@ fn write_json(path: &Path, v: &Value) -> Result<(), String> {
 }
 
 /// Links the helper name to this very binary. Same code identity as the one
-/// that wrote the keychain item, so a signed build never prompts.
+/// that wrote the keychain item, so a signed build never prompts. Windows
+/// gets a hard link (no admin rights needed), or a copy on another volume.
 pub fn write_helper(path: &Path) -> Result<(), String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     if let Some(dir) = path.parent() {
@@ -80,8 +90,25 @@ pub fn write_helper(path: &Path) -> Result<(), String> {
     }
     #[cfg(not(unix))]
     {
-        let _ = exe;
-        Err("the key helper is not supported on this platform yet".to_string())
+        // A helper a tool is running right now cannot be replaced; the one
+        // in place is this same program, so keep it.
+        if path.exists() {
+            return Ok(());
+        }
+        fs::hard_link(&exe, path)
+            .or_else(|_| fs::copy(&exe, path).map(|_| ()))
+            .map_err(|e| format!("{}: {e}", path.display()))
+    }
+}
+
+/// A path as a command string a tool runs through its shell. Windows tools
+/// may use Git Bash or cmd; forward slashes work in both.
+pub fn command_path(p: &Path) -> String {
+    let s = p.display().to_string();
+    if cfg!(windows) {
+        s.replace('\\', "/")
+    } else {
+        s
     }
 }
 
