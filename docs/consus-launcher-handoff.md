@@ -115,7 +115,7 @@ Next, in order:
 1. Org settings from the portal, fetched with the user's key, once the portal serves them; and removing the launcher's settings from a tool an admin turns off. The design is kept with the Consus services.
 2. Model limits from the gateway's `/v1/models`, replacing the Pi and Codex tables (which today reuse the ITAR rows for other levels).
 3. Signed, notarized releases once Apple enrollment clears; device-management kit (`.pkg` plus configuration profile).
-4. Windows.
+4. Windows: tool detection, configs, launch, and quit-with-launcher work (preview, 2026-09-25); window placement, org settings from the registry, and `.msi` releases remain.
 
 ## 11. Working style
 Plan before building. One PR at a time, reviewed, with CI green before merge. Ask before a decision that changes scope; if something is not in these notes, the default answer is no. Short commit messages. No em dashes anywhere in copy or comments.
