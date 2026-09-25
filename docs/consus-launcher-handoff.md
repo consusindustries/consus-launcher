@@ -1,6 +1,6 @@
 # Consus Launcher: project notes
 
-First written 2026-09-21 as the build handoff; rewritten 2026-09-24 to describe the app as built. Wireframe: `docs/consus-launcher.html`. Screenshots in `docs/screenshots/`.
+First written 2026-09-21 as the build handoff; rewritten 2026-09-24 to describe the app as built. The original wireframe (`docs/consus-launcher.html`) and screenshots (`docs/screenshots/`) predate later changes such as the Log tab removal.
 
 Guiding rule: this is the simplest application possible. It stores one key, writes each tool's config, and launches the tool. Anything beyond that is out of scope unless Eric says otherwise.
 
@@ -20,11 +20,11 @@ Original decisions (2026-09-21), still in force:
 - **Consus installs nothing third-party.** A tool that is not installed links to its vendor.
 - **Paste-a-key onboarding.** The user creates a key at portal.consus.io and pastes it. The launcher validates it with `GET /v1/models`.
 - **Key lives in the OS keychain.** Never written to a file by the launcher. Never shown after entry; only the last four characters.
-- **Open source**, Apache-2.0, public repo. Signed builds on GitHub Releases.
+- **Open source**, Apache-2.0, public repo. Releases on GitHub; signed once the Apple enrollment clears (section 9).
 
 Decided since (Eric's calls):
 - **Tools** (2026-09-24): Claude Desktop, ChatGPT, Claude Code, Codex CLI, Pi. VS Code is dropped.
-- **Your own setup is left alone** (2026-09-23): terminal tools get their own profile folders (`~/.claude-consus-gateway`, `~/.codex-consus-gateway`, `~/.pi-consus-gateway`) and start in an empty `~/Consus` folder. The launcher never reads or writes `~/.claude` or `~/.pi`.
+- **Your own setup is left alone** (2026-09-23): terminal tools get their own profile folders (`~/.claude-consus-gateway`, `~/.codex-consus-gateway`, `~/.pi-consus-gateway`) and start in an empty `~/Consus` folder. The launcher never reads or writes `~/.claude` or `~/.pi`. ChatGPT has no such option: its settings are merged into `~/.codex/config.toml`, which the user's own `codex` also reads, so that `codex` routes to Consus until sign out.
 - **Standalone windows** (2026-09-22): a launched app is placed in the launcher's glass area once, then moves freely. Quitting the launcher quits the apps it started, never ones the user opened.
 - **Compliance level fixed to ITAR** for now; one place to change it (`src-tauri/src/models.rs`) until org settings arrive.
 - **Terminal.app only** for terminal tools on macOS; a terminal picker is later.
@@ -36,14 +36,18 @@ Decided since (Eric's calls):
 
 Public, Apache-2.0. Layout:
 ```
-docs/                 these notes, wireframe, screenshots
-src/                  web UI: index.html, styles.css, main.ts
+index.html            the UI's page (Vite root)
+src/                  main.ts, styles.css, assets/ (fonts, Consus logo)
 src-tauri/
-  src/                lib.rs, keychain.rs, portal.rs, models.rs, tools.rs,
+  src/                main.rs, lib.rs, keychain.rs, portal.rs, models.rs, tools.rs,
                       config.rs (Claude Desktop), chatgpt.rs, claude_code.rs, codex.rs, pi.rs
   templates/          chatgpt-desktop.toml, pi-models-itar.json
+  assets/             pi.svg
+  icons/              app icons
+  capabilities/       Tauri permission set
   tauri.conf.json     bundle id io.consus.launcher
   Info.plist, Entitlements.plist
+docs/                 these notes, original wireframe, screenshots
 .github/workflows/    build.yml (Mac + Windows, every PR), release.yml (tagged releases)
 README.md  SECURITY.md  CONTRIBUTING.md  NOTICE  LICENSE
 ```
@@ -59,8 +63,8 @@ README.md  SECURITY.md  CONTRIBUTING.md  NOTICE  LICENSE
 
 - **Tauri 2** (Rust core, system webview), frameless transparent window (`macOSPrivateApi`).
 - **Frontend:** plain HTML, CSS, TypeScript.
-- **Crates:** `keyring` (keychain), `reqwest` (the one API call), `serde_json`, `toml_edit` (merging TOML configs), `base64`.
-- **No settings file and no updater.**
+- **Crates:** `tauri`, `tauri-plugin-opener` (opens links in the browser), `serde`, `serde_json`, `keyring` (keychain), `reqwest` (the one API call), `toml_edit` (merging TOML configs), `base64`.
+- **No settings file and no updater.** The launcher keeps its key-helper links in `~/Library/Application Support/io.consus.launcher/` and an icon cache in `~/Library/Caches/io.consus.launcher/`; SECURITY.md lists every file it writes.
 - **Bundle identifier:** `io.consus.launcher` (Tauri config, keychain service, config directory). Do not change it after the first signed release.
 
 ## 5. Screens and behavior
@@ -69,7 +73,7 @@ README.md  SECURITY.md  CONTRIBUTING.md  NOTICE  LICENSE
 - **First run:** "Connect to Consus": open the portal, create a key, paste it. Connect calls `GET /v1/models`; on success the key goes into the keychain.
 - **Open tab:** one tile per tool with its real icon. States: Open, Running, Get it (not installed, links to the vendor).
 - **Keys tab:** the key's last four characters, model count, Replace, and "Sign out and remove keys" (deletes the keychain entry and removes the settings the launcher wrote from every tool).
-- **Revoked key:** a 401/403 returns the user to first run with a plain message.
+- **Revoked key:** at startup, a 401/403 removes the stored key and returns the user to first run with a plain message. On Connect or Replace, the key is simply not accepted.
 
 ## 6. Consus services the launcher depends on
 
@@ -87,7 +91,7 @@ Next (see section 10): org settings from the portal, so an admin decides which t
 | Codex CLI | `codex`, or the one inside ChatGPT.app | `~/.codex-consus-gateway/config.toml` + model catalog | Fetched from the keychain helper into Codex's environment | Terminal, in `~/Consus` |
 | Pi | `pi` | `~/.pi-consus-gateway/models.json` + default model | Pi runs the launcher's helper per request | Terminal, in `~/Consus` |
 
-Every template records the doc it was checked against and the date. Configs are merged, never overwritten: the launcher owns only its keys, and sign out removes only those.
+Each template, or the module that embeds it, records the doc it was checked against and the date. Configs are merged, never overwritten: the launcher owns only its keys, and sign out removes only those.
 
 ## 8. Non-goals
 - No local proxy. No TLS interception ever.

@@ -1,8 +1,8 @@
 # ChatGPT desktop app (and Codex CLI): ~/.codex/config.toml, merged key by key.
-# Verbatim from gov_open_router/docs/integrations/chatgpt-desktop.md, except the
+# Verbatim from the Consus integration guide for ChatGPT desktop, except the
 # key: env_http_headers instead of an inline http_headers, so it never lands in
-# the file. Docs checked: that guide and consus-key-portal
-# lib/deploy/templates/codex.ts, 2026-09-22. Verified on a real machine: macOS,
+# the file. Docs checked: that guide and the Consus portal's Codex template,
+# 2026-09-22. Verified on a real machine: macOS,
 # ChatGPT 26.915, 2026-09-22. The model line is added by chatgpt.rs.
 # Top-level keys must stay above the first [table] header.
 
