@@ -14,7 +14,8 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 use tauri::{AppHandle, Emitter, Manager};
 
-use crate::{chatgpt, claude_code, codex, config, keychain, pi};
+use crate::models::Target;
+use crate::{chatgpt, claude_code, codex, config, keychain, pi, settings};
 
 /// Claude Desktop runs the launcher binary under this name to fetch the key.
 pub const HELPER_NAME: &str = "claude-key-helper";
@@ -288,21 +289,26 @@ fn image_icon(app: &AppHandle, t: Tool, src: &Path) -> Option<String> {
 
 #[derive(Serialize)]
 pub struct ToolStatus {
+    /// Whether the org's settings show this tool at all.
+    pub allowed: bool,
     pub installed: bool,
     pub icon: Option<String>,
 }
 
 #[tauri::command]
 pub async fn detect_tools(app: AppHandle) -> HashMap<String, ToolStatus> {
+    // Invalid settings hide every tool; the UI shows why.
+    let settings = settings::current().ok();
     TOOLS
         .into_iter()
         .map(|t| {
-            let status = if !cfg!(target_os = "macos") {
-                ToolStatus { installed: false, icon: None }
+            let allowed = settings.as_ref().is_some_and(|s| s.allows(key(t)));
+            let status = if !allowed || !cfg!(target_os = "macos") {
+                ToolStatus { allowed, installed: false, icon: None }
             } else if let Some(s) = app_spec(t) {
                 let dir = app_path(&app, &s);
                 let icon = dir.as_deref().and_then(|d| app_icon(&app, t, d));
-                ToolStatus { installed: dir.is_some(), icon }
+                ToolStatus { allowed, installed: dir.is_some(), icon }
             } else {
                 let installed = terminal_cli(&app, t).is_some();
                 // Pi has a logo of its own and the ChatGPT app carries
@@ -320,7 +326,7 @@ pub async fn detect_tools(app: AppHandle) -> HashMap<String, ToolStatus> {
                     (Tool::Codex, Some(png)) => cached_icon(t, &png).or_else(|| image_icon(&app, t, &png)),
                     _ => app_icon(&app, t, Path::new(TERMINAL_APP)),
                 };
-                ToolStatus { installed, icon }
+                ToolStatus { allowed, installed, icon }
             };
             (key(t).to_string(), status)
         })
@@ -501,7 +507,7 @@ fn track(app: &AppHandle, entry: Running, wait: impl FnOnce() + Send + 'static) 
     });
 }
 
-fn launch_app(app: AppHandle, t: Tool, s: AppSpec, rect: Rect, models: &Value) -> Result<(), String> {
+fn launch_app(app: AppHandle, t: Tool, s: AppSpec, rect: Rect, models: &Value, target: &Target) -> Result<(), String> {
     let bundle_dir = app_path(&app, &s).ok_or_else(|| format!("{} is not installed.", name(t)))?;
     let bin = bundle_dir.join("Contents/MacOS").join(s.exec);
     let home = app.path().home_dir().map_err(|e| e.to_string())?;
@@ -530,11 +536,11 @@ fn launch_app(app: AppHandle, t: Tool, s: AppSpec, rect: Rect, models: &Value) -
         Tool::Desktop => {
             let helper = app.path().app_config_dir().map_err(|e| e.to_string())?.join(HELPER_NAME);
             config::write_helper(&helper)?;
-            config::write_claude_desktop(&home, &helper, models)?;
+            config::write_claude_desktop(&home, &helper, models, target)?;
         }
         Tool::ChatGpt => {
             let k = keychain::get_key().ok_or("No key in the keychain. Connect first.")?;
-            chatgpt::write_config(&home, models)?;
+            chatgpt::write_config(&home, models, target)?;
             env = Some(("CONSUS_API_KEY", k));
         }
         Tool::Code | Tool::Codex | Tool::Pi => return Err(format!("{} is not a desktop app.", name(t))),
@@ -604,7 +610,7 @@ fn terminal_process(t: Tool) -> Option<&'static str> {
 
 /// Configures a terminal tool and returns the POSIX script its Terminal
 /// window runs. The per-tool part; everything around it is shared.
-fn terminal_script(app: &AppHandle, t: Tool, models: &Value) -> Result<String, String> {
+fn terminal_script(app: &AppHandle, t: Tool, models: &Value, target: &Target) -> Result<String, String> {
     let home = app.path().home_dir().map_err(|e| e.to_string())?;
     let helper_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
     // Both start in the same empty folder, so nothing of the user's is the
@@ -615,7 +621,7 @@ fn terminal_script(app: &AppHandle, t: Tool, models: &Value) -> Result<String, S
             let cli = cli(app, "claude").ok_or("Claude Code is not installed.")?;
             let helper = helper_dir.join(CODE_HELPER_NAME);
             config::write_helper(&helper)?;
-            claude_code::write_settings(&home, &helper, models)?;
+            claude_code::write_settings(&home, &helper, models, target)?;
             fs::create_dir_all(&work).map_err(|e| format!("{}: {e}", work.display()))?;
             // The user's own ~/.claude is never involved: an isolated profile
             // and a scrubbed environment.
@@ -653,7 +659,7 @@ fn terminal_script(app: &AppHandle, t: Tool, models: &Value) -> Result<String, S
                     json!({ "tool": key(t), "message": "Codex could not list its models, so /model will not show the Consus ones this time." }),
                 );
             }
-            codex::write_config(&home, models, bundled.as_ref())?;
+            codex::write_config(&home, models, bundled.as_ref(), target)?;
             fs::create_dir_all(&work).map_err(|e| format!("{}: {e}", work.display()))?;
             // Codex reads the key from CONSUS_API_KEY (env_http_headers), so
             // the script fetches it from the keychain helper into Codex's
@@ -674,7 +680,7 @@ fn terminal_script(app: &AppHandle, t: Tool, models: &Value) -> Result<String, S
             let cli = cli(app, "pi").ok_or("Pi is not installed.")?;
             let helper = helper_dir.join(PI_HELPER_NAME);
             config::write_helper(&helper)?;
-            pi::write_config(&home, &helper, models)?;
+            pi::write_config(&home, &helper, models, target)?;
             fs::create_dir_all(&work).map_err(|e| format!("{}: {e}", work.display()))?;
             // pi is a Node script; the node it was installed with (nvm, the
             // installer's own) sits next to it. The two PI_ switches turn off
@@ -699,7 +705,7 @@ fn terminal_script(app: &AppHandle, t: Tool, models: &Value) -> Result<String, S
 /// script always runs under /bin/sh whatever the user's login shell is
 /// (fish and nushell do not parse POSIX), single-quoted, so it must not
 /// contain a single quote; macOS account names cannot.
-fn launch_terminal(app: AppHandle, t: Tool, rect: Rect, models: &Value) -> Result<(), String> {
+fn launch_terminal(app: AppHandle, t: Tool, rect: Rect, models: &Value, target: &Target) -> Result<(), String> {
     // Already ours: bring the terminal back into the glass.
     if let Some((window, _)) = ours(&app, t).into_iter().filter_map(|r| r.terminal).find(|(_, tty)| tty_busy(tty)) {
         let handle = app.clone();
@@ -711,7 +717,7 @@ fn launch_terminal(app: AppHandle, t: Tool, rect: Rect, models: &Value) -> Resul
         return Ok(());
     }
 
-    let inner = terminal_script(&app, t, models)?;
+    let inner = terminal_script(&app, t, models, target)?;
     if inner.contains('\'') {
         return Err("A path contains a quote character, which the launcher cannot pass to Terminal.".into());
     }
@@ -761,9 +767,13 @@ pub async fn launch_tool(app: AppHandle, tool: String, rect: Rect, models: Value
     if !cfg!(target_os = "macos") {
         return Err("Tool launch is macOS only for now".into());
     }
+    let settings = settings::current()?;
+    if !settings.allows(key(t)) {
+        return Err(format!("Your organization has not enabled {} in the launcher.", name(t)));
+    }
     match app_spec(t) {
-        Some(s) => launch_app(app, t, s, rect, &models),
-        None => launch_terminal(app, t, rect, &models),
+        Some(s) => launch_app(app, t, s, rect, &models, &settings.target),
+        None => launch_terminal(app, t, rect, &models, &settings.target),
     }
 }
 
