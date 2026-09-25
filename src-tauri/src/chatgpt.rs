@@ -15,7 +15,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use toml_edit::{value, DocumentMut, Item, Table, TableLike};
 
-use crate::models::{self, REGIME, REGIME_TAG};
+use crate::models::{self, Target};
 
 // Only these GPT models are served over the Responses API the app speaks,
 // in preference order. The models endpoint does not expose this.
@@ -25,11 +25,12 @@ const RESPONSES_MODELS: [&str; 5] = ["gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.6-lu
 const TEMPLATE: &str = include_str!("../templates/chatgpt-desktop.toml");
 
 /// The one model the app starts on: the most preferred Responses-served GPT
-/// model this key can use in the regime, as a bare id ("gpt-5.6-terra:itar").
-pub fn select_model(models_json: &Value) -> Option<String> {
+/// model this key can use at the target level, as a bare id
+/// ("gpt-5.6-terra:itar").
+pub fn select_model(models_json: &Value, t: &Target) -> Option<String> {
     let ids = models::ids(models_json);
     RESPONSES_MODELS.iter().find_map(|base| {
-        let want = format!("{base}:{REGIME}");
+        let want = format!("{base}:{}", t.level);
         ids.iter().find(|id| **id == want).map(|id| id.to_string())
     })
 }
@@ -108,15 +109,15 @@ fn strip_from(dst: &mut dyn TableLike, src: &Table) {
     }
 }
 
-pub fn write_config(home: &Path, models_json: &Value) -> Result<(), String> {
-    write_config_at(&config_path(home), models_json, &Table::new())
+pub fn write_config(home: &Path, models_json: &Value, t: &Target) -> Result<(), String> {
+    write_config_at(&config_path(home), models_json, &Table::new(), t)
 }
 
 /// The template, then `extra` (keys only this file carries), merged into
 /// the config.toml at `path`.
-pub fn write_config_at(path: &Path, models_json: &Value, extra: &Table) -> Result<(), String> {
-    let model = select_model(models_json)
-        .ok_or_else(|| format!("No GPT {REGIME_TAG} models are available to this key."))?;
+pub fn write_config_at(path: &Path, models_json: &Value, extra: &Table, t: &Target) -> Result<(), String> {
+    let model = select_model(models_json, t)
+        .ok_or_else(|| format!("No GPT {} models are available to this key.", t.tag()))?;
 
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir).map_err(|e| e.to_string())?;
@@ -129,13 +130,15 @@ pub fn write_config_at(path: &Path, models_json: &Value, extra: &Table) -> Resul
     merge_into(doc.as_table_mut(), template().as_table(), "")?;
     merge_into(doc.as_table_mut(), extra, "")?;
     set_leaf(doc.as_table_mut(), "model", value(model));
-    // A hand-made config carries the key inline; the environment replaces it.
+    // Point the provider at the org's endpoint. A hand-made config carries
+    // the key inline; the environment replaces it.
     if let Some(consus) = doc
         .get_mut("model_providers")
         .and_then(Item::as_table_like_mut)
-        .and_then(|t| t.get_mut("consus"))
+        .and_then(|p| p.get_mut("consus"))
         .and_then(Item::as_table_like_mut)
     {
+        set_leaf(consus, "base_url", value(t.v1()));
         consus.remove("http_headers");
     }
 
@@ -225,7 +228,7 @@ followUpQueueMode = "steer"
     fn merge_keeps_user_content_and_drops_inline_key() {
         let home = temp_home("merge");
         fs::write(config_path(&home), EXISTING).unwrap();
-        write_config(&home, &serde_json::from_str(MODELS).unwrap()).unwrap();
+        write_config(&home, &serde_json::from_str(MODELS).unwrap(), &Target::default()).unwrap();
         let out = fs::read_to_string(config_path(&home)).unwrap();
 
         assert!(out.contains("model = \"gpt-5.6-terra:itar\""));
@@ -252,7 +255,7 @@ followUpQueueMode = "steer"
     fn remove_strips_only_the_launchers_keys() {
         let home = temp_home("remove");
         fs::write(config_path(&home), EXISTING).unwrap();
-        write_config(&home, &serde_json::from_str(MODELS).unwrap()).unwrap();
+        write_config(&home, &serde_json::from_str(MODELS).unwrap(), &Target::default()).unwrap();
         remove_config(&home).unwrap();
         let out = fs::read_to_string(config_path(&home)).unwrap();
 
@@ -269,7 +272,7 @@ followUpQueueMode = "steer"
     #[test]
     fn fresh_machine_ends_with_no_file() {
         let home = temp_home("fresh");
-        write_config(&home, &json!([{ "id": "consus/gpt-5.4:itar" }])).unwrap();
+        write_config(&home, &json!([{ "id": "consus/gpt-5.4:itar" }]), &Target::default()).unwrap();
         assert!(config_path(&home).exists());
         remove_config(&home).unwrap();
         assert!(!config_path(&home).exists());
@@ -280,7 +283,7 @@ followUpQueueMode = "steer"
     fn a_non_table_in_the_way_is_an_error_not_a_panic() {
         let home = temp_home("conflict");
         fs::write(config_path(&home), "features = 1\n").unwrap();
-        let err = write_config(&home, &json!([{ "id": "consus/gpt-5.4:itar" }])).unwrap_err();
+        let err = write_config(&home, &json!([{ "id": "consus/gpt-5.4:itar" }]), &Target::default()).unwrap_err();
         assert!(err.contains("features"), "{err}");
         let _ = fs::remove_dir_all(&home);
     }
@@ -292,7 +295,21 @@ followUpQueueMode = "steer"
             { "id": "consus/gpt-5.6-sol:fedramp-high" },
             { "id": "consus/gpt-4.1:itar" },
         ]);
-        assert_eq!(select_model(&m).as_deref(), Some("gpt-5.1:itar"));
-        assert_eq!(select_model(&json!([{ "id": "consus/claude-opus-5:itar" }])), None);
+        assert_eq!(select_model(&m, &Target::default()).as_deref(), Some("gpt-5.1:itar"));
+        assert_eq!(select_model(&json!([{ "id": "consus/claude-opus-5:itar" }]), &Target::default()), None);
+    }
+
+    #[test]
+    fn points_at_the_target_endpoint() {
+        let home = std::env::temp_dir().join(format!("consus-launcher-chatgpt-target-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&home);
+        let t = Target { endpoint: "https://ai-proxy.acme.example".into(), level: "fedramp-high".into() };
+        write_config(&home, &json!([{ "id": "consus/gpt-5.4:fedramp-high" }]), &t).unwrap();
+        let doc: DocumentMut = fs::read_to_string(config_path(&home)).unwrap().parse().unwrap();
+        assert_eq!(doc["model_providers"]["consus"]["base_url"].as_str(), Some("https://ai-proxy.acme.example/v1"));
+        assert_eq!(doc["model"].as_str(), Some("gpt-5.4:fedramp-high"));
+        remove_config(&home).unwrap();
+        assert!(!config_path(&home).exists());
+        let _ = fs::remove_dir_all(&home);
     }
 }

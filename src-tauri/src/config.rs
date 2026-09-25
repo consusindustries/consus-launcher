@@ -13,15 +13,15 @@ use serde_json::{json, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::models::{self, GATEWAY, REGIME_TAG};
+use crate::models::{self, Target};
 
 const ENTRY_ID: &str = "6c3e2a4e-0b1d-4f7a-9e8c-5a1c0f2d3b47";
 const ENTRY_NAME: &str = "Consus Launcher";
-/// The models a Claude Desktop picker lists: Claude only, this regime only,
-/// newest per family first and marked as that family's default.
-pub fn select_models(models_json: &Value) -> Vec<Value> {
+/// The models a Claude Desktop picker lists: Claude only, the target level
+/// only, newest per family first and marked as that family's default.
+pub fn select_models(models_json: &Value, t: &Target) -> Vec<Value> {
     let mut seen: Vec<String> = Vec::new();
-    models::claude_models(models_json)
+    models::claude_models(models_json, t)
         .into_iter()
         .map(|m| {
             let first = !seen.contains(&m.family);
@@ -30,7 +30,7 @@ pub fn select_models(models_json: &Value) -> Vec<Value> {
             }
             let mut v = json!({
                 "name": m.id,
-                "labelOverride": m.label(),
+                "labelOverride": m.label(t),
                 "anthropicFamilyTier": m.family,
             });
             if first {
@@ -87,10 +87,10 @@ pub fn write_helper(path: &Path) -> Result<(), String> {
 
 /// Adds (or refreshes) the launcher's own entry in the config library and
 /// makes it the applied one. Never edits or removes anyone else's entries.
-pub fn write_claude_desktop(home: &Path, helper: &Path, models: &Value) -> Result<(), String> {
-    let picked = select_models(models);
+pub fn write_claude_desktop(home: &Path, helper: &Path, models: &Value, t: &Target) -> Result<(), String> {
+    let picked = select_models(models, t);
     if picked.is_empty() {
-        return Err(format!("No Claude {REGIME_TAG} models are available to this key."));
+        return Err(format!("No Claude {} models are available to this key.", t.tag()));
     }
 
     let profile = profile_dir(home);
@@ -104,7 +104,7 @@ pub fn write_claude_desktop(home: &Path, helper: &Path, models: &Value) -> Resul
 
     let entry = json!({
         "inferenceProvider": "gateway",
-        "inferenceGatewayBaseUrl": GATEWAY,
+        "inferenceGatewayBaseUrl": t.endpoint,
         "inferenceGatewayAuthScheme": "x-api-key",
         "inferenceCredentialKind": "helper-script",
         "inferenceCredentialHelper": helper.to_string_lossy(),

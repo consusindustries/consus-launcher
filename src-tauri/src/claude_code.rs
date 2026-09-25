@@ -17,7 +17,7 @@ use serde_json::{json, Map, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::models::{self, GATEWAY, REGIME_TAG};
+use crate::models::{self, Target};
 
 pub const PROFILE_DIR: &str = ".claude-consus-gateway";
 /// Where a session starts: empty, visible, and nothing of the user's in scope.
@@ -69,7 +69,7 @@ pub fn read_object(path: &Path) -> Result<Map<String, Value>, String> {
 }
 
 /// The launcher's part of settings.json for these models.
-fn owned(helper: &Path, list: &[models::ClaudeModel]) -> Option<(Map<String, Value>, Map<String, Value>)> {
+fn owned(helper: &Path, list: &[models::ClaudeModel], t: &Target) -> Option<(Map<String, Value>, Map<String, Value>)> {
     let first = |family: &str| list.iter().find(|m| m.family == family);
     let main = first("opus").or_else(|| first("sonnet")).or_else(|| list.first())?;
     let opus = first("opus").unwrap_or(main);
@@ -87,7 +87,7 @@ fn owned(helper: &Path, list: &[models::ClaudeModel]) -> Option<(Map<String, Val
     top.insert("availableModels".into(), json!(list.iter().map(|m| &m.id).collect::<Vec<_>>()));
 
     let mut env = Map::new();
-    env.insert("ANTHROPIC_BASE_URL".into(), json!(GATEWAY));
+    env.insert("ANTHROPIC_BASE_URL".into(), json!(t.endpoint));
     env.insert("ANTHROPIC_DEFAULT_OPUS_MODEL".into(), json!(opus.id));
     env.insert("ANTHROPIC_DEFAULT_SONNET_MODEL".into(), json!(sonnet.id));
     env.insert("ANTHROPIC_DEFAULT_HAIKU_MODEL".into(), json!(background.id));
@@ -98,10 +98,10 @@ fn owned(helper: &Path, list: &[models::ClaudeModel]) -> Option<(Map<String, Val
     Some((top, env))
 }
 
-pub fn write_settings(home: &Path, helper: &Path, models_json: &Value) -> Result<(), String> {
-    let list = models::claude_models(models_json);
+pub fn write_settings(home: &Path, helper: &Path, models_json: &Value, t: &Target) -> Result<(), String> {
+    let list = models::claude_models(models_json, t);
     let (top, env) =
-        owned(helper, &list).ok_or_else(|| format!("No Claude {REGIME_TAG} models are available to this key."))?;
+        owned(helper, &list, t).ok_or_else(|| format!("No Claude {} models are available to this key.", t.tag()))?;
 
     let path = settings_path(home);
     fs::create_dir_all(profile_dir(home)).map_err(|e| e.to_string())?;
@@ -183,7 +183,7 @@ mod tests {
             r#"{ "theme": "dark", "effortLevel": "xhigh", "model": "opus[1m]", "env": { "FOO": "1", "ANTHROPIC_BASE_URL": "https://old" } }"#,
         )
         .unwrap();
-        write_settings(&home, &helper(), &serde_json::from_str(MODELS).unwrap()).unwrap();
+        write_settings(&home, &helper(), &serde_json::from_str(MODELS).unwrap(), &Target::default()).unwrap();
         let doc: Value = serde_json::from_str(&fs::read_to_string(settings_path(&home)).unwrap()).unwrap();
 
         assert_eq!(doc["theme"], "dark");
@@ -206,7 +206,7 @@ mod tests {
         let home = temp_home("remove");
         fs::create_dir_all(profile_dir(&home)).unwrap();
         fs::write(settings_path(&home), r#"{ "theme": "dark", "env": { "FOO": "1" } }"#).unwrap();
-        write_settings(&home, &helper(), &serde_json::from_str(MODELS).unwrap()).unwrap();
+        write_settings(&home, &helper(), &serde_json::from_str(MODELS).unwrap(), &Target::default()).unwrap();
         remove_settings(&home).unwrap();
         let doc: Value = serde_json::from_str(&fs::read_to_string(settings_path(&home)).unwrap()).unwrap();
         assert_eq!(doc, json!({ "theme": "dark", "env": { "FOO": "1" } }));
@@ -217,7 +217,7 @@ mod tests {
     #[test]
     fn fresh_profile_ends_with_no_settings_file() {
         let home = temp_home("fresh");
-        write_settings(&home, &helper(), &serde_json::from_str(MODELS).unwrap()).unwrap();
+        write_settings(&home, &helper(), &serde_json::from_str(MODELS).unwrap(), &Target::default()).unwrap();
         remove_settings(&home).unwrap();
         assert!(!settings_path(&home).exists());
         assert!(profile_dir(&home).exists());
@@ -230,7 +230,7 @@ mod tests {
         fs::create_dir_all(profile_dir(&home)).unwrap();
         let bad: &[u8] = b"{ \"theme\": \"dark\xff\" }";
         fs::write(settings_path(&home), bad).unwrap();
-        assert!(write_settings(&home, &helper(), &serde_json::from_str(MODELS).unwrap()).is_err());
+        assert!(write_settings(&home, &helper(), &serde_json::from_str(MODELS).unwrap(), &Target::default()).is_err());
         assert_eq!(fs::read(settings_path(&home)).unwrap(), bad, "file must be left untouched");
         let _ = fs::remove_dir_all(&home);
     }
@@ -238,8 +238,20 @@ mod tests {
     #[test]
     fn no_claude_models_is_an_error() {
         let home = temp_home("empty");
-        let err = write_settings(&home, &helper(), &json!([{ "id": "consus/gpt-5.4:itar" }])).unwrap_err();
+        let err = write_settings(&home, &helper(), &json!([{ "id": "consus/gpt-5.4:itar" }]), &Target::default()).unwrap_err();
         assert!(err.contains("No Claude"));
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn follows_the_target_level_and_endpoint() {
+        let home = temp_home("target");
+        let t = Target { endpoint: "https://ai-proxy.acme.example".into(), level: "fedramp-high".into() };
+        let models = json!([{ "id": "consus/claude-opus-5-5:fedramp-high" }, { "id": "consus/claude-sonnet-4-5:itar" }]);
+        write_settings(&home, &helper(), &models, &t).unwrap();
+        let doc: Value = serde_json::from_str(&fs::read_to_string(settings_path(&home)).unwrap()).unwrap();
+        assert_eq!(doc["env"]["ANTHROPIC_BASE_URL"], "https://ai-proxy.acme.example");
+        assert_eq!(doc["model"], "claude-opus-5-5:fedramp-high");
         let _ = fs::remove_dir_all(&home);
     }
 }

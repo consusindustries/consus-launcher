@@ -80,11 +80,31 @@ const REVOKED_MESSAGE = "This key was revoked. Paste a new one from the portal."
 function connectErrorMessage(err: unknown): string {
   if (typeof err === "string") return "The portal accepted the key, but it could not be saved to your keychain.";
   if ((err as ConnectError).kind === "Network") return "Could not reach the portal. Check your connection.";
+  if (settingsError) return settingsError;
   return "That key was not accepted by the portal.";
 }
 
 let userConnected = false;
 let currentModels: unknown = null;
+// Set when the org's launcher settings (from device management) are invalid:
+// the launcher then shows why instead of configuring anything.
+let settingsError: string | null = null;
+
+interface SettingsView {
+  org_name: string | null;
+  managed: boolean;
+  error: string | null;
+}
+
+async function loadSettings(): Promise<void> {
+  const s = await invoke<SettingsView>("get_settings");
+  $("orgName").textContent = s.org_name ?? "Consus";
+  settingsError = s.error ? s.error + " Contact your IT admin." : null;
+  if (settingsError) {
+    $("empty").querySelector("b")!.textContent = "Launcher settings need attention.";
+    $("empty").querySelector("span")!.textContent = settingsError;
+  }
+}
 
 function applyConnectResult(rawKey: string, result: ConnectResult): KeyInfo {
   currentModels = result.models;
@@ -276,15 +296,24 @@ function toolTile(key: Tool): HTMLButtonElement {
 }
 
 interface ToolStatus {
+  allowed: boolean;
   installed: boolean;
   icon: string | null;
 }
 
 async function refreshTools(): Promise<void> {
   const status = await invoke<Record<string, ToolStatus>>("detect_tools");
+  if (settingsError) {
+    $("whoNote").textContent = settingsError;
+  } else if (!TOOLS.some((k) => status[k]?.allowed)) {
+    $("whoNote").textContent = "Your organization has not enabled any tools in the launcher.";
+  }
   for (const key of TOOLS) {
-    const st = status[key] ?? { installed: false, icon: null };
+    const st = status[key] ?? { allowed: false, installed: false, icon: null };
     const b = toolTile(key);
+    // Tools the org's settings leave out are not shown at all.
+    b.style.display = st.allowed ? "" : "none";
+    if (!st.allowed) continue;
     const go = b.querySelector<HTMLElement>(".go")!;
     const sb = b.querySelector<HTMLElement>("[data-sb]")!;
     const ic = b.querySelector<HTMLElement>(".ic")!;
@@ -408,6 +437,8 @@ async function restoreSession(): Promise<void> {
         // the next successful connect overwrites it anyway
       }
       $("keyErr").textContent = REVOKED_MESSAGE;
+    } else if (settingsError) {
+      $("keyErr").textContent = settingsError;
     }
     // Network/Rejected failures at startup: leave the stored key alone and
     // stay on first-run rather than guess at a transient-vs-permanent error.
@@ -452,7 +483,7 @@ function init(): void {
   void getCurrentWindow().onFocusChanged(({ payload: focused }) => {
     if (focused && K.def) void refreshTools();
   });
-  void restoreSession();
+  void loadSettings().then(restoreSession);
 }
 
 init();

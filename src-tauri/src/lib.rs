@@ -6,6 +6,7 @@ mod keychain;
 mod models;
 mod pi;
 mod portal;
+mod settings;
 mod tools;
 
 use std::sync::Mutex;
@@ -35,6 +36,7 @@ pub fn run() {
             keychain::keychain_set_key,
             keychain::keychain_delete_key,
             portal::validate_key,
+            settings::get_settings,
             tools::detect_tools,
             tools::launch_tool,
             tools::remove_tool_configs,

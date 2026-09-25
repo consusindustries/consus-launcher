@@ -22,12 +22,13 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::claude_code::read_object;
-use crate::models::{self, REGIME_TAG};
+use crate::models::{self, Target};
 
 pub const PROFILE_DIR: &str = ".pi-consus-gateway";
 const PROVIDER: &str = "consus";
 
-// ITAR only, matching the fixed regime in models.rs.
+// The guide's ITAR example. For another level the same models get that
+// level's suffix and label, until the gateway reports each model's limits.
 const TEMPLATE: &str = include_str!("../templates/pi-models-itar.json");
 
 pub fn profile_dir(home: &Path) -> PathBuf {
@@ -55,23 +56,33 @@ fn write_object(path: &Path, doc: Map<String, Value>) -> Result<(), String> {
         })
 }
 
-/// The guide's provider block for this key and helper.
-fn provider(helper: &Path, models_json: &Value) -> Result<Value, String> {
+/// The guide's provider block for this key, helper, and target.
+fn provider(helper: &Path, models_json: &Value, t: &Target) -> Result<Value, String> {
     let have = models::ids(models_json);
+    let tag = t.tag();
     let mut doc: Value = serde_json::from_str(TEMPLATE).expect("template is valid JSON");
     let mut p = doc["providers"][PROVIDER].take();
     let list = p["models"].as_array_mut().expect("template lists models");
+    for m in list.iter_mut() {
+        let base = m["id"].as_str().and_then(|id| id.strip_suffix(":itar")).map(String::from);
+        let name = m["name"].as_str().and_then(|n| n.strip_suffix(" (ITAR)")).map(String::from);
+        if let (Some(base), Some(name)) = (base, name) {
+            m["id"] = json!(format!("{base}:{}", t.level));
+            m["name"] = json!(format!("{name} ({tag})"));
+        }
+    }
     list.retain(|m| m["id"].as_str().is_some_and(|id| have.contains(&id)));
     if list.is_empty() {
-        return Err(format!("No {REGIME_TAG} models for Pi are available to this key."));
+        return Err(format!("No {tag} models for Pi are available to this key."));
     }
+    p["baseUrl"] = json!(t.v1());
     // Pi runs this through the shell; the path can contain a space.
     p["headers"]["x-api-key"] = json!(format!("!\"{}\"", helper.display()));
     Ok(p)
 }
 
-pub fn write_config(home: &Path, helper: &Path, models_json: &Value) -> Result<(), String> {
-    let p = provider(helper, models_json)?;
+pub fn write_config(home: &Path, helper: &Path, models_json: &Value, t: &Target) -> Result<(), String> {
+    let p = provider(helper, models_json, t)?;
     let ids: Vec<String> = p["models"]
         .as_array()
         .into_iter()
@@ -96,7 +107,7 @@ pub fn write_config(home: &Path, helper: &Path, models_json: &Value) -> Result<(
         && sdoc.get("defaultModel").and_then(Value::as_str).is_some_and(|m| ids.iter().any(|id| id == m));
     if !keep {
         // Newest Opus when the key has one, else the guide's first model.
-        let default = models::claude_models(models_json)
+        let default = models::claude_models(models_json, t)
             .into_iter()
             .map(|m| m.id)
             .find(|id| ids.contains(id))
@@ -166,7 +177,7 @@ mod tests {
     #[test]
     fn writes_the_guide_block_trimmed_to_the_key() {
         let home = temp_home("write");
-        write_config(&home, &helper(), &serde_json::from_str(MODELS).unwrap()).unwrap();
+        write_config(&home, &helper(), &serde_json::from_str(MODELS).unwrap(), &Target::default()).unwrap();
         let p = &read(&models_path(&home))["providers"]["consus"];
         let ids: Vec<&str> = p["models"].as_array().unwrap().iter().map(|m| m["id"].as_str().unwrap()).collect();
         assert_eq!(ids, ["claude-opus-5:itar", "claude-opus-5-5:itar", "gpt-5.4:itar"]);
@@ -185,7 +196,7 @@ mod tests {
         fs::create_dir_all(profile_dir(&home)).unwrap();
         fs::write(models_path(&home), r#"{ "providers": { "local": { "baseUrl": "http://localhost" } } }"#).unwrap();
         fs::write(settings_path(&home), r#"{ "theme": "dark", "defaultProvider": "consus", "defaultModel": "gpt-5.4:itar" }"#).unwrap();
-        write_config(&home, &helper(), &serde_json::from_str(MODELS).unwrap()).unwrap();
+        write_config(&home, &helper(), &serde_json::from_str(MODELS).unwrap(), &Target::default()).unwrap();
         let m = read(&models_path(&home));
         assert_eq!(m["providers"]["local"]["baseUrl"], "http://localhost");
         assert!(m["providers"]["consus"].is_object());
@@ -206,7 +217,7 @@ mod tests {
         fs::create_dir_all(profile_dir(&home)).unwrap();
         let bad: &[u8] = b"{ \"theme\": \"dark\xff\" }";
         fs::write(settings_path(&home), bad).unwrap();
-        assert!(write_config(&home, &helper(), &serde_json::from_str(MODELS).unwrap()).is_err());
+        assert!(write_config(&home, &helper(), &serde_json::from_str(MODELS).unwrap(), &Target::default()).is_err());
         assert_eq!(fs::read(settings_path(&home)).unwrap(), bad);
         assert!(!models_path(&home).exists(), "models.json must not be written either");
         let _ = fs::remove_dir_all(&home);
@@ -215,8 +226,23 @@ mod tests {
     #[test]
     fn no_itar_models_is_an_error() {
         let home = temp_home("empty");
-        let err = write_config(&home, &helper(), &json!([{ "id": "consus/gemini-3-flash:il4" }])).unwrap_err();
+        let err = write_config(&home, &helper(), &json!([{ "id": "consus/gemini-3-flash:il4" }]), &Target::default()).unwrap_err();
         assert!(err.contains("No ITAR models for Pi"));
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn follows_the_target_level_and_endpoint() {
+        let home = temp_home("target");
+        let t = Target { endpoint: "https://ai-proxy.acme.example".into(), level: "fedramp-high".into() };
+        let models = json!([{ "id": "consus/claude-opus-5-5:fedramp-high" }, { "id": "consus/claude-opus-5-5:itar" }]);
+        write_config(&home, &helper(), &models, &t).unwrap();
+        let p = &read(&models_path(&home))["providers"]["consus"];
+        assert_eq!(p["baseUrl"], "https://ai-proxy.acme.example/v1");
+        assert_eq!(p["models"].as_array().unwrap().len(), 1);
+        assert_eq!(p["models"][0]["id"], "claude-opus-5-5:fedramp-high");
+        assert_eq!(p["models"][0]["name"], "Claude Opus 5.5 (FedRAMP High)");
+        assert_eq!(read(&settings_path(&home))["defaultModel"], "claude-opus-5-5:fedramp-high");
         let _ = fs::remove_dir_all(&home);
     }
 }

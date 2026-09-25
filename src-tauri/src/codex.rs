@@ -14,27 +14,30 @@
 // the installed Codex's own bundled entry (those carry version-specific
 // instructions, so it is rebuilt on every launch) with the gateway's context
 // window and reasoning efforts. Without it /model cannot list Consus models
-// and Codex assumes a small context window. ITAR rows only.
+// and Codex assumes a small context window. The rows come from the guide's
+// ITAR table; for another level the same models get that level's suffix,
+// until the gateway reports each model's limits itself.
 
 use serde_json::{json, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
 use toml_edit::{value, DocumentMut, Item, Table};
 
-use crate::{chatgpt, claude_code, models};
+use crate::models::{self, Target};
+use crate::{chatgpt, claude_code};
 
 pub const PROFILE_DIR: &str = ".codex-consus-gateway";
 
 const EFFORTS: &[&str] = &["low", "medium", "high", "xhigh"];
 
-// Consus id, bundled entry it is cloned from, name, context window, efforts.
-// From the guide's MODELS table.
+// Consus base id, bundled entry it is cloned from, name, context window,
+// efforts. From the guide's MODELS table.
 const CATALOG: [(&str, &str, &str, u64, &[&str]); 5] = [
-    ("gpt-5.6-sol:itar", "gpt-5.6-sol", "GPT-5.6 Sol (ITAR)", 922_000, EFFORTS),
-    ("gpt-5.6-terra:itar", "gpt-5.6-terra", "GPT-5.6 Terra (ITAR)", 1_000_000, EFFORTS),
-    ("gpt-5.6-luna:itar", "gpt-5.6-luna", "GPT-5.6 Luna (ITAR)", 1_000_000, EFFORTS),
-    ("gpt-5.4:itar", "gpt-5.4", "GPT-5.4 (ITAR)", 272_000, EFFORTS),
-    ("gpt-5.1:itar", "gpt-5.4", "GPT-5.1 (ITAR)", 272_000, &["low", "medium", "high"]),
+    ("gpt-5.6-sol", "gpt-5.6-sol", "GPT-5.6 Sol", 922_000, EFFORTS),
+    ("gpt-5.6-terra", "gpt-5.6-terra", "GPT-5.6 Terra", 1_000_000, EFFORTS),
+    ("gpt-5.6-luna", "gpt-5.6-luna", "GPT-5.6 Luna", 1_000_000, EFFORTS),
+    ("gpt-5.4", "gpt-5.4", "GPT-5.4", 272_000, EFFORTS),
+    ("gpt-5.1", "gpt-5.4", "GPT-5.1", 272_000, &["low", "medium", "high"]),
 ];
 
 pub fn profile_dir(home: &Path) -> PathBuf {
@@ -50,12 +53,14 @@ fn catalog_path(home: &Path) -> PathBuf {
 }
 
 /// The catalog entries for this key, from `codex debug models --bundled`.
-pub fn catalog(bundled: &Value, models_json: &Value) -> Vec<Value> {
+pub fn catalog(bundled: &Value, models_json: &Value, t: &Target) -> Vec<Value> {
     let have = models::ids(models_json);
     let stock = bundled["models"].as_array().cloned().unwrap_or_default();
+    let tag = t.tag();
     CATALOG
         .iter()
-        .filter(|(id, ..)| have.contains(id))
+        .map(|(base, from, name, ctx, efforts)| (format!("{base}:{}", t.level), from, format!("{name} ({tag})"), ctx, efforts))
+        .filter(|(id, ..)| have.contains(&id.as_str()))
         .filter_map(|(id, from, name, ctx, efforts)| {
             let mut m = stock.iter().find(|m| m["slug"] == *from)?.clone();
             let levels: Vec<Value> = m["supported_reasoning_levels"]
@@ -106,9 +111,9 @@ fn extra(home: &Path, with_catalog: bool) -> Table {
 
 /// `bundled` is None when the installed Codex could not list its models;
 /// Codex then runs without a catalog rather than not at all.
-pub fn write_config(home: &Path, models_json: &Value, bundled: Option<&Value>) -> Result<(), String> {
+pub fn write_config(home: &Path, models_json: &Value, bundled: Option<&Value>, t: &Target) -> Result<(), String> {
     fs::create_dir_all(profile_dir(home)).map_err(|e| e.to_string())?;
-    let list = bundled.map(|b| catalog(b, models_json)).unwrap_or_default();
+    let list = bundled.map(|b| catalog(b, models_json, t)).unwrap_or_default();
     let cpath = catalog_path(home);
     if !list.is_empty() {
         let text = serde_json::to_string_pretty(&json!({ "models": list })).map_err(|e| e.to_string())?;
@@ -120,7 +125,7 @@ pub fn write_config(home: &Path, models_json: &Value, bundled: Option<&Value>) -
     // Codex refuses to start when model_catalog_json names a missing file.
     let with_catalog = cpath.exists();
     let path = config_path(home);
-    chatgpt::write_config_at(&path, models_json, &extra(home, with_catalog))?;
+    chatgpt::write_config_at(&path, models_json, &extra(home, with_catalog), t)?;
     if !with_catalog {
         let text = fs::read_to_string(&path).map_err(|e| e.to_string())?;
         let mut doc: DocumentMut = text.parse().map_err(|e| format!("{}: {e}", path.display()))?;
@@ -171,7 +176,7 @@ mod tests {
 
     #[test]
     fn catalog_clones_bundled_entries_for_the_keys_itar_models() {
-        let list = catalog(&bundled(), &serde_json::from_str(MODELS).unwrap());
+        let list = catalog(&bundled(), &serde_json::from_str(MODELS).unwrap(), &Target::default());
         let slugs: Vec<&str> = list.iter().map(|m| m["slug"].as_str().unwrap()).collect();
         assert_eq!(slugs, ["gpt-5.6-terra:itar", "gpt-5.1:itar"]);
         assert_eq!(list[0]["base_instructions"], "terra");
@@ -188,7 +193,7 @@ mod tests {
         let home = temp_home("write");
         fs::create_dir_all(profile_dir(&home)).unwrap();
         fs::write(config_path(&home), "notify = [\"x\"]\n\n[projects.\"/Users/x/proj\"]\ntrust_level = \"trusted\"\n").unwrap();
-        write_config(&home, &serde_json::from_str(MODELS).unwrap(), Some(&bundled())).unwrap();
+        write_config(&home, &serde_json::from_str(MODELS).unwrap(), Some(&bundled()), &Target::default()).unwrap();
 
         let doc: DocumentMut = fs::read_to_string(config_path(&home)).unwrap().parse().unwrap();
         assert_eq!(doc["model"].as_str(), Some("gpt-5.6-terra:itar"));
@@ -216,10 +221,20 @@ mod tests {
         let mut old = DocumentMut::new();
         old["model_catalog_json"] = value(catalog_path(&home).display().to_string());
         fs::write(config_path(&home), old.to_string()).unwrap();
-        write_config(&home, &serde_json::from_str(MODELS).unwrap(), None).unwrap();
+        write_config(&home, &serde_json::from_str(MODELS).unwrap(), None, &Target::default()).unwrap();
         let doc: DocumentMut = fs::read_to_string(config_path(&home)).unwrap().parse().unwrap();
         assert!(doc.get("model_catalog_json").is_none());
         assert_eq!(doc["model"].as_str(), Some("gpt-5.6-terra:itar"));
         let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn catalog_follows_the_target_level() {
+        let t = Target { endpoint: "https://ai-proxy.acme.example".into(), level: "fedramp-high".into() };
+        let models = json!([{ "id": "consus/gpt-5.6-terra:fedramp-high" }, { "id": "consus/gpt-5.6-terra:itar" }]);
+        let list = catalog(&bundled(), &models, &t);
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0]["slug"], "gpt-5.6-terra:fedramp-high");
+        assert_eq!(list[0]["display_name"], "GPT-5.6 Terra (FedRAMP High)");
     }
 }

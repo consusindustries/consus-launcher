@@ -1,6 +1,5 @@
 use serde::Serialize;
 
-const MODELS_URL: &str = "https://api.consus.io/v1/models";
 const USER_AGENT: &str = concat!("ConsusLauncher/", env!("CARGO_PKG_VERSION"));
 
 #[derive(Debug, Serialize)]
@@ -26,8 +25,11 @@ pub async fn validate_key(key: String) -> Result<ConnectResult, ConnectError> {
         .build()
         .map_err(|e| ConnectError::Network { message: e.to_string() })?;
 
+    let target = crate::settings::current()
+        .map_err(|message| ConnectError::Rejected { message })?
+        .target;
     let resp = client
-        .get(MODELS_URL)
+        .get(format!("{}/models", target.v1()))
         .header("x-api-key", key)
         .header("accept", "application/json")
         .send()
