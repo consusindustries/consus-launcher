@@ -33,7 +33,7 @@ Fixes land in the latest release. Please check that the issue still reproduces t
 - `~/Consus`, an empty folder the terminal tools start in.
 - Links to its own binary, used as the key helpers, in `~/Library/Application Support/io.consus.launcher/` (on Windows, hard links named `*-key-helper.exe` in `%APPDATA%\io.consus.launcher\`). The same folder holds ChatGPT's generated model catalog (`chatgpt-models.json`) and an empty `codex-probe` folder used when building it.
 - An icon cache in `~/Library/Caches/io.consus.launcher/`.
-- Sign out removes the launcher's settings from every tool and ChatGPT's catalog. It leaves the profile folders (they hold your history), `~/Consus`, the helper links, the icon cache, and the Claude Desktop backup.
+- Sign out removes the launcher's settings from every tool and ChatGPT's catalog. When org settings leave a tool out, the launcher removes its settings from that tool the same way when it starts. It leaves the profile folders (they hold your history), `~/Consus`, the helper links, the icon cache, and the Claude Desktop backup.
 - On Windows the same files live under `%LOCALAPPDATA%\Claude-3p` (Claude Desktop) and `%USERPROFILE%` (the rest).
 
 **Programs it runs**

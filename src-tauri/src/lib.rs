@@ -32,6 +32,11 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(tools::Children(Mutex::new(Vec::new())))
+        .setup(|app| {
+            let handle = app.handle().clone();
+            std::thread::spawn(move || tools::remove_turned_off(&handle));
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             keychain::keychain_get_key,
             keychain::keychain_set_key,
