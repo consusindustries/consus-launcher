@@ -913,17 +913,76 @@ pub async fn launch_tool(app: AppHandle, tool: String, rect: Rect, models: Value
     }
 }
 
+/// Removes the settings the launcher wrote for one tool and leaves the rest.
+/// `catalog` is the launcher's ChatGPT model catalog.
+fn remove_config(home: &Path, catalog: &Path, t: Tool) -> Result<(), String> {
+    match t {
+        Tool::Desktop => config::remove_claude_desktop(home),
+        Tool::ChatGpt => {
+            chatgpt::remove_config(home, catalog)?;
+            // Only once the config no longer points at it.
+            let _ = fs::remove_file(catalog);
+            Ok(())
+        }
+        Tool::Code => claude_code::remove_settings(home),
+        Tool::Codex => codex::remove_config(home),
+        Tool::Pi => pi::remove_config(home),
+    }
+}
+
+/// The launcher's home folder and ChatGPT catalog.
+fn removal_paths(app: &AppHandle) -> Result<(PathBuf, PathBuf), String> {
+    let home = app.path().home_dir().map_err(|e| e.to_string())?;
+    let catalog = app.path().app_config_dir().map(|d| d.join(CHATGPT_CATALOG)).unwrap_or_default();
+    Ok((home, catalog))
+}
+
 #[tauri::command]
 pub fn remove_tool_configs(app: AppHandle) -> Result<(), String> {
-    let home = app.path().home_dir().map_err(|e| e.to_string())?;
-    let claude = config::remove_claude_desktop(&home);
-    let catalog = app.path().app_config_dir().map(|d| d.join(CHATGPT_CATALOG)).unwrap_or_default();
-    let chatgpt = chatgpt::remove_config(&home, &catalog);
-    let code = claude_code::remove_settings(&home);
-    let codex = codex::remove_config(&home);
-    let pi = pi::remove_config(&home);
-    let _ = fs::remove_file(&catalog);
-    claude.and(chatgpt).and(code).and(codex).and(pi)
+    let (home, catalog) = removal_paths(&app)?;
+    TOOLS.into_iter().map(|t| remove_config(&home, &catalog, t)).fold(Ok(()), Result::and)
+}
+
+/// The tools an org's settings turn off.
+fn turned_off(s: &settings::Settings) -> Vec<Tool> {
+    TOOLS.into_iter().filter(|t| !s.allows(key(*t))).collect()
+}
+
+/// At startup, a tool the org has turned off loses the settings the launcher
+/// wrote for it, so it stops reaching Consus through the launcher. Settings
+/// that fail to load change nothing: they hide every tool until fixed, and a
+/// typo should not undo anyone's setup.
+pub fn remove_turned_off(app: &AppHandle) {
+    let (Ok(s), Ok((home, catalog))) = (settings::current(), removal_paths(app)) else {
+        return;
+    };
+    for t in turned_off(&s) {
+        // A running app writes its config back when it quits; the next
+        // start tries again.
+        if !app_running(t) {
+            let _ = remove_config(&home, &catalog, t);
+        }
+    }
+}
+
+/// Whether Claude Desktop or ChatGPT is open. The command-line tools read
+/// their settings per session, so they never count.
+fn app_running(t: Tool) -> bool {
+    if cfg!(target_os = "macos") {
+        app_spec(t).is_some_and(|s| !running_pids(s.process).is_empty())
+    } else {
+        other_running(t)
+    }
+}
+
+#[cfg(windows)]
+fn other_running(t: Tool) -> bool {
+    win::running(t)
+}
+
+#[cfg(not(windows))]
+fn other_running(_: Tool) -> bool {
+    false
 }
 
 /// On launcher exit the apps it started are asked to quit, then killed if
@@ -1021,5 +1080,62 @@ mod tests {
         assert!(sets_connection(&obj(json!({ "env": { "ANTHROPIC_BASE_URL": "https://api.consus.io" } }))));
         assert!(!sets_connection(&obj(json!({ "permissions": { "deny": ["Bash(rm:*)"] } }))));
         assert!(!sets_connection(&obj(json!({ "env": { "DISABLE_TELEMETRY": "1" } }))));
+    }
+
+    fn allowing(tools: Option<Vec<&str>>) -> settings::Settings {
+        settings::Settings {
+            target: Target::default(),
+            tools: tools.map(|t| t.into_iter().map(String::from).collect()),
+            org_name: None,
+            managed: true,
+        }
+    }
+
+    #[test]
+    fn only_the_tools_left_out_are_turned_off() {
+        assert!(turned_off(&allowing(None)).is_empty());
+        let off: Vec<&str> = turned_off(&allowing(Some(vec!["code", "codex"]))).into_iter().map(key).collect();
+        assert_eq!(off, ["desktop", "chatgpt", "pi"]);
+    }
+
+    #[test]
+    fn turning_tools_off_removes_only_their_settings() {
+        let home = std::env::temp_dir().join(format!("consus-launcher-turned-off-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&home);
+        let catalog = home.join("chatgpt-models.json");
+        let helper = home.join("helper");
+        let t = Target::default();
+        let models = json!([{ "id": "consus/claude-opus-5-5:itar" }, { "id": "consus/gpt-5.4:itar" }]);
+        // On Windows Claude Desktop's config lives in %LOCALAPPDATA%, outside
+        // the test's home, so the test leaves it alone there.
+        let desktop = !cfg!(windows);
+        let desktop_entry = home.join("Library/Application Support/Claude-3p/configLibrary");
+        if desktop {
+            config::write_claude_desktop(&home, &helper, &models, &t).unwrap();
+        }
+        chatgpt::write_config(&home, &models, &t, Some(&catalog)).unwrap();
+        fs::write(&catalog, "{}").unwrap();
+        claude_code::write_settings(&home, &helper, &models, &t).unwrap();
+        codex::write_config(&home, &models, None, &t).unwrap();
+        pi::write_config(&home, &helper, &models, &t).unwrap();
+        let entries = || fs::read_dir(&desktop_entry).map_or(0, |d| d.filter(|e| e.as_ref().unwrap().file_name() != "_meta.json").count());
+        let pi_models = || fs::read_to_string(home.join(".pi-consus-gateway/models.json")).unwrap();
+        if desktop {
+            assert_eq!(entries(), 1);
+        }
+        assert!(pi_models().contains("consus"));
+
+        for off in turned_off(&allowing(Some(vec!["code", "codex"]))) {
+            if off != Tool::Desktop || desktop {
+                remove_config(&home, &catalog, off).unwrap();
+            }
+        }
+        assert_eq!(entries(), 0, "Claude Desktop's entry is gone");
+        assert!(!home.join(".codex/config.toml").exists(), "ChatGPT's config held only the launcher's keys");
+        assert!(!catalog.exists());
+        assert!(!pi_models().contains("consus"));
+        assert!(fs::read_to_string(home.join(".claude-consus-gateway/settings.json")).unwrap().contains("apiKeyHelper"));
+        assert!(fs::read_to_string(home.join(".codex-consus-gateway/config.toml")).unwrap().contains("consus"));
+        let _ = fs::remove_dir_all(&home);
     }
 }
