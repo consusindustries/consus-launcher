@@ -19,7 +19,8 @@ Fixes land in the latest release. Please check that the issue still reproduces t
 ## What the launcher does, for reviewers
 
 **Network**
-- One kind of request: `GET https://api.consus.io/v1/models`, when you connect or replace your key and each time the launcher starts, to check the key and list its models. It uses the system proxy settings and the system's trusted certificates.
+- One kind of request: `GET https://api.consus.io/v1/models`, or the same path on the organization's endpoint when an IT admin set one (`EndpointURL`, see the README), when you connect or replace your key and each time the launcher starts, to check the key and list its models. It uses the system proxy settings and the system's trusted certificates.
+- Org settings are read locally from the `io.consus.launcher` preferences (a device-management profile, or the user's own preferences); nothing is fetched for them.
 - In your browser, not from the app: `portal.consus.io`, and a tool's vendor download page when you click a tool that is not installed.
 
 **The key**

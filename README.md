@@ -33,9 +33,30 @@ Consus Launcher is a small open source desktop app for macOS. It writes each too
 
 ## What it connects to
 
-The launcher makes one kind of network request: `GET https://api.consus.io/v1/models`, when you connect and each time the launcher starts, to check the key and list your models. `https://portal.consus.io` only ever opens in your browser. (The Terminal installer downloads from GitHub; the app itself never does.)
+The launcher makes one kind of network request: `GET https://api.consus.io/v1/models` (or the same path on your organization's endpoint, if your IT admin set one), when you connect and each time the launcher starts, to check the key and list your models. `https://portal.consus.io` only ever opens in your browser. (The Terminal installer downloads from GitHub; the app itself never does.)
 
-The tools you open send their requests to `api.consus.io` with the settings the launcher writes. What else a tool does is up to the tool. For ChatGPT and Codex, the launcher's config turns off analytics, feedback, and OpenTelemetry export, and Codex's update check; for Pi, install telemetry and the update check. On its first run, Pi downloads `fd` and `ripgrep` from GitHub, because its search tools need them.
+The tools you open send their requests to `api.consus.io`, or to your organization's endpoint, with the settings the launcher writes. What else a tool does is up to the tool. For ChatGPT and Codex, the launcher's config turns off analytics, feedback, and OpenTelemetry export, and Codex's update check; for Pi, install telemetry and the update check. On its first run, Pi downloads `fd` and `ripgrep` from GitHub, because its search tools need them.
+
+## For IT admins: org settings
+
+The launcher reads settings for the `io.consus.launcher` preferences domain. Push them in a configuration profile with your device management (Jamf, Intune, and so on); a value from a profile wins over the user's own preferences. Every key is optional.
+
+| Key | Type | What it does |
+|---|---|---|
+| `EndpointURL` | string | Where every tool sends its requests, for example your own logging proxy. Default `https://api.consus.io`. Must be `https://` (plain `http://` only to `localhost`). |
+| `ComplianceLevel` | string | The compliance level every tool is set up for: `itar` (default), `fedramp-high`, `fedramp-high+itar`, and the other levels the gateway supports. |
+| `Tools` | array of strings | The tools shown: `claude-desktop`, `chatgpt-desktop`, `claude-code`, `codex-cli`, `pi`. Default: all. |
+| `OrgName` | string | Shown in the launcher's header. |
+
+The launcher reads these when it starts. If a value is present but invalid, the launcher explains the problem and sets nothing up, rather than falling back to defaults. Hiding a tool here is a convenience, not a control: what a key can do is enforced by the Consus gateway.
+
+To try settings on one Mac without a profile:
+
+```sh
+defaults write io.consus.launcher Tools -array claude-code codex-cli
+defaults write io.consus.launcher OrgName "Example Org"
+defaults delete io.consus.launcher    # back to defaults
+```
 
 ## Install
 

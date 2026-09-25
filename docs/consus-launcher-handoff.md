@@ -26,7 +26,7 @@ Decided since (Eric's calls):
 - **Tools** (2026-09-24): Claude Desktop, ChatGPT, Claude Code, Codex CLI, Pi. VS Code is dropped.
 - **Your own setup is left alone** (2026-09-23): terminal tools get their own profile folders (`~/.claude-consus-gateway`, `~/.codex-consus-gateway`, `~/.pi-consus-gateway`) and start in an empty `~/Consus` folder. The launcher never reads or writes `~/.claude` or `~/.pi`. ChatGPT has no such option: its settings are merged into `~/.codex/config.toml`, which the user's own `codex` also reads, so that `codex` routes to Consus until sign out.
 - **Standalone windows** (2026-09-22): a launched app is placed in the launcher's glass area once, then moves freely. Quitting the launcher quits the apps it started, never ones the user opened.
-- **Compliance level fixed to ITAR** for now; one place to change it (`src-tauri/src/models.rs`) until org settings arrive.
+- **Compliance level is ITAR by default** (2026-09-22); an org can set another level through org settings (2026-09-24).
 - **Terminal.app only** for terminal tools on macOS; a terminal picker is later.
 - **One key.** The per-tool key override and the Log tab placeholder were removed (2026-09-24); org settings and the portal's usage view cover those needs.
 - **No auto-update, Mac-only releases, drafted for review** (2026-09-24). See section 9.
@@ -53,7 +53,7 @@ README.md  SECURITY.md  CONTRIBUTING.md  NOTICE  LICENSE
 ```
 
 ### Supply chain and network rules (customers review this)
-- **Network:** the launcher talks to `api.consus.io` (`GET /v1/models`) and opens `portal.consus.io` in the browser. No other host. Fonts are bundled.
+- **Network:** the launcher talks to `api.consus.io` (`GET /v1/models`), or the org's endpoint when org settings set one, and opens `portal.consus.io` in the browser. No other host. Fonts are bundled.
 - **Dependencies:** exact versions pinned, `Cargo.lock` committed, short list a security team can read in a minute. The UI has no runtime packages beyond Tauri's own. Ask before adding one.
 - **Actions:** third-party GitHub Actions pinned to commit SHAs.
 - **SBOM:** CycloneDX for the Rust crates and the npm packages, attached to every release.
@@ -79,7 +79,7 @@ README.md  SECURITY.md  CONTRIBUTING.md  NOTICE  LICENSE
 
 - `GET /v1/models` with `x-api-key`: validates the key and lists the models it can use.
 
-Next (see section 10): org settings from the portal, so an admin decides which tools appear, the compliance level, and the endpoint tools point at.
+Org settings (built 2026-09-24): read from the `io.consus.launcher` managed preferences a device-management profile sets (keys in the README): allowed tools, compliance level, endpoint, org name. Next (section 10): the same settings from the portal, fetched with the user's key.
 
 ## 7. Per-tool behavior
 
@@ -109,11 +109,11 @@ Each template, or the module that embeds it, records the doc it was checked agai
 - **No in-app updater:** it would be a network host beyond the Consus hosts.
 
 ## 10. Status and what's next
-Done: connect flow, five tools on macOS, glass placement, quit together, sign out, CI with tests, release pipeline, README.
+Done: connect flow, five tools on macOS, glass placement, quit together, sign out, CI with tests, release pipeline, README, Terminal installer, org settings from device management.
 
 Next, in order:
-1. Command-line installer for the interim, pre-notarization period.
-2. Org settings (launcher side): read settings from device management and, later, from the portal with the user's key: allowed tools, compliance level, the endpoint tools point at (`api.consus.io` or the org's own logging proxy), org name. The design is kept with the Consus services.
+1. Org settings from the portal, fetched with the user's key, once the portal serves them; and removing the launcher's settings from a tool an admin turns off. The design is kept with the Consus services.
+2. Model limits from the gateway's `/v1/models`, replacing the Pi and Codex tables (which today reuse the ITAR rows for other levels).
 3. Signed, notarized releases once Apple enrollment clears; device-management kit (`.pkg` plus configuration profile).
 4. Windows.
 
