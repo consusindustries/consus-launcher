@@ -38,7 +38,7 @@
         </div>
 
         <div id="main" style="display:none;flex:1;min-height:0;flex-direction:column">
-        <div class="tabs" role="tablist"><button class="on" data-tab="open" role="tab" aria-selected="true">Open</button><button data-tab="keys" role="tab" aria-selected="false">Keys</button><button data-tab="traffic" role="tab" aria-selected="false">Log</button></div>
+        <div class="tabs" role="tablist"><button class="on" data-tab="open" role="tab" aria-selected="true">Open</button><button data-tab="keys" role="tab" aria-selected="false">Keys</button></div>
 
         <div class="tabpane on" id="p-open">
           <p class="h">Open with the right setup</p>
@@ -51,22 +51,15 @@
         </div>
 
         <div class="tabpane" id="p-keys">
-          <p class="h">Default key</p>
+          <p class="h">Your key</p>
           <div class="krow" id="defRow"></div>
           <p class="note">Every tool uses this key. It lives in your system keychain. Revoke it in the portal and it stops everywhere.</p>
           <button class="mini" id="signOut" style="margin-top:18px;opacity:.7">SIGN OUT AND REMOVE KEYS</button>
         </div>
 
-        <div class="tabpane log" id="p-traffic">
-          <div class="loghead"><span>Request log</span><span>coming soon</span></div>
-          <pre id="feed" aria-label="Request log"><span class="dim">// coming soon: the request log needs a portal endpoint
-// that does not exist yet. Nothing is recorded here.</span>
-</pre>
-          <div class="cursor"><span class="dim">consus &gt;</span> <b>_</b></div>
-        </div>
         </div>
 
-        <div class="foot">Log is metadata only: where, when, how big. Content is never read or stored on this machine.</div>
+        <div class="foot">Tools talk to the Consus gateway directly. Nothing you send passes through this app.</div>
       </aside>
     </div>
   </div>

@@ -1,0 +1,12 @@
+Consus Launcher
+Copyright 2026 Consus Industries, Inc.
+
+This software is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+Trademarks: "Consus" and the Consus logos are trademarks of Consus Industries, Inc.
+They are not licensed under the Apache License. A modified version of this software
+must not be distributed under the Consus name or with the Consus logos.
+
+The Pi logo (src-tauri/assets/pi.svg) belongs to its owners and is used only to
+identify the Pi tool. Other tools' icons are read from those apps on the user's
+machine at runtime and are not distributed with this software.

@@ -80,17 +80,7 @@ body{display:flex}
 .krow .acts{display:flex;gap:6px;margin-top:8px}
 .mini{background:transparent;border:1px solid var(--side-3);color:var(--side-t);border-radius:5px;padding:4px 8px;font-family:var(--mono);font-size:10px;letter-spacing:.06em;cursor:pointer}
 .mini:hover{border-color:var(--side-h)}
-.tag{font-family:var(--mono);font-size:10px;padding:2px 6px;border-radius:4px;border:1px solid var(--side-3);color:var(--side-h)}
-.tag.own{border-color:var(--orange);color:var(--orange)}
 .status.off{color:#E7B25A}.status.off i{background:#E7B25A}
-.tabpane.log{padding:0;display:none;flex-direction:column;background:#120F0C}
-.tabpane.log.on{display:flex}
-.loghead{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;font-family:var(--mono);font-size:11px;letter-spacing:.08em;color:#A6C86A;border-bottom:1px solid var(--side-3);text-transform:uppercase}
-#feed{flex:1;margin:0;padding:12px 14px;overflow:auto;font-family:var(--mono);font-size:11px;line-height:1.75;color:#A6C86A;white-space:pre;scrollbar-width:thin;scrollbar-color:var(--side-3) transparent}
-#feed .dim{color:#7E7466}
-.cursor{padding:8px 14px 10px;font-family:var(--mono);font-size:11px;color:#A6C86A;border-top:1px solid var(--side-3)}
-.cursor b{font-weight:400;animation:blink 1s steps(1) infinite}
-@keyframes blink{50%{opacity:0}}
 .tool.missing .ic{background:var(--side-3);color:var(--side-h);border:1px dashed var(--side-h)}
 .tool.missing .nm{color:var(--side-t)}
 .tool.missing .go{color:#E7B25A}
