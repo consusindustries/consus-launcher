@@ -300,6 +300,7 @@ function toolTile(key: Tool): HTMLButtonElement {
 
 interface ToolStatus {
   allowed: boolean;
+  managed: boolean;
   installed: boolean;
   icon: string | null;
 }
@@ -312,7 +313,7 @@ async function refreshTools(): Promise<void> {
     $("whoNote").textContent = "Your organization has not enabled any tools in the launcher.";
   }
   for (const key of TOOLS) {
-    const st = status[key] ?? { allowed: false, installed: false, icon: null };
+    const st = status[key] ?? { allowed: false, managed: false, installed: false, icon: null };
     const b = toolTile(key);
     // Tools the org's settings leave out are not shown at all.
     b.style.display = st.allowed ? "" : "none";
@@ -340,7 +341,8 @@ async function refreshTools(): Promise<void> {
       delete b.dataset.missing;
       b.classList.remove("missing");
       if (go.textContent !== "RUNNING") go.textContent = "OPEN";
-      sb.textContent = sb.dataset.d ?? "";
+      // A machine-wide policy sets this tool up; the launcher just opens it.
+      sb.textContent = st.managed ? "Managed by your organization" : (sb.dataset.d ?? "");
     } else {
       b.dataset.missing = "1";
       b.classList.add("missing");
