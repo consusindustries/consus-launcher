@@ -268,6 +268,11 @@ fn quit_running(t: Tool, dir: &Path) -> Result<(), String> {
     Err(format!("{} is still running. Close it and try again.", name(t)))
 }
 
+/// Whether Claude Desktop or ChatGPT is running.
+pub fn running(t: Tool) -> bool {
+    app_dir(t).is_some_and(|d| !pids_in(&d).is_empty())
+}
+
 /// The folder an app runs from: its Store package, or a classic install.
 fn app_dir(t: Tool) -> Option<PathBuf> {
     match t {

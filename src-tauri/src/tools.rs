@@ -933,7 +933,7 @@ fn remove_config(home: &Path, catalog: &Path, t: Tool) -> Result<(), String> {
 /// The launcher's home folder and ChatGPT catalog.
 fn removal_paths(app: &AppHandle) -> Result<(PathBuf, PathBuf), String> {
     let home = app.path().home_dir().map_err(|e| e.to_string())?;
-    let catalog = app.path().app_config_dir().map_err(|e| e.to_string())?.join(CHATGPT_CATALOG);
+    let catalog = app.path().app_config_dir().map(|d| d.join(CHATGPT_CATALOG)).unwrap_or_default();
     Ok((home, catalog))
 }
 
@@ -957,8 +957,32 @@ pub fn remove_turned_off(app: &AppHandle) {
         return;
     };
     for t in turned_off(&s) {
-        let _ = remove_config(&home, &catalog, t);
+        // A running app writes its config back when it quits; the next
+        // start tries again.
+        if !app_running(t) {
+            let _ = remove_config(&home, &catalog, t);
+        }
     }
+}
+
+/// Whether Claude Desktop or ChatGPT is open. The command-line tools read
+/// their settings per session, so they never count.
+fn app_running(t: Tool) -> bool {
+    if cfg!(target_os = "macos") {
+        app_spec(t).is_some_and(|s| !running_pids(s.process).is_empty())
+    } else {
+        other_running(t)
+    }
+}
+
+#[cfg(windows)]
+fn other_running(t: Tool) -> bool {
+    win::running(t)
+}
+
+#[cfg(not(windows))]
+fn other_running(_: Tool) -> bool {
+    false
 }
 
 /// On launcher exit the apps it started are asked to quit, then killed if

@@ -47,7 +47,7 @@ On macOS the launcher reads settings for the `io.consus.launcher` preferences do
 |---|---|---|
 | `EndpointURL` | string | Where every tool sends its requests, for example your own logging proxy. Default `https://api.consus.io`. Must be `https://` (plain `http://` only to `localhost` or `127.0.0.1`). |
 | `ComplianceLevel` | string | The compliance level every tool is set up for: `itar` (default), `fedramp-low`, `fedramp-moderate`, `fedramp-high`, `il2`, `il4`, or `il5`, each optionally with `+itar` (for example `fedramp-high+itar`). |
-| `Tools` | array of strings | The tools shown: `claude-desktop`, `chatgpt-desktop`, `claude-code`, `codex-cli`, `pi`. Default: all. When a tool is left out, the launcher removes the settings it wrote for that tool, as sign out does. |
+| `Tools` | array of strings | The tools shown: `claude-desktop`, `chatgpt-desktop`, `claude-code`, `codex-cli`, `pi`. Default: all. When a tool is left out, the launcher removes the settings it wrote for that tool when it starts, as sign out does; if Claude or ChatGPT is open then, at a later start. |
 | `OrgName` | string | Shown in the launcher's header. |
 
 The launcher reads these when it starts; restart it after a change. If a value is present but invalid or blank, or a settings file cannot be read, the launcher explains the problem and sets nothing up, rather than falling back to defaults. Hiding a tool here is a convenience, not a control: what a key can do is enforced by the Consus gateway.

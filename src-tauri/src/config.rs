@@ -165,28 +165,38 @@ pub fn write_claude_desktop(home: &Path, helper: &Path, models: &Value, t: &Targ
 /// Removes the launcher's entry. If it was the applied one, the first
 /// remaining entry becomes applied. If nothing remains and the mode marker
 /// is the one the launcher wrote, that goes too, so a machine the launcher
-/// switched into gateway mode returns to how it was.
+/// switched into gateway mode returns to how it was. A library that holds
+/// nothing of the launcher's is left as it is.
 pub fn remove_claude_desktop(home: &Path) -> Result<(), String> {
     let lib = library_dir(home);
-    let _ = fs::remove_file(lib.join(format!("{ENTRY_ID}.json")));
+    let entry = lib.join(format!("{ENTRY_ID}.json"));
+    let had_entry = entry.exists();
+    let _ = fs::remove_file(&entry);
     let meta_path = lib.join("_meta.json");
     if !meta_path.exists() {
         return Ok(());
     }
-    let mut meta = read_meta(&lib);
-    let entries: Vec<Value> = meta["entries"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|e| e["id"] != ENTRY_ID)
-        .collect();
-    if meta["appliedId"] == ENTRY_ID {
-        meta["appliedId"] = entries.first().map(|e| e["id"].clone()).unwrap_or(Value::Null);
+    // Strictly: a file the app is midway through writing must not read as
+    // empty and take everyone's entries with it.
+    let mut meta = fs::read_to_string(&meta_path)
+        .ok()
+        .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+        .filter(Value::is_object)
+        .ok_or_else(|| format!("{}: could not be read", meta_path.display()))?;
+    let all = meta["entries"].as_array().cloned().unwrap_or_default();
+    let listed = meta["appliedId"] == ENTRY_ID || all.iter().any(|e| e["id"] == ENTRY_ID);
+    if !had_entry && !listed {
+        return Ok(());
     }
+    let entries: Vec<Value> = all.into_iter().filter(|e| e["id"] != ENTRY_ID).collect();
     let none_left = entries.is_empty();
-    meta["entries"] = Value::Array(entries);
-    write_json(&meta_path, &meta)?;
+    if listed {
+        if meta["appliedId"] == ENTRY_ID {
+            meta["appliedId"] = entries.first().map(|e| e["id"].clone()).unwrap_or(Value::Null);
+        }
+        meta["entries"] = Value::Array(entries);
+        write_json(&meta_path, &meta)?;
+    }
 
     if none_left {
         let marker = profile_dir(home).join("claude_desktop_config.json");
@@ -200,4 +210,50 @@ pub fn remove_claude_desktop(home: &Path) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+// On Windows the library lives in %LOCALAPPDATA%, outside a test's home.
+#[cfg(all(test, not(windows)))]
+mod tests {
+    use super::*;
+
+    fn library(tag: &str, meta: &str) -> (PathBuf, PathBuf) {
+        let home = std::env::temp_dir().join(format!("consus-launcher-desktop-{tag}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&home);
+        let lib = library_dir(&home);
+        fs::create_dir_all(&lib).unwrap();
+        fs::write(lib.join("_meta.json"), meta).unwrap();
+        (home, lib)
+    }
+
+    #[test]
+    fn a_library_without_the_launchers_entry_is_left_alone() {
+        let meta = r#"{ "appliedId": "theirs", "entries": [{ "id": "theirs" }] }"#;
+        let (home, lib) = library("theirs", meta);
+        remove_claude_desktop(&home).unwrap();
+        assert_eq!(fs::read_to_string(lib.join("_meta.json")).unwrap(), meta);
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn an_unreadable_library_is_an_error_not_an_empty_one() {
+        let meta = r#"{ "appliedId": "theirs", "entr"#;
+        let (home, lib) = library("torn", meta);
+        fs::write(lib.join(format!("{ENTRY_ID}.json")), "{}").unwrap();
+        assert!(remove_claude_desktop(&home).is_err());
+        assert_eq!(fs::read_to_string(lib.join("_meta.json")).unwrap(), meta);
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn removing_the_launchers_entry_applies_the_next_one() {
+        let meta = format!(r#"{{ "appliedId": "{ENTRY_ID}", "entries": [{{ "id": "{ENTRY_ID}" }}, {{ "id": "theirs" }}] }}"#);
+        let (home, lib) = library("ours", &meta);
+        fs::write(lib.join(format!("{ENTRY_ID}.json")), "{}").unwrap();
+        remove_claude_desktop(&home).unwrap();
+        let after: Value = serde_json::from_str(&fs::read_to_string(lib.join("_meta.json")).unwrap()).unwrap();
+        assert_eq!(after, json!({ "appliedId": "theirs", "entries": [{ "id": "theirs" }] }));
+        assert!(!lib.join(format!("{ENTRY_ID}.json")).exists());
+        let _ = fs::remove_dir_all(&home);
+    }
 }

@@ -180,6 +180,9 @@ pub fn remove_config(home: &Path, catalog: &Path) -> Result<(), String> {
     remove_config_at(&path, &extra(ours.then_some(catalog)))
 }
 
+/// Does nothing to a file the launcher did not write: its provider, with the
+/// key taken from the environment, is the launcher's mark. The same key
+/// names in a user's own Codex config are theirs.
 pub fn remove_config_at(path: &Path, extra: &Table) -> Result<(), String> {
     let Ok(existing) = fs::read_to_string(path) else {
         return Ok(());
@@ -187,6 +190,16 @@ pub fn remove_config_at(path: &Path, extra: &Table) -> Result<(), String> {
     let mut doc: DocumentMut = existing
         .parse()
         .map_err(|e| format!("{}: {e}", path.display()))?;
+    let ours = doc
+        .get("model_providers")
+        .and_then(|p| p.get("consus"))
+        .and_then(|c| c.get("env_http_headers"))
+        .and_then(|h| h.get("x-api-key"))
+        .and_then(Item::as_str)
+        == Some("CONSUS_API_KEY");
+    if !ours {
+        return Ok(());
+    }
     strip_from(doc.as_table_mut(), template().as_table());
     strip_from(doc.as_table_mut(), extra);
     doc.as_table_mut().remove("model");
@@ -332,6 +345,18 @@ followUpQueueMode = "steer"
         assert_eq!(doc["model"].as_str(), Some("gpt-5.4:fedramp-high"));
         remove_config(&home, Path::new("/nowhere/chatgpt-models.json")).unwrap();
         assert!(!config_path(&home).exists());
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn a_codex_config_the_launcher_did_not_write_is_left_alone() {
+        let home = std::env::temp_dir().join(format!("consus-launcher-chatgpt-theirs-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&home);
+        fs::create_dir_all(home.join(".codex")).unwrap();
+        let theirs = "model = \"gpt-5.4\"\napproval_policy = \"never\"\n\n[features]\napps = true\n";
+        fs::write(config_path(&home), theirs).unwrap();
+        remove_config(&home, Path::new("/nowhere/chatgpt-models.json")).unwrap();
+        assert_eq!(fs::read_to_string(config_path(&home)).unwrap(), theirs);
         let _ = fs::remove_dir_all(&home);
     }
 
