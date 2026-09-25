@@ -33,7 +33,7 @@ Consus Launcher is a small open source desktop app for macOS. It writes each too
 
 ## What it connects to
 
-The launcher makes one kind of network request: `GET https://api.consus.io/v1/models`, when you connect and each time the launcher starts, to check the key and list your models. `https://portal.consus.io` only ever opens in your browser.
+The launcher makes one kind of network request: `GET https://api.consus.io/v1/models`, when you connect and each time the launcher starts, to check the key and list your models. `https://portal.consus.io` only ever opens in your browser. (The Terminal installer downloads from GitHub; the app itself never does.)
 
 The tools you open send their requests to `api.consus.io` with the settings the launcher writes. What else a tool does is up to the tool. For ChatGPT and Codex, the launcher's config turns off analytics, feedback, and OpenTelemetry export, and Codex's update check; for Pi, install telemetry and the update check. On its first run, Pi downloads `fd` and `ripgrep` from GitHub, because its search tools need them.
 
@@ -41,11 +41,21 @@ The tools you open send their requests to `api.consus.io` with the settings the 
 
 Requires macOS on Apple silicon or Intel (tested on macOS 26), and a Consus API key from your Consus admin.
 
+**From Terminal** (recommended until releases are notarized by Apple):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/consusindustries/consus-launcher/main/install.sh | sh
+```
+
+[`install.sh`](install.sh) downloads the latest release from GitHub, checks the disk image against the release's `SHA256SUMS.txt`, installs Consus Launcher into `/Applications` (or `~/Applications`), and opens it. Nothing is installed unless the checksum matches. Set `CONSUS_LAUNCHER_VERSION` to pick a release, or `CONSUS_LAUNCHER_BASE_URL` to install from an internal mirror of the release files.
+
+**From the download:**
+
 1. Download the `.dmg` (drag to Applications) or the `.pkg` (installs to `/Applications`) from [Releases](https://github.com/consusindustries/consus-launcher/releases).
 2. Optionally, check the download against `SHA256SUMS.txt` with `shasum -a 256 -c --ignore-missing SHA256SUMS.txt`.
 3. Open Consus Launcher and paste your key.
 
-**Until releases are signed by Apple,** macOS blocks the first open. Go to System Settings, Privacy and Security, and click Open Anyway.
+**Until releases are notarized,** macOS blocks a downloaded copy on first open. Go to System Settings, Privacy and Security, and click Open Anyway. On some Macs the approval never appears and the app stays stuck opening; use the Terminal install instead.
 
 On first use, macOS asks for:
 

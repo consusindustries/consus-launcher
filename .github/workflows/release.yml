@@ -204,10 +204,15 @@ jobs:
             echo
             echo "Download the .dmg, or the .pkg to install into /Applications."
             echo "SHA256SUMS.txt lists the checksums; the .cdx.json files are the CycloneDX SBOMs."
+            echo
+            echo "Or install from Terminal (checks the checksum first):"
+            echo
+            echo '    curl -fsSL https://raw.githubusercontent.com/consusindustries/consus-launcher/main/install.sh | sh'
             if [ "$NOTARIZED" != "true" ]; then
               echo
-              echo "This build is not yet notarized by Apple. On first open, macOS will block it:"
-              echo "open System Settings, Privacy and Security, and click Open Anyway."
+              echo "This build is not yet notarized by Apple. On first open, macOS will block a downloaded copy:"
+              echo "open System Settings, Privacy and Security, and click Open Anyway. If the app stays stuck"
+              echo "opening, use the Terminal install instead."
             fi
           } > "$RUNNER_TEMP/notes.md"
           gh release create "$GITHUB_REF_NAME" --draft --verify-tag \
