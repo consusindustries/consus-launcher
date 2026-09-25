@@ -47,7 +47,9 @@ Requires macOS on Apple silicon or Intel (tested on macOS 26), and a Consus API 
 curl -fsSL https://raw.githubusercontent.com/consusindustries/consus-launcher/main/install.sh | sh
 ```
 
-[`install.sh`](install.sh) downloads the latest release from GitHub, checks the disk image against the release's `SHA256SUMS.txt`, installs Consus Launcher into `/Applications` (or `~/Applications`), and opens it. Nothing is installed unless the checksum matches. Set `CONSUS_LAUNCHER_VERSION` to pick a release, or `CONSUS_LAUNCHER_BASE_URL` to install from an internal mirror of the release files.
+[`install.sh`](install.sh) downloads the latest release from GitHub, checks the disk image against the release's `SHA256SUMS.txt`, installs Consus Launcher into `/Applications` (or `~/Applications`), and opens it. Nothing is installed unless the checksum matches. Set `CONSUS_LAUNCHER_VERSION` to pick a release (for example `v0.1.0`); to install from an internal mirror of the release files, set `CONSUS_LAUNCHER_BASE_URL` and `CONSUS_LAUNCHER_VERSION` together.
+
+The checksum catches a corrupted or mismatched download; it does not by itself prove who built the release. This install avoids the Gatekeeper prompt because files fetched with `curl` are not marked as downloaded from the internet, so macOS does not check them on first open. Until releases are notarized, that trade-off is the reason to prefer it or not.
 
 **From the download:**
 
