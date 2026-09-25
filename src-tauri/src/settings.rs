@@ -241,6 +241,70 @@ fn read_from(sources: Vec<(PathBuf, bool)>) -> Result<Raw, (String, bool)> {
     Ok(raw)
 }
 
+/// Windows keeps the same keys as registry values, first match wins: the
+/// machine's policy (what Intune and Group Policy write), the user's policy,
+/// then the user's own. Tools may be REG_MULTI_SZ or a comma-separated REG_SZ.
+#[cfg_attr(not(windows), allow(dead_code))]
+const REG_SOURCES: [(&str, bool); 3] = [
+    ("HKLM\\SOFTWARE\\Policies\\Consus\\Launcher", true),
+    ("HKCU\\SOFTWARE\\Policies\\Consus\\Launcher", true),
+    ("HKCU\\Software\\Consus\\Launcher", false),
+];
+
+/// One value out of `reg query <key> /v <name>` output, whose value lines
+/// read "    Name    TYPE    data". A REG_MULTI_SZ prints its parts
+/// joined by a literal \0. Any other type is kept as text, so a value of
+/// the wrong type is reported as invalid rather than skipped.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn parse_reg(text: &str, name: &str) -> Option<Value> {
+    text.lines().find_map(|line| {
+        let mut parts = line.trim_start().splitn(3, "    ");
+        let (n, kind, data) = (parts.next()?, parts.next()?, parts.next().unwrap_or("").trim_end());
+        if !n.eq_ignore_ascii_case(name) || !kind.starts_with("REG_") {
+            return None;
+        }
+        Some(if kind == "REG_MULTI_SZ" {
+            Value::Array(data.split("\\0").filter(|p| !p.is_empty()).map(|p| Value::String(p.into())).collect())
+        } else {
+            Value::String(data.into())
+        })
+    })
+}
+
+#[cfg(windows)]
+fn read_registry() -> Raw {
+    use std::os::windows::process::CommandExt;
+    let mut raw = Raw::default();
+    for (key, is_managed) in REG_SOURCES {
+        let slots: [(&str, &mut Option<Value>); 4] = [
+            ("EndpointURL", &mut raw.endpoint),
+            ("ComplianceLevel", &mut raw.level),
+            ("Tools", &mut raw.tools),
+            ("OrgName", &mut raw.org_name),
+        ];
+        for (name, slot) in slots {
+            if slot.is_some() {
+                continue;
+            }
+            let out = Command::new("reg").args(["query", key, "/v", name]).creation_flags(0x0800_0000).output();
+            let found = out
+                .ok()
+                .filter(|o| o.status.success())
+                .and_then(|o| parse_reg(&String::from_utf8_lossy(&o.stdout), name));
+            if let Some(v) = found {
+                *slot = Some(v);
+                raw.managed |= is_managed;
+            }
+        }
+    }
+    raw
+}
+
+#[cfg(not(windows))]
+fn read_registry() -> Raw {
+    Raw::default()
+}
+
 /// The settings for this run, and whether device management supplied any
 /// of them (so an error can say who can fix it).
 static SETTINGS: OnceLock<(Result<Settings, String>, bool)> = OnceLock::new();
@@ -250,7 +314,7 @@ fn load() -> &'static (Result<Settings, String>, bool) {
         let read = if cfg!(target_os = "macos") {
             std::env::var_os("HOME").map(|h| read(Path::new(&h))).unwrap_or(Ok(Raw::default()))
         } else {
-            Ok(Raw::default())
+            Ok(read_registry())
         };
         let (result, managed) = match read {
             Err((e, managed)) => (Err(e), managed),
@@ -262,7 +326,7 @@ fn load() -> &'static (Result<Settings, String>, bool) {
         let who = if managed {
             "Your organization's launcher settings"
         } else {
-            "The launcher settings in your io.consus.launcher preferences"
+            "The launcher settings in your own preferences"
         };
         (result.map_err(|e| format!("{who} are invalid: {e}")), managed)
     })
@@ -422,5 +486,19 @@ mod tests {
         assert_eq!(plist_value(&path, "Tools"), Some(json!(["claude-code", "codex-cli"])));
         assert_eq!(plist_value(&path, "Missing"), None);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn reads_registry_values() {
+        let out = "\r\nHKEY_CURRENT_USER\\Software\\Consus\\Launcher\r\n    OrgName    REG_SZ    Acme Test\r\n\r\n";
+        assert_eq!(parse_reg(out, "OrgName"), Some(json!("Acme Test")));
+        assert_eq!(parse_reg(out, "orgname"), Some(json!("Acme Test")));
+        assert_eq!(parse_reg(out, "Tools"), None);
+        let multi = "HKEY_LOCAL_MACHINE\\SOFTWARE\\Policies\\Consus\\Launcher\r\n    Tools    REG_MULTI_SZ    claude-code\\0codex-cli\r\n";
+        assert_eq!(parse_reg(multi, "Tools"), Some(json!(["claude-code", "codex-cli"])));
+        let dword = "    ComplianceLevel    REG_DWORD    0x1\r\n";
+        assert_eq!(parse_reg(dword, "ComplianceLevel"), Some(json!("0x1")), "a wrong type is kept, so it reads as invalid");
+        let url = "    EndpointURL    REG_SZ    https://proxy.acme.example/v1\r\n";
+        assert_eq!(parse_reg(url, "EndpointURL"), Some(json!("https://proxy.acme.example/v1")));
     }
 }

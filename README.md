@@ -22,7 +22,7 @@ Consus Launcher is a small open source desktop app for macOS, with Windows suppo
 - **Sign out** removes the launcher's settings from each tool and keeps everything else, including your history.
 - A tool that is not installed links to its vendor. Consus never installs software.
 
-**On Windows (preview):** Claude Desktop's settings go to `%LOCALAPPDATA%\Claude-3p`; ChatGPT's to `%USERPROFILE%\.codex\config.toml`; the terminal tools' profile folders and `Consus` folder are in `%USERPROFILE%`, and each opens in its own console window. Releases are macOS only for now; on Windows, build from source.
+**On Windows (preview):** Claude Desktop's settings go to `%LOCALAPPDATA%\Claude-3p`; ChatGPT's to `%USERPROFILE%\.codex\config.toml`; the terminal tools' profile folders and `Consus` folder are in `%USERPROFILE%`, and each opens in its own console window.
 
 ## What it does not do
 
@@ -41,7 +41,7 @@ The tools you open send their requests to `api.consus.io`, or to your organizati
 
 ## For IT admins: org settings
 
-The launcher reads settings for the `io.consus.launcher` preferences domain. Push them in a configuration profile with your device management (Jamf, Intune, and so on); a value from a profile wins over the user's own preferences, which win over the machine's (`/Library/Preferences`). Every key is optional.
+On macOS the launcher reads settings for the `io.consus.launcher` preferences domain. Push them in a configuration profile with your device management (Jamf, Intune, and so on); a value from a profile wins over the user's own preferences, which win over the machine's (`/Library/Preferences`). On Windows it reads the same names as registry values under `HKLM\SOFTWARE\Policies\Consus\Launcher` (what Intune and Group Policy write), then `HKCU\SOFTWARE\Policies\Consus\Launcher`, then the user's own `HKCU\Software\Consus\Launcher`; `Tools` can be a `REG_MULTI_SZ`. Every key is optional.
 
 | Key | Type | What it does |
 |---|---|---|
@@ -74,7 +74,9 @@ curl -fsSL https://raw.githubusercontent.com/consusindustries/consus-launcher/ma
 
 The checksum catches a corrupted or mismatched download; it does not by itself prove who built the release. This install avoids the Gatekeeper prompt because files fetched with `curl` are not marked as downloaded from the internet, so macOS does not check them on first open. Until releases are notarized, that trade-off is the reason to prefer it or not.
 
-**From the download:**
+**On Windows (preview):** download the `.msi` for your PC (x64 or ARM64) from [Releases](https://github.com/consusindustries/consus-launcher/releases) and run it. Until the installers are code-signed, Windows SmartScreen warns on first run: choose More info, then Run anyway.
+
+**From the download (macOS):**
 
 1. Download the `.dmg` (drag to Applications) or the `.pkg` (installs to `/Applications`) from [Releases](https://github.com/consusindustries/consus-launcher/releases).
 2. Optionally, check the download against `SHA256SUMS.txt` with `shasum -a 256 -c --ignore-missing SHA256SUMS.txt`.
@@ -105,7 +107,7 @@ Dependencies are pinned to exact versions and `Cargo.lock` is committed. The UI 
 
 Release builds are made only in GitHub Actions ([`release.yml`](.github/workflows/release.yml)), never on a laptop, so the public workflow log is the provenance record for every installer. Each release carries:
 
-- `Consus-Launcher-<version>-universal.dmg` and `.pkg`
+- `Consus-Launcher-<version>-universal.dmg` and `.pkg` (macOS), and `Consus-Launcher-<version>-x64.msi` and `-arm64.msi` (Windows, not yet code-signed)
 - `consus-launcher-rust.cdx.json` and `consus-launcher-npm.cdx.json`: CycloneDX SBOMs for the Rust crates and the npm packages in the app
 - `SHA256SUMS.txt`
 
