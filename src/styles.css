@@ -48,6 +48,8 @@ body{display:flex}
 .tabs button.on{color:#F3EBD6;border-bottom-color:var(--orange)}
 .tabs button:focus-visible,.tool:focus-visible{outline:2px solid var(--orange);outline-offset:2px}
 .tabpane{display:none;padding:16px;overflow:auto;flex:1;min-height:0}.tabpane.on{display:block}
+/* Thin, dark scrollbars, so Windows does not draw its classic gray ones on the panel. */
+.tabpane,.connect{scrollbar-width:thin;scrollbar-color:var(--side-3) transparent}
 .h{font-family:var(--mono);font-size:10px;letter-spacing:.14em;color:var(--side-h);text-transform:uppercase;margin:0 0 10px}
 .tool{width:100%;display:grid;grid-template-columns:36px minmax(0,1fr) auto;gap:12px;align-items:center;background:var(--side-2);border:1px solid var(--side-3);border-radius:8px;padding:12px;margin-bottom:10px;color:#F3EBD6;font:inherit;text-align:left;cursor:pointer;transition:border-color .15s}
 .tool:hover{border-color:var(--side-h)}

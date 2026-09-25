@@ -1,0 +1,321 @@
+// Windows: find, set up, and start each tool. Checked on Windows 11 ARM64,
+// 2026-09-25.
+//
+// Store (MSIX) apps: Claude starts through its app execution alias, which
+// keeps its package identity. ChatGPT has no alias for the app, so it starts
+// from its executable directly, which is also how its environment gets the
+// key. Command-line tools open in a console window of their own, with the
+// environment set on the process itself, no shell script in between.
+// Windows are not placed in the glass yet.
+
+use std::collections::HashMap;
+use std::ffi::OsStr;
+use std::os::windows::process::CommandExt;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::sync::{LazyLock, Mutex};
+use std::thread;
+use std::time::{Duration, Instant};
+
+use base64::Engine as _;
+use serde_json::Value;
+use tauri::{AppHandle, Manager};
+
+use super::{
+    helper_path, name, ours, output_within, track, Running, Tool, CODE_HELPER_NAME, HELPER_NAME, PI_HELPER_NAME,
+    PI_ICON,
+};
+use crate::models::Target;
+use crate::{chatgpt, claude_code, codex, config, keychain, pi};
+
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
+
+/// A helper command that must not flash a console window over the app.
+fn hidden(program: impl AsRef<OsStr>) -> Command {
+    let mut c = Command::new(program);
+    c.creation_flags(CREATE_NO_WINDOW).stdin(Stdio::null());
+    c
+}
+
+fn env_dir(var: &str) -> Option<PathBuf> {
+    std::env::var_os(var).map(PathBuf::from)
+}
+
+/// Whether a path exists. App execution aliases are reparse points that
+/// `exists()` cannot follow, so look at the entry itself.
+fn present(p: &Path) -> bool {
+    p.symlink_metadata().is_ok()
+}
+
+/// Per Store package: its install folder, or None and when that was checked.
+static PACKAGES: LazyLock<Mutex<HashMap<&'static str, (Option<PathBuf>, Instant)>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// A Store package's install folder, asked of PowerShell (about a second),
+/// remembered; "not installed" is asked again after a minute.
+fn package_dir(package: &'static str) -> Option<PathBuf> {
+    if let Some((dir, at)) = PACKAGES.lock().unwrap().get(package).cloned() {
+        if dir.as_ref().is_some_and(|d| d.exists()) || (dir.is_none() && at.elapsed() < Duration::from_secs(60)) {
+            return dir;
+        }
+    }
+    let script = format!("(Get-AppxPackage -Name '{package}' | Select-Object -First 1).InstallLocation");
+    let dir = hidden("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from)
+        .filter(|p| p.exists());
+    PACKAGES.lock().unwrap().insert(package, (dir.clone(), Instant::now()));
+    dir
+}
+
+fn claude_desktop_exe() -> Option<PathBuf> {
+    let local = env_dir("LOCALAPPDATA")?;
+    let alias = local.join("Microsoft\\WindowsApps\\claude-desktop.exe");
+    if present(&alias) {
+        return Some(alias);
+    }
+    let classic = local.join("AnthropicClaude\\claude.exe");
+    classic.exists().then_some(classic)
+}
+
+fn chatgpt_exe() -> Option<PathBuf> {
+    let exe = package_dir("OpenAI.Codex")?.join("app\\ChatGPT.exe");
+    exe.exists().then_some(exe)
+}
+
+/// A command-line tool, from where its installers put it, else the PATH.
+fn cli(program: &str) -> Option<PathBuf> {
+    let home = env_dir("USERPROFILE");
+    let appdata = env_dir("APPDATA");
+    let candidates = [
+        home.map(|h| h.join(".local\\bin").join(format!("{program}.exe"))),
+        appdata.map(|a| a.join("npm").join(format!("{program}.cmd"))),
+    ];
+    if let Some(p) = candidates.into_iter().flatten().find(|p| p.exists()) {
+        return Some(p);
+    }
+    let out = hidden("where.exe").arg(program).output().ok()?;
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(|l| PathBuf::from(l.trim()))
+        .find(|p| p.exists() && p.extension().is_some_and(|e| e != "ps1"))
+}
+
+fn terminal_cli(t: Tool) -> Option<PathBuf> {
+    match t {
+        Tool::Code => cli("claude"),
+        Tool::Codex => cli("codex"),
+        Tool::Pi => cli("pi"),
+        Tool::Desktop | Tool::ChatGpt => None,
+    }
+}
+
+/// A PNG from a Store package as a data URL, for the tile.
+fn package_icon(package: &'static str, files: &[&str]) -> Option<String> {
+    let dir = package_dir(package)?;
+    let bytes = files.iter().find_map(|f| std::fs::read(dir.join(f)).ok())?;
+    Some(format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes)))
+}
+
+const CLAUDE_ICONS: [&str; 2] = ["Assets\\Square310x310Logo.png", "Assets\\Square150x150Logo.png"];
+const CHATGPT_ICONS: [&str; 2] = ["assets\\Square44x44Logo.targetsize-256_altform-unplated.png", "assets\\icon.png"];
+
+/// Installed, and the tile's icon.
+pub fn status(t: Tool) -> (bool, Option<String>) {
+    match t {
+        Tool::Desktop => (claude_desktop_exe().is_some(), package_icon("Claude", &CLAUDE_ICONS)),
+        Tool::ChatGpt => (chatgpt_exe().is_some(), package_icon("OpenAI.Codex", &CHATGPT_ICONS)),
+        Tool::Codex => (terminal_cli(t).is_some(), package_icon("OpenAI.Codex", &CHATGPT_ICONS)),
+        Tool::Pi => (
+            terminal_cli(t).is_some(),
+            Some(format!(
+                "data:image/svg+xml;base64,{}",
+                base64::engine::general_purpose::STANDARD.encode(PI_ICON)
+            )),
+        ),
+        Tool::Code => (terminal_cli(t).is_some(), None),
+    }
+}
+
+/// Process ids running an image ("Claude.exe").
+fn pids(image: &str) -> Vec<u32> {
+    let Ok(out) = hidden("tasklist").args(["/FI", &format!("IMAGENAME eq {image}"), "/FO", "CSV", "/NH"]).output() else {
+        return Vec::new();
+    };
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|l| l.split("\",\"").nth(1).and_then(|p| p.trim_matches('"').parse().ok()))
+        .collect()
+}
+
+fn alive(pid: u32) -> bool {
+    hidden("tasklist")
+        .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).contains(&format!("\"{pid}\"")))
+        .unwrap_or(false)
+}
+
+/// Asks a running app to close, the way its window's close button would,
+/// and waits. These apps read their config only at startup.
+fn quit_running(t: Tool, image: &str) -> Result<(), String> {
+    if pids(image).is_empty() {
+        return Ok(());
+    }
+    let _ = hidden("taskkill").args(["/IM", image]).output();
+    for _ in 0..40 {
+        if pids(image).is_empty() {
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(200));
+    }
+    Err(format!("{} is still running. Close it and try again.", name(t)))
+}
+
+/// Removes the variables a tool must not inherit: another session's, or
+/// credentials that would let it reach something other than Consus.
+fn scrub(cmd: &mut Command, drop: impl Fn(&str) -> bool) {
+    for (k, _) in std::env::vars_os() {
+        if drop(&k.to_string_lossy().to_uppercase()) {
+            cmd.env_remove(k);
+        }
+    }
+}
+
+fn claude_var(n: &str) -> bool {
+    n.starts_with("CLAUDE") || n.starts_with("ANTHROPIC")
+}
+
+fn codex_var(n: &str) -> bool {
+    n.starts_with("OPENAI") || n.starts_with("CODEX")
+}
+
+/// Pi would otherwise offer other providers' models next to Consus.
+fn pi_var(n: &str) -> bool {
+    ["CLAUDE", "ANTHROPIC", "AWS", "GOOGLE", "GCLOUD", "AZURE"].iter().any(|p| n.starts_with(p))
+        || n.ends_with("_API_KEY")
+        || n == "HF_TOKEN"
+        || n == "COPILOT_GITHUB_TOKEN"
+}
+
+/// Runs a command-line tool; npm installs it as a .cmd, which needs cmd.
+fn cli_command(exe: &Path) -> Command {
+    let script = exe.extension().is_some_and(|e| e.eq_ignore_ascii_case("cmd") || e.eq_ignore_ascii_case("bat"));
+    if script {
+        let mut c = Command::new("cmd.exe");
+        c.args(["/d", "/c"]).arg(exe);
+        c
+    } else {
+        Command::new(exe)
+    }
+}
+
+pub fn launch(app: AppHandle, t: Tool, models: &Value, target: &Target) -> Result<(), String> {
+    let home = env_dir("USERPROFILE").ok_or("Could not find your user folder.")?;
+    // Already ours: its window stays where it is (no placement on Windows yet).
+    if ours(&app, t).iter().any(|r| alive(r.pid)) {
+        return Ok(());
+    }
+    let helper_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    let work = claude_code::work_dir(&home);
+    let console = matches!(t, Tool::Code | Tool::Codex | Tool::Pi);
+    let mut cmd = match t {
+        Tool::Desktop => {
+            let exe = claude_desktop_exe().ok_or("Claude is not installed.")?;
+            quit_running(t, "Claude.exe")?;
+            let helper = helper_path(&helper_dir, HELPER_NAME);
+            config::write_helper(&helper)?;
+            config::write_claude_desktop(&home, &helper, models, target)?;
+            let mut c = Command::new(exe);
+            scrub(&mut c, claude_var);
+            c
+        }
+        Tool::ChatGpt => {
+            let exe = chatgpt_exe().ok_or("ChatGPT is not installed.")?;
+            quit_running(t, "ChatGPT.exe")?;
+            let key = keychain::get_key().ok_or("No key in the keychain. Connect first.")?;
+            chatgpt::write_config(&home, models, target)?;
+            let mut c = Command::new(exe);
+            scrub(&mut c, claude_var);
+            // The template's shell_environment_policy keeps CONSUS_* out of
+            // every command the agent runs.
+            c.env("CONSUS_API_KEY", key);
+            c
+        }
+        Tool::Code => {
+            let exe = terminal_cli(t).ok_or("Claude Code is not installed.")?;
+            let helper = helper_path(&helper_dir, CODE_HELPER_NAME);
+            config::write_helper(&helper)?;
+            claude_code::write_settings(&home, &helper, models, target)?;
+            let mut c = cli_command(&exe);
+            scrub(&mut c, claude_var);
+            c.env("CLAUDE_CONFIG_DIR", claude_code::profile_dir(&home));
+            c
+        }
+        Tool::Codex => {
+            let exe = terminal_cli(t).ok_or("Codex is not installed.")?;
+            let key = keychain::get_key().ok_or("No key in the keychain. Connect first.")?;
+            let profile = codex::profile_dir(&home);
+            std::fs::create_dir_all(&profile).map_err(|e| format!("{}: {e}", profile.display()))?;
+            let mut list = cli_command(&exe);
+            list.args(["debug", "models", "--bundled"]).env("CODEX_HOME", &profile).creation_flags(CREATE_NO_WINDOW);
+            let bundled = output_within(&mut list, Duration::from_secs(20)).and_then(|s| serde_json::from_str::<Value>(&s).ok());
+            codex::write_config(&home, models, bundled.as_ref(), target)?;
+            let mut c = cli_command(&exe);
+            scrub(&mut c, codex_var);
+            c.env("CODEX_HOME", &profile).env("CONSUS_API_KEY", key);
+            c
+        }
+        Tool::Pi => {
+            let exe = terminal_cli(t).ok_or("Pi is not installed.")?;
+            let helper = helper_path(&helper_dir, PI_HELPER_NAME);
+            config::write_helper(&helper)?;
+            pi::write_config(&home, &helper, models, target)?;
+            let mut c = cli_command(&exe);
+            scrub(&mut c, pi_var);
+            c.env("PI_CODING_AGENT_DIR", pi::profile_dir(&home))
+                .env("PI_TELEMETRY", "0")
+                .env("PI_SKIP_VERSION_CHECK", "1");
+            c
+        }
+    };
+    if console {
+        std::fs::create_dir_all(&work).map_err(|e| format!("{}: {e}", work.display()))?;
+        cmd.current_dir(&work).creation_flags(CREATE_NEW_CONSOLE);
+    } else {
+        cmd.stdout(Stdio::null()).stderr(Stdio::null());
+    }
+    let mut child = cmd.spawn().map_err(|e| format!("{}: {e}", name(t)))?;
+    track(&app, Running { tool: t, pid: child.id(), terminal: None }, move || {
+        let _ = child.wait();
+    });
+    Ok(())
+}
+
+/// On launcher exit: apps are asked to close, then ended; a console tool
+/// and everything it started is ended. Only processes this launcher started.
+pub fn terminate(mine: &[Running]) {
+    for r in mine {
+        if !alive(r.pid) {
+            continue;
+        }
+        let gui = matches!(r.tool, Tool::Desktop | Tool::ChatGpt);
+        if gui {
+            let _ = hidden("taskkill").args(["/PID", &r.pid.to_string(), "/T"]).output();
+            for _ in 0..15 {
+                if !alive(r.pid) {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(200));
+            }
+        }
+        if alive(r.pid) {
+            let _ = hidden("taskkill").args(["/PID", &r.pid.to_string(), "/T", "/F"]).output();
+        }
+    }
+}

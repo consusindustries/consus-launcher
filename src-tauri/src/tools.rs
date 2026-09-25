@@ -15,6 +15,9 @@ use std::time::{Duration, Instant, SystemTime};
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::models::Target;
+
+#[cfg(windows)]
+mod win;
 use crate::{chatgpt, claude_code, codex, config, keychain, pi, settings};
 
 /// Claude Desktop runs the launcher binary under this name to fetch the key.
@@ -26,6 +29,16 @@ pub const PI_HELPER_NAME: &str = "pi-key-helper";
 /// Codex's Terminal script runs it under this name, also for the bare key.
 pub const CODEX_HELPER_NAME: &str = "codex-key-helper";
 const TERMINAL_APP: &str = "/System/Applications/Utilities/Terminal.app";
+
+/// Where a key helper lives: a link to this binary, named for its caller.
+/// On Windows it needs the .exe to be runnable.
+fn helper_path(dir: &Path, helper: &str) -> PathBuf {
+    if cfg!(windows) {
+        dir.join(format!("{helper}.exe"))
+    } else {
+        dir.join(helper)
+    }
+}
 /// Pi's mark from pi.dev on its site's background color.
 const PI_ICON: &str = include_str!("../assets/pi.svg");
 
@@ -303,8 +316,11 @@ pub async fn detect_tools(app: AppHandle) -> HashMap<String, ToolStatus> {
         .into_iter()
         .map(|t| {
             let allowed = settings.as_ref().is_some_and(|s| s.allows(key(t)));
-            let status = if !allowed || !cfg!(target_os = "macos") {
+            let status = if !allowed {
                 ToolStatus { allowed, installed: false, icon: None }
+            } else if !cfg!(target_os = "macos") {
+                let (installed, icon) = other_status(t);
+                ToolStatus { allowed, installed, icon }
             } else if let Some(s) = app_spec(t) {
                 let dir = app_path(&app, &s);
                 let icon = dir.as_deref().and_then(|d| app_icon(&app, t, d));
@@ -534,7 +550,7 @@ fn launch_app(app: AppHandle, t: Tool, s: AppSpec, rect: Rect, models: &Value, t
     let mut env: Option<(&str, String)> = None;
     match t {
         Tool::Desktop => {
-            let helper = app.path().app_config_dir().map_err(|e| e.to_string())?.join(HELPER_NAME);
+            let helper = helper_path(&app.path().app_config_dir().map_err(|e| e.to_string())?, HELPER_NAME);
             config::write_helper(&helper)?;
             config::write_claude_desktop(&home, &helper, models, target)?;
         }
@@ -619,7 +635,7 @@ fn terminal_script(app: &AppHandle, t: Tool, models: &Value, target: &Target) ->
     match t {
         Tool::Code => {
             let cli = cli(app, "claude").ok_or("Claude Code is not installed.")?;
-            let helper = helper_dir.join(CODE_HELPER_NAME);
+            let helper = helper_path(&helper_dir, CODE_HELPER_NAME);
             config::write_helper(&helper)?;
             claude_code::write_settings(&home, &helper, models, target)?;
             fs::create_dir_all(&work).map_err(|e| format!("{}: {e}", work.display()))?;
@@ -636,7 +652,7 @@ fn terminal_script(app: &AppHandle, t: Tool, models: &Value, target: &Target) ->
         Tool::Codex => {
             let cli = codex_cli(app).ok_or("Codex is not installed.")?;
             keychain::get_key().ok_or("No key in the keychain. Connect first.")?;
-            let helper = helper_dir.join(CODEX_HELPER_NAME);
+            let helper = helper_path(&helper_dir, CODEX_HELPER_NAME);
             config::write_helper(&helper)?;
             let profile = codex::profile_dir(&home);
             fs::create_dir_all(&profile).map_err(|e| format!("{}: {e}", profile.display()))?;
@@ -678,7 +694,7 @@ fn terminal_script(app: &AppHandle, t: Tool, models: &Value, target: &Target) ->
         }
         Tool::Pi => {
             let cli = cli(app, "pi").ok_or("Pi is not installed.")?;
-            let helper = helper_dir.join(PI_HELPER_NAME);
+            let helper = helper_path(&helper_dir, PI_HELPER_NAME);
             config::write_helper(&helper)?;
             pi::write_config(&home, &helper, models, target)?;
             fs::create_dir_all(&work).map_err(|e| format!("{}: {e}", work.display()))?;
@@ -764,12 +780,13 @@ fn launch_terminal(app: AppHandle, t: Tool, rect: Rect, models: &Value, target: 
 #[tauri::command]
 pub async fn launch_tool(app: AppHandle, tool: String, rect: Rect, models: Value) -> Result<(), String> {
     let t = tool_from_key(&tool).ok_or_else(|| format!("unknown tool {tool}"))?;
-    if !cfg!(target_os = "macos") {
-        return Err("Tool launch is macOS only for now".into());
-    }
     let settings = settings::current()?;
     if !settings.allows(key(t)) {
         return Err(format!("Your organization has not enabled {} in the launcher.", name(t)));
+    }
+    if !cfg!(target_os = "macos") {
+        let _ = rect;
+        return other_launch(app, t, &models, &settings.target);
     }
     match app_spec(t) {
         Some(s) => launch_app(app, t, s, rect, &models, &settings.target),
@@ -797,6 +814,10 @@ pub fn terminate_children(app: &AppHandle) {
         let guard = children.0.lock().unwrap();
         guard.iter().cloned().collect()
     };
+    if !cfg!(target_os = "macos") {
+        other_terminate(&mine);
+        return;
+    }
     // Only the tool's own program on the tracked tty: if that tty was freed
     // and reused by the time the launcher quits, whatever else is on it is
     // not ours.
@@ -837,3 +858,33 @@ pub fn terminate_children(app: &AppHandle) {
         let _ = Command::new("kill").arg(r.pid.to_string()).status();
     }
 }
+
+// Windows goes through tools/win.rs; other platforms have no tools yet.
+
+#[cfg(windows)]
+fn other_status(t: Tool) -> (bool, Option<String>) {
+    win::status(t)
+}
+
+#[cfg(windows)]
+fn other_launch(app: AppHandle, t: Tool, models: &Value, target: &Target) -> Result<(), String> {
+    win::launch(app, t, models, target)
+}
+
+#[cfg(windows)]
+fn other_terminate(mine: &[Running]) {
+    win::terminate(mine)
+}
+
+#[cfg(not(windows))]
+fn other_status(_: Tool) -> (bool, Option<String>) {
+    (false, None)
+}
+
+#[cfg(not(windows))]
+fn other_launch(_: AppHandle, _: Tool, _: &Value, _: &Target) -> Result<(), String> {
+    Err("Tool launch is not supported on this platform yet.".into())
+}
+
+#[cfg(not(windows))]
+fn other_terminate(_: &[Running]) {}
