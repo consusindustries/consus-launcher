@@ -329,10 +329,81 @@ fn image_icon(app: &AppHandle, t: Tool, src: &Path) -> Option<String> {
     Some(url)
 }
 
+/// Where device management puts Claude Code's machine-wide settings.
+fn claude_code_policy_files() -> Vec<PathBuf> {
+    if cfg!(windows) {
+        vec![
+            PathBuf::from("C:\\Program Files\\ClaudeCode\\managed-settings.json"),
+            PathBuf::from("C:\\ProgramData\\ClaudeCode\\managed-settings.json"),
+        ]
+    } else {
+        vec![PathBuf::from("/Library/Application Support/ClaudeCode/managed-settings.json")]
+    }
+}
+
+/// Whether a machine-wide Claude Code settings file decides how it connects
+/// (a key helper, a base URL, or a key). One that cannot be read counts too:
+/// Claude Code itself stops on it, and it is not the launcher's to override.
+fn claude_code_policy() -> bool {
+    claude_code_policy_files()
+        .iter()
+        .filter(|p| p.exists())
+        .any(|p| claude_code::read_object(p).map_or(true, |doc| sets_connection(&doc)))
+}
+
+/// Whether Claude Code settings decide where requests go or which key they carry.
+fn sets_connection(doc: &serde_json::Map<String, Value>) -> bool {
+    const CONNECT: [&str; 3] = ["ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"];
+    doc.contains_key("apiKeyHelper")
+        || doc.get("env").and_then(Value::as_object).is_some_and(|e| CONNECT.iter().any(|k| e.contains_key(*k)))
+}
+
+/// Whether Claude Desktop's gateway settings come from a machine-wide policy
+/// (a configuration profile), which the app obeys over any local config.
+#[cfg(target_os = "macos")]
+fn claude_desktop_policy() -> bool {
+    let file = "com.anthropic.claudefordesktop.plist";
+    let base = Path::new("/Library/Managed Preferences");
+    let mut plists = vec![base.join(file)];
+    if let Ok(user) = std::env::var("USER") {
+        plists.push(base.join(user).join(file));
+    }
+    plists.iter().filter(|p| p.exists()).any(|p| {
+        Command::new("plutil")
+            .args(["-extract", "inferenceProvider", "raw", "-o", "-"])
+            .arg(p)
+            .output()
+            .is_ok_and(|o| o.status.success())
+    })
+}
+
+#[cfg(windows)]
+fn claude_desktop_policy() -> bool {
+    win::claude_desktop_policy()
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
+fn claude_desktop_policy() -> bool {
+    false
+}
+
+/// Whether the organization already sets this tool up through a machine-wide
+/// policy. Then the launcher writes nothing for it and just opens it: the
+/// admin's policy is the authority, and the tile says so.
+fn org_policy(t: Tool) -> bool {
+    match t {
+        Tool::Code => claude_code_policy(),
+        Tool::Desktop => claude_desktop_policy(),
+        Tool::ChatGpt | Tool::Codex | Tool::Pi => false,
+    }
+}
+
 #[derive(Serialize)]
 pub struct ToolStatus {
     /// Whether the org's settings show this tool at all.
     pub allowed: bool,
+    /// Set up by a machine-wide policy, which the launcher leaves alone.
+    pub managed: bool,
     pub installed: bool,
     pub icon: Option<String>,
 }
@@ -346,14 +417,15 @@ pub async fn detect_tools(app: AppHandle) -> HashMap<String, ToolStatus> {
         .map(|t| {
             let allowed = settings.as_ref().is_some_and(|s| s.allows(key(t)));
             let status = if !allowed {
-                ToolStatus { allowed, installed: false, icon: None }
+                ToolStatus { allowed, managed: false, installed: false, icon: None }
             } else if !cfg!(target_os = "macos") {
                 let (installed, icon) = other_status(t);
-                ToolStatus { allowed, installed, icon }
+                ToolStatus { allowed, managed: installed && org_policy(t), installed, icon }
             } else if let Some(s) = app_spec(t) {
                 let dir = app_path(&app, &s);
                 let icon = dir.as_deref().and_then(|d| app_icon(&app, t, d));
-                ToolStatus { allowed, installed: dir.is_some(), icon }
+                let installed = dir.is_some();
+                ToolStatus { allowed, managed: installed && org_policy(t), installed, icon }
             } else {
                 let installed = terminal_cli(&app, t).is_some();
                 // Pi has a logo of its own and the ChatGPT app carries
@@ -371,7 +443,7 @@ pub async fn detect_tools(app: AppHandle) -> HashMap<String, ToolStatus> {
                     (Tool::Codex, Some(png)) => cached_icon(t, &png).or_else(|| image_icon(&app, t, &png)),
                     _ => app_icon(&app, t, Path::new(TERMINAL_APP)),
                 };
-                ToolStatus { allowed, installed, icon }
+                ToolStatus { allowed, managed: installed && org_policy(t), installed, icon }
             };
             (key(t).to_string(), status)
         })
@@ -569,6 +641,18 @@ fn launch_app(app: AppHandle, t: Tool, s: AppSpec, rect: Rect, models: &Value, t
         });
         return Ok(());
     }
+    // Set up by the organization's policy: open it as it is. An instance
+    // the user already has open is simply brought forward and placed.
+    let policy = org_policy(t);
+    if policy && !running.is_empty() {
+        let handle = app.clone();
+        thread::spawn(move || {
+            if let Err(e) = place_window(t, &s, &rect) {
+                notice(&handle, t, &e);
+            }
+        });
+        return Ok(());
+    }
     if !running.is_empty() {
         quit_and_wait(t, &s)?;
     }
@@ -578,6 +662,7 @@ fn launch_app(app: AppHandle, t: Tool, s: AppSpec, rect: Rect, models: &Value, t
     // allows without ever being written to a file.
     let mut env: Option<(&str, String)> = None;
     match t {
+        Tool::Desktop if policy => {}
         Tool::Desktop => {
             let helper = helper_path(&app.path().app_config_dir().map_err(|e| e.to_string())?, HELPER_NAME);
             config::write_helper(&helper)?;
@@ -665,9 +750,13 @@ fn terminal_script(app: &AppHandle, t: Tool, models: &Value, target: &Target) ->
     match t {
         Tool::Code => {
             let cli = cli(app, "claude").ok_or("Claude Code is not installed.")?;
-            let helper = helper_path(&helper_dir, CODE_HELPER_NAME);
-            config::write_helper(&helper)?;
-            claude_code::write_settings(&home, &helper, models, target)?;
+            // Under the organization's policy the launcher writes nothing;
+            // the profile folder still keeps the user's own ~/.claude apart.
+            if !claude_code_policy() {
+                let helper = helper_path(&helper_dir, CODE_HELPER_NAME);
+                config::write_helper(&helper)?;
+                claude_code::write_settings(&home, &helper, models, target)?;
+            }
             fs::create_dir_all(&work).map_err(|e| format!("{}: {e}", work.display()))?;
             // The user's own ~/.claude is never involved: an isolated profile
             // and a scrubbed environment.
@@ -920,3 +1009,17 @@ fn other_launch(_: AppHandle, _: Tool, _: &Value, _: &Target) -> Result<(), Stri
 
 #[cfg(not(windows))]
 fn other_terminate(_: &[Running]) {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_policy_counts_only_when_it_sets_the_connection() {
+        let obj = |v: Value| v.as_object().unwrap().clone();
+        assert!(sets_connection(&obj(json!({ "apiKeyHelper": "x" }))));
+        assert!(sets_connection(&obj(json!({ "env": { "ANTHROPIC_BASE_URL": "https://api.consus.io" } }))));
+        assert!(!sets_connection(&obj(json!({ "permissions": { "deny": ["Bash(rm:*)"] } }))));
+        assert!(!sets_connection(&obj(json!({ "env": { "DISABLE_TELEMETRY": "1" } }))));
+    }
+}

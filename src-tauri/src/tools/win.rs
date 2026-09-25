@@ -22,8 +22,8 @@ use serde_json::Value;
 use tauri::{AppHandle, Manager};
 
 use super::{
-    chatgpt_catalog, helper_path, name, ours, output_within, track, Running, Tool, CODE_HELPER_NAME, HELPER_NAME,
-    PI_HELPER_NAME, PI_ICON,
+    chatgpt_catalog, claude_code_policy, helper_path, name, ours, output_within, track, Running, Tool,
+    CODE_HELPER_NAME, HELPER_NAME, PI_HELPER_NAME, PI_ICON,
 };
 use crate::models::Target;
 use crate::{chatgpt, claude_code, codex, config, keychain, pi};
@@ -183,6 +183,15 @@ fn icon(t: Tool) -> Option<String> {
     made
 }
 
+/// Whether Claude Desktop's gateway settings come from a machine-wide
+/// registry policy (Intune, Group Policy), which the app obeys over any
+/// local config.
+pub fn claude_desktop_policy() -> bool {
+    ["HKLM\\SOFTWARE\\Policies\\Claude", "HKCU\\SOFTWARE\\Policies\\Claude"].iter().any(|key| {
+        hidden("reg").args(["query", key, "/v", "inferenceProvider"]).output().is_ok_and(|o| o.status.success())
+    })
+}
+
 /// Installed, and the tile's icon.
 pub fn status(t: Tool) -> (bool, Option<String>) {
     let installed = match t {
@@ -318,12 +327,21 @@ pub fn launch(app: AppHandle, t: Tool, models: &Value, target: &Target) -> Resul
     let mut cmd = match t {
         Tool::Desktop => {
             let exe = claude_desktop_exe().ok_or("Claude is not installed.")?;
-            if let Some(dir) = app_dir(t) {
-                quit_running(t, &dir)?;
+            if claude_desktop_policy() {
+                // Set up by the organization's policy: open it as it is. If
+                // it is already open, starting it again brings it forward.
+                if app_dir(t).is_some_and(|d| !pids_in(&d).is_empty()) {
+                    let _ = Command::new(exe).stdout(Stdio::null()).stderr(Stdio::null()).spawn();
+                    return Ok(());
+                }
+            } else {
+                if let Some(dir) = app_dir(t) {
+                    quit_running(t, &dir)?;
+                }
+                let helper = helper_path(&helper_dir, HELPER_NAME);
+                config::write_helper(&helper)?;
+                config::write_claude_desktop(&home, &helper, models, target)?;
             }
-            let helper = helper_path(&helper_dir, HELPER_NAME);
-            config::write_helper(&helper)?;
-            config::write_claude_desktop(&home, &helper, models, target)?;
             let mut c = Command::new(exe);
             scrub(&mut c, claude_var);
             c
@@ -345,9 +363,12 @@ pub fn launch(app: AppHandle, t: Tool, models: &Value, target: &Target) -> Resul
         }
         Tool::Code => {
             let exe = terminal_cli(t).ok_or("Claude Code is not installed.")?;
-            let helper = helper_path(&helper_dir, CODE_HELPER_NAME);
-            config::write_helper(&helper)?;
-            claude_code::write_settings(&home, &helper, models, target)?;
+            // Under the organization's policy the launcher writes nothing.
+            if !claude_code_policy() {
+                let helper = helper_path(&helper_dir, CODE_HELPER_NAME);
+                config::write_helper(&helper)?;
+                claude_code::write_settings(&home, &helper, models, target)?;
+            }
             let mut c = cli_command(&exe);
             scrub(&mut c, claude_var);
             c.env("CLAUDE_CONFIG_DIR", claude_code::profile_dir(&home));
