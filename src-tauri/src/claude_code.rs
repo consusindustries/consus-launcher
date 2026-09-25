@@ -2,8 +2,8 @@
 // CLAUDE_CONFIG_DIR paradigm the Consus guide gives customers, so the user's
 // own ~/.claude is never touched.
 //
-// Docs checked: gov_open_router/docs/integrations/claude-code.md and
-//   consus-key-portal lib/deploy/templates/claudeCode.ts (2026-09-22)
+// Docs checked: the Consus integration guide for Claude Code and the Consus
+//   portal's Claude Code template (2026-09-22)
 // Verified on a real machine: macOS, Claude Code 2.1.281, 2026-09-24. /status
 //   showed auth via apiKeyHelper, base URL api.consus.io, User settings as the
 //   only source, cwd ~/Consus; a request was answered.

@@ -2,7 +2,7 @@
 // CODEX_HOME as the Consus guide recommends, so the user's own ~/.codex is
 // never touched.
 //
-// Docs checked: gov_open_router/docs/integrations/codex.md (2026-09-24),
+// Docs checked: the Consus integration guide for Codex CLI (2026-09-24),
 //   against Codex CLI 0.147.
 //
 // config.toml is the ChatGPT desktop template, the same compliance baseline

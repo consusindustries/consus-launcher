@@ -122,7 +122,7 @@ function setConnected(on: boolean): void {
 function renderKeys(): void {
   if (!K.def) return;
   $("defRow").innerHTML =
-    '<div class="t"><span>' + esc(K.def.mask) + '</span><span class="tag own">DEFAULT</span></div>' +
+    '<div class="t"><span>' + esc(K.def.mask) + "</span></div>" +
     '<div class="m">' + esc(K.def.user) + " · " + K.def.models + " models · added " + K.def.added + "</div>" +
     '<div class="acts"><button class="mini" data-change="def">REPLACE</button></div><div id="edit-def"></div>';
 }
@@ -386,7 +386,7 @@ function wireTabs(): void {
         x.classList.toggle("on", x === b);
         x.setAttribute("aria-selected", x === b ? "true" : "false");
       });
-      (["open", "keys", "traffic"] as const).forEach((n) => $("p-" + n).classList.toggle("on", b.dataset.tab === n));
+      (["open", "keys"] as const).forEach((n) => $("p-" + n).classList.toggle("on", b.dataset.tab === n));
     });
   });
 }

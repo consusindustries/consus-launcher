@@ -1,7 +1,7 @@
 // Pi: an isolated agent directory at ~/.pi-consus-gateway, set through
 // PI_CODING_AGENT_DIR, so the user's own ~/.pi is never touched.
 //
-// Docs checked: gov_open_router/docs/integrations/pi.md (the ITAR example is
+// Docs checked: the Consus integration guide for Pi (its ITAR example is
 //   templates/pi-models-itar.json, verbatim), and Pi 0.84.1's own
 //   docs/models.md and core/resolve-config-value.js (2026-09-24).
 //

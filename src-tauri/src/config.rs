@@ -4,8 +4,8 @@
 //   ~/Library/Application Support/Claude-3p/configLibrary/<uuid>.json
 //   ~/Library/Application Support/Claude-3p/configLibrary/_meta.json  {appliedId, entries[{id,name}]}
 //   ~/Library/Application Support/Claude-3p/claude_desktop_config.json {"deploymentMode":"3p"}
-// Key names match the portal's verified template (consus-key-portal,
-// lib/deploy/templates/claudeDesktop.ts) and the app's ADMX export. The
+// Key names match the Consus portal's verified Claude Desktop template and
+// the app's ADMX export. The
 // credential helper is the launcher binary itself, reached through a link,
 // so the key is read from the OS keychain and never written to a file.
 
