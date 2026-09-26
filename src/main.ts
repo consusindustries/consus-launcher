@@ -307,6 +307,9 @@ interface ToolStatus {
 
 async function refreshTools(): Promise<void> {
   const status = await invoke<Record<string, ToolStatus>>("detect_tools");
+  // Until the first answer, the list stays hidden: the org's settings and
+  // what is installed decide which tiles show and how they look.
+  $("p-open").classList.remove("pending");
   if (settingsError) {
     $("whoNote").textContent = settingsError;
   } else if (!TOOLS.some((k) => status[k]?.allowed)) {
