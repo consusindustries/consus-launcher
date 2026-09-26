@@ -14,9 +14,8 @@
 // the installed Codex's own bundled entry (those carry version-specific
 // instructions, so it is rebuilt on every launch) with the gateway's context
 // window and reasoning efforts. Without it /model cannot list Consus models
-// and Codex assumes a small context window. The rows come from the guide's
-// ITAR table; for another level the same models get that level's suffix,
-// until the gateway reports each model's limits itself.
+// and Codex assumes a small context window. Which models, and the entry each
+// is cloned from, is the guide's table; names and limits are the gateway's.
 
 use serde_json::{json, Value};
 use std::fs;
@@ -28,16 +27,16 @@ use crate::{chatgpt, claude_code};
 
 pub const PROFILE_DIR: &str = ".codex-consus-gateway";
 
-const EFFORTS: &[&str] = &["low", "medium", "high", "xhigh"];
-
-// Consus base id, bundled entry it is cloned from, name, context window,
-// efforts. From the guide's MODELS table.
-const CATALOG: [(&str, &str, &str, u64, &[&str]); 5] = [
-    ("gpt-5.6-sol", "gpt-5.6-sol", "GPT-5.6 Sol", 922_000, EFFORTS),
-    ("gpt-5.6-terra", "gpt-5.6-terra", "GPT-5.6 Terra", 1_000_000, EFFORTS),
-    ("gpt-5.6-luna", "gpt-5.6-luna", "GPT-5.6 Luna", 1_000_000, EFFORTS),
-    ("gpt-5.4", "gpt-5.4", "GPT-5.4", 272_000, EFFORTS),
-    ("gpt-5.1", "gpt-5.4", "GPT-5.1", 272_000, &["low", "medium", "high"]),
+// The GPT models the gateway serves over the Responses API that Codex speaks
+// (the models endpoint does not say which), each with the bundled Codex entry
+// it is cloned from. From the guide's MODELS table. Name, context window,
+// and reasoning efforts come from the gateway.
+const CATALOG: [(&str, &str); 5] = [
+    ("gpt-5.6-sol", "gpt-5.6-sol"),
+    ("gpt-5.6-terra", "gpt-5.6-terra"),
+    ("gpt-5.6-luna", "gpt-5.6-luna"),
+    ("gpt-5.4", "gpt-5.4"),
+    ("gpt-5.1", "gpt-5.4"),
 ];
 
 pub fn profile_dir(home: &Path) -> PathBuf {
@@ -54,21 +53,21 @@ fn catalog_path(home: &Path) -> PathBuf {
 
 /// The catalog entries for this key, from `codex debug models --bundled`.
 pub fn catalog(bundled: &Value, models_json: &Value, t: &Target) -> Vec<Value> {
-    let have = models::ids(models_json);
     let stock = bundled["models"].as_array().cloned().unwrap_or_default();
     let tag = t.tag();
     CATALOG
         .iter()
-        .map(|(base, from, name, ctx, efforts)| (format!("{base}:{}", t.level), from, format!("{name} ({tag})"), ctx, efforts))
-        .filter(|(id, ..)| have.contains(&id.as_str()))
-        .filter_map(|(id, from, name, ctx, efforts)| {
+        .filter_map(|(base, from)| {
+            let id = format!("{base}:{}", t.level);
+            let d = models::detail(models::row(models_json, &id)?);
             let mut m = stock.iter().find(|m| m["slug"] == *from)?.clone();
             let levels: Vec<Value> = m["supported_reasoning_levels"]
                 .as_array()?
                 .iter()
-                .filter(|l| l["effort"].as_str().is_some_and(|e| efforts.contains(&e)))
+                .filter(|l| l["effort"].as_str().is_some_and(|e| d.efforts.iter().any(|x| x == e)))
                 .cloned()
                 .collect();
+            let (name, ctx) = (format!("{} ({tag})", d.name), d.context);
             let o = m.as_object_mut()?;
             o.insert("slug".into(), json!(id));
             o.insert("display_name".into(), json!(name));
@@ -151,8 +150,12 @@ mod tests {
     use super::*;
 
     const MODELS: &str = r#"[
-        { "id": "consus/gpt-5.6-terra:itar" },
-        { "id": "consus/gpt-5.1:itar" },
+        { "id": "consus/gpt-5.6-terra:itar", "display_name": "GPT-5.6 Terra", "context_window": 1000000,
+          "reasoning_efforts": ["low", "medium", "high", "xhigh"] },
+        { "id": "consus/gpt-5.1:itar", "display_name": "GPT-5.1", "context_window": 272000,
+          "reasoning_efforts": ["low", "medium", "high"] },
+        { "id": "consus/gpt-5.6-terra:fedramp-high", "display_name": "GPT-5.6 Terra", "context_window": 900000,
+          "reasoning_efforts": ["low", "medium"] },
         { "id": "consus/gpt-4.1:il5+itar" },
         { "id": "consus/claude-opus-5-5:itar" }
     ]"#;
@@ -186,6 +189,20 @@ mod tests {
         let efforts: Vec<&str> =
             list[1]["supported_reasoning_levels"].as_array().unwrap().iter().map(|l| l["effort"].as_str().unwrap()).collect();
         assert_eq!(efforts, ["low", "medium", "high"]);
+        assert_eq!(list[0]["display_name"], "GPT-5.6 Terra (ITAR)");
+    }
+
+    #[test]
+    fn another_level_gets_that_levels_name_and_limits() {
+        let high = Target { level: "fedramp-high".into(), ..Target::default() };
+        let list = catalog(&bundled(), &serde_json::from_str(MODELS).unwrap(), &high);
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0]["slug"], "gpt-5.6-terra:fedramp-high");
+        assert_eq!(list[0]["display_name"], "GPT-5.6 Terra (FedRAMP High)");
+        assert_eq!(list[0]["context_window"], 900_000);
+        let efforts: Vec<&str> =
+            list[0]["supported_reasoning_levels"].as_array().unwrap().iter().map(|l| l["effort"].as_str().unwrap()).collect();
+        assert_eq!(efforts, ["low", "medium"]);
     }
 
     #[test]
@@ -231,7 +248,10 @@ mod tests {
     #[test]
     fn catalog_follows_the_target_level() {
         let t = Target { endpoint: "https://ai-proxy.acme.example".into(), level: "fedramp-high".into() };
-        let models = json!([{ "id": "consus/gpt-5.6-terra:fedramp-high" }, { "id": "consus/gpt-5.6-terra:itar" }]);
+        let models = json!([
+            { "id": "consus/gpt-5.6-terra:fedramp-high", "display_name": "GPT-5.6 Terra" },
+            { "id": "consus/gpt-5.6-terra:itar", "display_name": "GPT-5.6 Terra" }
+        ]);
         let list = catalog(&bundled(), &models, &t);
         assert_eq!(list.len(), 1);
         assert_eq!(list[0]["slug"], "gpt-5.6-terra:fedramp-high");

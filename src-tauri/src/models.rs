@@ -71,6 +71,79 @@ pub fn ids(models_json: &Value) -> Vec<&str> {
         .collect()
 }
 
+/// What the gateway reports about one model (GET /v1/models, 2026-09-25):
+/// display_name, context_window, max_output_tokens, input_modalities,
+/// reasoning_efforts, and pricing in USD per million tokens. A gateway or
+/// proxy that leaves a field out gets a conservative default, so a tool
+/// still opens; a request that fits these limits works on any cloud behind
+/// the id, since the gateway reports the smallest.
+#[derive(Debug, PartialEq)]
+pub struct Detail {
+    /// "Claude Opus 5.5", without the level.
+    pub name: String,
+    pub maker: String,
+    pub context: u64,
+    pub max_output: u64,
+    pub image: bool,
+    /// Lowest first, as the gateway lists them. Empty: no reasoning.
+    pub efforts: Vec<String>,
+    /// input, output, cache read, cache write. Zero: not offered.
+    pub pricing: [f64; 4],
+    /// An embedding model, which no chat tool can use.
+    pub embedding: bool,
+}
+
+const DEFAULT_CONTEXT: u64 = 128_000;
+const DEFAULT_OUTPUT: u64 = 8_192;
+const DEFAULT_EFFORTS: [&str; 3] = ["low", "medium", "high"];
+
+/// The gateway's row for a bare id, if the key has it.
+pub fn row<'a>(models_json: &'a Value, bare_id: &str) -> Option<&'a Value> {
+    models_json
+        .as_array()?
+        .iter()
+        .find(|m| m.get("id").and_then(Value::as_str).map(bare) == Some(bare_id))
+}
+
+pub fn detail(row: &Value) -> Detail {
+    let id = row.get("id").and_then(Value::as_str).map(bare).unwrap_or("");
+    let base = id.split_once(':').map_or(id, |(b, _)| b);
+    let num = |k: &str| row.get(k).and_then(Value::as_u64);
+    let price = |k: &str| row["pricing"].get(k).and_then(Value::as_f64).unwrap_or(0.0);
+    let efforts = match row.get("reasoning_efforts").and_then(Value::as_array) {
+        Some(a) => a.iter().filter_map(Value::as_str).map(String::from).collect(),
+        None => DEFAULT_EFFORTS.iter().map(|e| e.to_string()).collect(),
+    };
+    Detail {
+        name: row.get("display_name").and_then(Value::as_str).unwrap_or(base).to_string(),
+        maker: row.get("owned_by").and_then(Value::as_str).unwrap_or("").to_string(),
+        // A zero is a limit the gateway does not know; treated as missing.
+        context: num("context_window").filter(|n| *n > 0).unwrap_or(DEFAULT_CONTEXT),
+        max_output: num("max_output_tokens").filter(|n| *n > 0).unwrap_or(DEFAULT_OUTPUT),
+        image: row["input_modalities"].as_array().is_some_and(|a| a.iter().any(|m| m == "image")),
+        efforts,
+        pricing: [price("input"), price("output"), price("cache_read"), price("cache_write")],
+        // The gateway reports no output cap for an embedding model.
+        embedding: base.contains("embed") || row.get("max_output_tokens").is_some_and(Value::is_null),
+    }
+}
+
+/// Every chat model the key has at the target level, bare id and detail,
+/// in the gateway's order.
+pub fn at_level(models_json: &Value, t: &Target) -> Vec<(String, Detail)> {
+    let suffix = format!(":{}", t.level);
+    models_json
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|m| {
+            let id = bare(m.get("id")?.as_str()?);
+            id.ends_with(&suffix).then(|| (id.to_string(), detail(m)))
+        })
+        .filter(|(_, d)| !d.embedding)
+        .collect()
+}
+
 /// One Claude model at the target level, as a template sees it.
 pub struct ClaudeModel {
     /// Bare id with suffix: "claude-opus-4-8:itar".
@@ -156,5 +229,34 @@ mod tests {
         let ids: Vec<String> = claude_models(&m, &high).into_iter().map(|c| c.id).collect();
         assert_eq!(ids, ["claude-opus-5:fedramp-high", "claude-sonnet-5:fedramp-high"]);
         assert_eq!(claude_models(&m, &Target::default()).len(), 1);
+    }
+
+    #[test]
+    fn details_come_from_the_gateway() {
+        let m = serde_json::json!([
+            { "id": "consus/claude-opus-5-5:itar", "owned_by": "anthropic", "display_name": "Claude Opus 5.5",
+              "context_window": 1000000, "max_output_tokens": 128000, "input_modalities": ["text", "image", "pdf"],
+              "reasoning_efforts": ["low", "medium", "high", "xhigh"],
+              "pricing": { "input": 4.8, "output": 24.0, "cache_read": 0.24, "cache_write": 6.0 } },
+            { "id": "consus/gpt-4.1:itar", "display_name": "GPT-4.1", "input_modalities": ["text"], "reasoning_efforts": [] },
+            { "id": "consus/titan-embed-text-v2:itar", "max_output_tokens": null },
+            { "id": "consus/claude-opus-5-5:fedramp-high" }
+        ]);
+        let got = at_level(&m, &Target::default());
+        let ids: Vec<&str> = got.iter().map(|(id, _)| id.as_str()).collect();
+        assert_eq!(ids, ["claude-opus-5-5:itar", "gpt-4.1:itar"], "embeddings and other levels are left out");
+        let opus = &got[0].1;
+        assert_eq!((opus.name.as_str(), opus.context, opus.max_output, opus.image), ("Claude Opus 5.5", 1_000_000, 128_000, true));
+        assert_eq!(opus.efforts, ["low", "medium", "high", "xhigh"]);
+        assert_eq!(opus.pricing, [4.8, 24.0, 0.24, 6.0]);
+        let gpt = &got[1].1;
+        assert!(gpt.efforts.is_empty() && !gpt.image);
+        assert!(detail(&serde_json::json!({ "id": "consus/some-vectors:itar", "max_output_tokens": null })).embedding);
+        let zero = detail(&serde_json::json!({ "id": "consus/x:itar", "context_window": 0, "max_output_tokens": 0 }));
+        assert_eq!((zero.context, zero.max_output), (128_000, 8_192));
+        // An older gateway without the fields: safe defaults, named by id.
+        let bare_row = detail(row(&m, "claude-opus-5-5:fedramp-high").unwrap());
+        assert_eq!((bare_row.name.as_str(), bare_row.context, bare_row.max_output), ("claude-opus-5-5", 128_000, 8_192));
+        assert_eq!(bare_row.efforts, ["low", "medium", "high"]);
     }
 }

@@ -69,7 +69,12 @@ pub fn read_object(path: &Path) -> Result<Map<String, Value>, String> {
 }
 
 /// The launcher's part of settings.json for these models.
-fn owned(helper: &Path, list: &[models::ClaudeModel], t: &Target) -> Option<(Map<String, Value>, Map<String, Value>)> {
+fn owned(
+    helper: &Path,
+    list: &[models::ClaudeModel],
+    models_json: &Value,
+    t: &Target,
+) -> Option<(Map<String, Value>, Map<String, Value>)> {
     let first = |family: &str| list.iter().find(|m| m.family == family);
     let main = first("opus").or_else(|| first("sonnet")).or_else(|| list.first())?;
     let opus = first("opus").unwrap_or(main);
@@ -91,9 +96,15 @@ fn owned(helper: &Path, list: &[models::ClaudeModel], t: &Target) -> Option<(Map
     env.insert("ANTHROPIC_DEFAULT_OPUS_MODEL".into(), json!(opus.id));
     env.insert("ANTHROPIC_DEFAULT_SONNET_MODEL".into(), json!(sonnet.id));
     env.insert("ANTHROPIC_DEFAULT_HAIKU_MODEL".into(), json!(background.id));
-    // Claude Code does not recognize model:level ids and would assume 200K.
-    if main.version.first().copied().unwrap_or(0) >= 5 {
-        env.insert("CLAUDE_CODE_MAX_CONTEXT_TOKENS".into(), json!("1000000"));
+    // Claude Code does not recognize model:level ids and would assume 200K,
+    // so a larger window is spelled out: the gateway's, or 1M for a 5-series
+    // model from a gateway that does not report windows.
+    let window = match models::row(models_json, &main.id) {
+        Some(r) if r.get("context_window").is_some() => Some(models::detail(r).context),
+        _ => (main.version.first().copied().unwrap_or(0) >= 5).then_some(1_000_000),
+    };
+    if let Some(w) = window.filter(|w| *w > 200_000) {
+        env.insert("CLAUDE_CODE_MAX_CONTEXT_TOKENS".into(), json!(w.to_string()));
     }
     Some((top, env))
 }
@@ -101,7 +112,7 @@ fn owned(helper: &Path, list: &[models::ClaudeModel], t: &Target) -> Option<(Map
 pub fn write_settings(home: &Path, helper: &Path, models_json: &Value, t: &Target) -> Result<(), String> {
     let list = models::claude_models(models_json, t);
     let (top, env) =
-        owned(helper, &list, t).ok_or_else(|| format!("No Claude {} models are available to this key.", t.tag()))?;
+        owned(helper, &list, models_json, t).ok_or_else(|| format!("No Claude {} models are available to this key.", t.tag()))?;
 
     let path = settings_path(home);
     fs::create_dir_all(profile_dir(home)).map_err(|e| e.to_string())?;
@@ -233,6 +244,18 @@ mod tests {
         assert!(write_settings(&home, &helper(), &serde_json::from_str(MODELS).unwrap(), &Target::default()).is_err());
         assert_eq!(fs::read(settings_path(&home)).unwrap(), bad, "file must be left untouched");
         let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn the_context_limit_follows_the_gateways_window() {
+        let limit = |models: Value| {
+            let list = models::claude_models(&models, &Target::default());
+            owned(Path::new("/h"), &list, &models, &Target::default()).unwrap().1.get("CLAUDE_CODE_MAX_CONTEXT_TOKENS").cloned()
+        };
+        assert_eq!(limit(json!([{ "id": "consus/claude-opus-5-5:itar", "context_window": 1000000 }])), Some(json!("1000000")));
+        assert_eq!(limit(json!([{ "id": "consus/claude-opus-5-5:itar", "context_window": 500000 }])), Some(json!("500000")));
+        assert_eq!(limit(json!([{ "id": "consus/claude-sonnet-4-5:itar", "context_window": 200000 }])), None, "Claude Code's own default");
+        assert_eq!(limit(json!([{ "id": "consus/claude-opus-5:itar" }])), Some(json!("1000000")), "no window reported: as before");
     }
 
     #[test]

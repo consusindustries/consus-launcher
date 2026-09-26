@@ -41,7 +41,7 @@ src/                  main.ts, styles.css, assets/ (fonts, Consus logo)
 src-tauri/
   src/                main.rs, lib.rs, keychain.rs, portal.rs, models.rs, tools.rs,
                       config.rs (Claude Desktop), chatgpt.rs, claude_code.rs, codex.rs, pi.rs
-  templates/          chatgpt-desktop.toml, pi-models-itar.json
+  templates/          chatgpt-desktop.toml
   assets/             pi.svg
   icons/              app icons
   capabilities/       Tauri permission set
@@ -109,13 +109,12 @@ Each template, or the module that embeds it, records the doc it was checked agai
 - **No in-app updater:** it would be a network host beyond the Consus hosts.
 
 ## 10. Status and what's next
-Done: connect flow, five tools on macOS, glass placement, quit together, sign out, CI with tests, release pipeline, README, Terminal installer, org settings from device management.
+Done: connect flow, five tools on macOS, glass placement, quit together, sign out, CI with tests, release pipeline, README, Terminal installer, org settings from device management, removing a turned-off tool's settings, model names and limits from the gateway's `/v1/models` (Pi's list, the Codex and ChatGPT catalog, Claude Code's context window).
 
 Next, in order:
-1. Org settings from the portal, fetched with the user's key, once the portal serves them; and removing the launcher's settings from a tool an admin turns off. The design is kept with the Consus services.
-2. Model limits from the gateway's `/v1/models`, replacing the Pi and Codex tables (which today reuse the ITAR rows for other levels).
-3. Signed, notarized releases once Apple enrollment clears; device-management kit (`.pkg` plus configuration profile).
-4. Windows: tool detection, configs, launch, quit-with-launcher, org settings from the registry, and `.msi` releases (preview, 2026-09-25). Code signing waits on Azure Trusted Signing.
+1. Org settings from the portal, fetched with the user's key, once the portal serves them (later; device management covers it until then). The design is kept with the Consus services.
+2. Signed, notarized releases once Apple enrollment clears; device-management kit (`.pkg` plus configuration profile).
+3. Windows: tool detection, configs, launch, quit-with-launcher, org settings from the registry, and `.msi` releases (preview, 2026-09-25). Code signing waits on Azure Trusted Signing.
 
 ## 11. Working style
 Plan before building. One PR at a time, reviewed, with CI green before merge. Ask before a decision that changes scope; if something is not in these notes, the default answer is no. Short commit messages. No em dashes anywhere in copy or comments.
