@@ -149,11 +149,13 @@ pub fn write_config(home: &Path, helper: &Path, models_json: &Value, t: &Target)
     let keep = sdoc.get("defaultProvider").and_then(Value::as_str) == Some(PROVIDER)
         && sdoc.get("defaultModel").and_then(Value::as_str).is_some_and(|m| ids.iter().any(|id| id == m));
     if !keep {
-        // Newest Opus when the key has one, else the first model.
+        // Newest Opus when the key has one, else the GPT model ChatGPT would
+        // start on, else the first model.
         let default = models::claude_models(models_json, t)
             .into_iter()
             .map(|m| m.id)
             .find(|id| ids.contains(id))
+            .or_else(|| crate::chatgpt::select_model(models_json, t).filter(|id| ids.contains(id)))
             .unwrap_or_else(|| ids[0].clone());
         sdoc.insert("defaultProvider".into(), json!(PROVIDER));
         sdoc.insert("defaultModel".into(), json!(default));
@@ -289,6 +291,18 @@ mod tests {
         assert_eq!(p["models"][0]["id"], "claude-opus-5-5:fedramp-high");
         assert_eq!(p["models"][0]["name"], "Claude Opus 5.5 (FedRAMP High)");
         assert_eq!(read(&settings_path(&home))["defaultModel"], "claude-opus-5-5:fedramp-high");
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn without_claude_the_default_is_chatgpts_model() {
+        let home = temp_home("gpt-default");
+        let models = json!([
+            { "id": "consus/gpt-oss-120b:itar", "owned_by": "openai", "display_name": "GPT OSS 120B" },
+            { "id": "consus/gpt-5.6-terra:itar", "owned_by": "openai", "display_name": "GPT-5.6 Terra" }
+        ]);
+        write_config(&home, &helper(), &models, &Target::default()).unwrap();
+        assert_eq!(read(&settings_path(&home))["defaultModel"], "gpt-5.6-terra:itar");
         let _ = fs::remove_dir_all(&home);
     }
 

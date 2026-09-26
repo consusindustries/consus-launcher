@@ -117,12 +117,14 @@ pub fn detail(row: &Value) -> Detail {
     Detail {
         name: row.get("display_name").and_then(Value::as_str).unwrap_or(base).to_string(),
         maker: row.get("owned_by").and_then(Value::as_str).unwrap_or("").to_string(),
-        context: num("context_window").unwrap_or(DEFAULT_CONTEXT),
-        max_output: num("max_output_tokens").unwrap_or(DEFAULT_OUTPUT),
+        // A zero is a limit the gateway does not know; treated as missing.
+        context: num("context_window").filter(|n| *n > 0).unwrap_or(DEFAULT_CONTEXT),
+        max_output: num("max_output_tokens").filter(|n| *n > 0).unwrap_or(DEFAULT_OUTPUT),
         image: row["input_modalities"].as_array().is_some_and(|a| a.iter().any(|m| m == "image")),
         efforts,
         pricing: [price("input"), price("output"), price("cache_read"), price("cache_write")],
-        embedding: base.contains("embed"),
+        // The gateway reports no output cap for an embedding model.
+        embedding: base.contains("embed") || row.get("max_output_tokens").is_some_and(Value::is_null),
     }
 }
 
@@ -249,6 +251,9 @@ mod tests {
         assert_eq!(opus.pricing, [4.8, 24.0, 0.24, 6.0]);
         let gpt = &got[1].1;
         assert!(gpt.efforts.is_empty() && !gpt.image);
+        assert!(detail(&serde_json::json!({ "id": "consus/some-vectors:itar", "max_output_tokens": null })).embedding);
+        let zero = detail(&serde_json::json!({ "id": "consus/x:itar", "context_window": 0, "max_output_tokens": 0 }));
+        assert_eq!((zero.context, zero.max_output), (128_000, 8_192));
         // An older gateway without the fields: safe defaults, named by id.
         let bare_row = detail(row(&m, "claude-opus-5-5:fedramp-high").unwrap());
         assert_eq!((bare_row.name.as_str(), bare_row.context, bare_row.max_output), ("claude-opus-5-5", 128_000, 8_192));
