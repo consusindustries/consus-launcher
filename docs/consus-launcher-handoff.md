@@ -1,6 +1,6 @@
 # Consus Launcher: project notes
 
-First written 2026-09-21 as the build handoff; rewritten 2026-09-24 to describe the app as built. The original wireframe (`docs/consus-launcher.html`) and screenshots (`docs/screenshots/`) predate later changes such as the Log tab removal.
+First written 2026-09-21 as the build handoff; rewritten 2026-09-24 to describe the app as built. The original wireframe (`docs/consus-launcher.html`, removed 2026-09-26) is in the git history at commit 64753d4; it predates later changes such as the Log tab removal.
 
 Guiding rule: this is the simplest application possible. It stores one key, writes each tool's config, and launches the tool. Anything beyond that is out of scope unless Eric says otherwise.
 
