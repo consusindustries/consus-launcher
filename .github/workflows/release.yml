@@ -150,8 +150,20 @@ jobs:
             key="$RUNNER_TEMP/AuthKey_$API_KEY.p8"
             printf '%s' "$API_KEY_P8" > "$key"
             for f in release/*.dmg release/*.pkg; do
-              xcrun notarytool submit "$f" --key "$key" --key-id "$API_KEY" --issuer "$API_ISSUER" \
-                --wait --output-format json > "$RUNNER_TEMP/notary.json"
+              # notarytool itself has crashed on the runner mid-upload (a bus
+              # error, not a verdict from Apple), so a failed run is retried.
+              for attempt in 1 2 3; do
+                if xcrun notarytool submit "$f" --key "$key" --key-id "$API_KEY" --issuer "$API_ISSUER" \
+                  --wait --output-format json > "$RUNNER_TEMP/notary.json"; then
+                  break
+                fi
+                if [ "$attempt" = 3 ]; then
+                  echo "notarytool failed three times on $f"
+                  exit 1
+                fi
+                echo "notarytool failed on $f (attempt $attempt); retrying"
+                sleep 20
+              done
               status=$(jq -r .status "$RUNNER_TEMP/notary.json")
               if [ "$status" != "Accepted" ]; then
                 echo "Notarization of $f: $status"

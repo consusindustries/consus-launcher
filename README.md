@@ -64,7 +64,7 @@ defaults delete io.consus.launcher    # back to defaults
 
 Requires macOS 12 or later on Apple silicon or Intel (tested on macOS 26), and a Consus API key from your Consus admin.
 
-**From Terminal** (recommended until releases are notarized by Apple):
+**From Terminal:**
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/consusindustries/consus-launcher/main/install.sh | sh
@@ -72,7 +72,7 @@ curl -fsSL https://raw.githubusercontent.com/consusindustries/consus-launcher/ma
 
 [`install.sh`](install.sh) downloads the latest release from GitHub, checks the disk image against the release's `SHA256SUMS.txt`, installs Consus Launcher into `/Applications` (or `~/Applications`), and opens it. Nothing is installed unless the checksum matches. Set `CONSUS_LAUNCHER_VERSION` to pick a release (for example `v0.1.0`); to install from an internal mirror of the release files, set `CONSUS_LAUNCHER_BASE_URL` and `CONSUS_LAUNCHER_VERSION` together.
 
-The checksum catches a corrupted or mismatched download; it does not by itself prove who built the release. This install avoids the Gatekeeper prompt because files fetched with `curl` are not marked as downloaded from the internet, so macOS does not check them on first open. Until releases are notarized, that trade-off is the reason to prefer it or not.
+The checksum catches a corrupted or mismatched download. Who built it is proven by the signature: from v0.2.3, releases are signed by Consus Industries, Inc. (Apple Developer ID, team K4P2D65BQD) and notarized by Apple.
 
 **On Windows (preview):** download the `.msi` for your PC (x64 or ARM64) from [Releases](https://github.com/consusindustries/consus-launcher/releases) and run it. Until the installers are code-signed, Windows SmartScreen warns on first run: choose More info, then Run anyway.
 
@@ -82,7 +82,7 @@ The checksum catches a corrupted or mismatched download; it does not by itself p
 2. Optionally, check the download against `SHA256SUMS.txt` with `shasum -a 256 -c --ignore-missing SHA256SUMS.txt`.
 3. Open Consus Launcher and paste your key.
 
-**Until releases are notarized,** macOS blocks a downloaded copy on first open. Go to System Settings, Privacy and Security, and click Open Anyway. On some Macs the approval never appears and the app stays stuck opening; use the Terminal install instead.
+From v0.2.3, the `.dmg`, the `.pkg`, and the app are signed by Consus Industries, Inc. and notarized by Apple, so macOS opens a downloaded copy without a warning. (Earlier releases were not notarized; use v0.2.3 or later.)
 
 On first use, macOS asks for:
 
