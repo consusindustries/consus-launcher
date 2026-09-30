@@ -103,17 +103,16 @@ Each template, or the module that embeds it, records the doc it was checked agai
 
 ## 9. Signing and release
 - `release.yml` builds a universal `.dmg` and `.pkg` on a `v*` tag, attaches SBOMs and checksums, and drafts the GitHub Release for a person to publish.
-- **Signing and notarization** run when the Apple secrets exist (names at the top of `release.yml`) and are skipped otherwise. The Apple Developer enrollment for Consus Industries, Inc. is pending.
-- **Until notarized,** current macOS blocks a browser-downloaded build. On one test Mac it hung with no approval dialog, while a command-line download installed and ran normally. The first public release waits for notarization; a command-line installer is the interim path.
+- **Signing and notarization** run when the Apple secrets exist (names at the top of `release.yml`) and are skipped otherwise. Consus Industries, Inc. is enrolled (team K4P2D65BQD, 2026-09-29); from v0.2.3 the app and `.dmg` are signed with Developer ID Application, the `.pkg` with Developer ID Installer, and all three are notarized and stapled. A crash of Apple's `notarytool` on the runner is retried up to three times.
 - **Windows:** `.msi` for x64 and ARM64 in each release (preview). Not code-signed until Azure Trusted Signing is set up; window placement in the glass is not planned on Windows (Eric, 2026-09-25).
 - **No in-app updater:** it would be a network host beyond the Consus hosts.
 
 ## 10. Status and what's next
-Done: connect flow, five tools on macOS, glass placement, quit together, sign out, CI with tests, release pipeline, README, Terminal installer, org settings from device management, removing a turned-off tool's settings, model names and limits from the gateway's `/v1/models` (Pi's list, the Codex and ChatGPT catalog, Claude Code's context window).
+Done: connect flow, five tools on macOS, glass placement, quit together, sign out, CI with tests, release pipeline, README, Terminal installer, org settings from device management, removing a turned-off tool's settings, model names and limits from the gateway's `/v1/models` (Pi's list, the Codex and ChatGPT catalog, Claude Code's context window), signed and notarized macOS releases (v0.2.3).
 
 Next, in order:
 1. Org settings from the portal, fetched with the user's key, once the portal serves them (later; device management covers it until then). The design is kept with the Consus services.
-2. Signed, notarized releases once Apple enrollment clears; device-management kit (`.pkg` plus configuration profile).
+2. Device-management kit: the portal's Launcher page already builds the settings profile; next is its privacy (PPPC) payload, so employees get no Automation or Accessibility prompts, which the signed app now makes possible.
 3. Windows: tool detection, configs, launch, quit-with-launcher, org settings from the registry, and `.msi` releases (preview, 2026-09-25). Code signing waits on Azure Trusted Signing.
 
 ## 11. Working style
