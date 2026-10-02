@@ -25,7 +25,7 @@ Fixes land in the latest release. Please check that the issue still reproduces t
 
 **The key**
 - Stored only in the macOS Keychain, or Windows Credential Manager. The launcher never writes it to a file.
-- Tools get it through the launcher's own binary acting as a helper (Claude Desktop, Claude Code, Codex, Pi), or in the environment of the process the launcher starts (ChatGPT, and Codex's Terminal session).
+- Tools get it through the launcher's own binary acting as a helper (Claude Desktop, Claude Code, ChatGPT, Codex, Pi), or in the environment of the process the launcher starts (ChatGPT on macOS, alongside the helper, and Codex's Terminal session). ChatGPT sends the helper's key as a bearer token and the environment's as `x-api-key`; on Windows, ChatGPT must be started through its package, which passes no environment, so it uses the helper alone.
 - The keychain protects the key from other users and from files on disk, not from your own programs: any program running as you can run the helper or read a tool's environment and obtain the key.
 
 **Files it writes**
@@ -41,7 +41,7 @@ Fixes land in the latest release. Please check that the issue still reproduces t
 - Your login shell, once per tool, to find where a command-line tool is installed (`$SHELL -ilc "command -v <tool>"`).
 - `codex debug models --bundled`, to build the Codex and ChatGPT model catalogs.
 - `sips` and `defaults`, to read app icons; `ps` and `pgrep`, to track the tools it started.
-- On Windows: `powershell` (to find Store apps and their processes), `where.exe`, `tasklist`, and `taskkill`, to find, track, and close the tools it started. Closing a running Claude or ChatGPT before reopening it ends it if it only hides to the tray.
+- On Windows: `powershell` (to find Store apps and their processes), `explorer.exe` (to start ChatGPT through its package), `where.exe`, `tasklist`, and `taskkill`, to find, start, track, and close the tools it started. Closing a running Claude or ChatGPT before reopening it ends it if it only hides to the tray.
 
 **Builds**
 - Release builds are made only in GitHub Actions, with CycloneDX SBOMs and SHA-256 checksums attached to each release.

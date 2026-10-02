@@ -23,7 +23,7 @@ use tauri::{AppHandle, Manager};
 
 use super::{
     chatgpt_catalog, claude_code_policy, helper_path, name, ours, output_within, track, Running, Tool,
-    CODE_HELPER_NAME, HELPER_NAME, PI_HELPER_NAME, PI_ICON,
+    CODEX_HELPER_NAME, CODE_HELPER_NAME, HELPER_NAME, PI_HELPER_NAME, PI_ICON,
 };
 use crate::models::Target;
 use crate::{chatgpt, claude_code, codex, config, keychain, pi};
@@ -273,6 +273,43 @@ pub fn running(t: Tool) -> bool {
     app_dir(t).is_some_and(|d| !pids_in(&d).is_empty())
 }
 
+/// Starts a Store app the way the Start menu does, and returns its main
+/// process. The package family name comes from the install folder,
+/// <name>_<version>_<arch>__<publisher id>; `app_id` is the manifest's
+/// Application Id.
+fn activate_package(dir: &Path, app_id: &str) -> Result<u32, String> {
+    let folder = dir.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    let (head, publisher) = folder.rsplit_once("__").ok_or_else(|| format!("{} is not a Store package folder.", dir.display()))?;
+    let family = format!("{}_{publisher}", head.split('_').next().unwrap_or(head));
+    // explorer.exe exits at once whatever happens; the app's process is what counts.
+    let _ = hidden("explorer.exe").arg(format!("shell:AppsFolder\\{family}!{app_id}")).status();
+    for _ in 0..40 {
+        if let Some(pid) = main_pid_in(dir) {
+            return Ok(pid);
+        }
+        thread::sleep(Duration::from_millis(500));
+    }
+    Err("ChatGPT did not start.".into())
+}
+
+/// The app's main process among those running from its folder: the one no
+/// other of them started.
+fn main_pid_in(dir: &Path) -> Option<u32> {
+    let script = format!(
+        "Get-CimInstance Win32_Process | Where-Object {{ $_.ExecutablePath -and $_.ExecutablePath.StartsWith('{}', [StringComparison]::OrdinalIgnoreCase) }} | ForEach-Object {{ \"$($_.ProcessId) $($_.ParentProcessId)\" }}",
+        dir.display().to_string().replace('\'', "''")
+    );
+    let out = hidden("powershell").args(["-NoProfile", "-NonInteractive", "-Command", &script]).output().ok()?;
+    let pairs: Vec<(u32, u32)> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|l| {
+            let mut it = l.split_whitespace();
+            Some((it.next()?.parse().ok()?, it.next()?.parse().ok()?))
+        })
+        .collect();
+    pairs.iter().find(|(_, parent)| !pairs.iter().any(|(pid, _)| pid == parent)).map(|(pid, _)| *pid)
+}
+
 /// The folder an app runs from: its Store package, or a classic install.
 fn app_dir(t: Tool) -> Option<PathBuf> {
     match t {
@@ -352,19 +389,24 @@ pub fn launch(app: AppHandle, t: Tool, models: &Value, target: &Target) -> Resul
             c
         }
         Tool::ChatGpt => {
-            let exe = chatgpt_exe().ok_or("ChatGPT is not installed.")?;
-            if let Some(dir) = app_dir(t) {
-                quit_running(t, &dir)?;
-            }
-            let key = keychain::get_key().ok_or("No key in the keychain. Connect first.")?;
+            let dir = app_dir(t).ok_or("ChatGPT is not installed.")?;
+            quit_running(t, &dir)?;
+            keychain::get_key().ok_or("No key in the keychain. Connect first.")?;
+            let helper = helper_path(&helper_dir, CODEX_HELPER_NAME);
+            config::write_helper(&helper)?;
             let catalog = chatgpt_codex().and_then(|engine| chatgpt_catalog(&app, &engine, models, target));
-            chatgpt::write_config(&home, models, target, catalog.as_deref())?;
-            let mut c = Command::new(exe);
-            scrub(&mut c, claude_var);
-            // The template's shell_environment_policy keeps CONSUS_* out of
-            // every command the agent runs.
-            c.env("CONSUS_API_KEY", key);
-            c
+            chatgpt::write_config(&home, models, target, catalog.as_deref(), &helper)?;
+            // ChatGPT runs only when Windows starts it through its package
+            // (since 26.924, started directly it stops with "The process has
+            // no package identity"), and that start passes no environment:
+            // the app gets the key from the helper instead.
+            let pid = activate_package(&dir, "App")?;
+            track(&app, Running { tool: t, pid, terminal: None }, move || {
+                while alive(pid) {
+                    thread::sleep(Duration::from_secs(2));
+                }
+            });
+            return Ok(());
         }
         Tool::Code => {
             let exe = terminal_cli(t).ok_or("Claude Code is not installed.")?;
