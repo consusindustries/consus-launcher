@@ -29,7 +29,7 @@ keyring = { version = "=3.6.3", features = ["apple-native", "windows-native"] }
 # Already in the tree via Tauri's build tooling; format-preserving edits to config.toml.
 toml_edit = "=0.25.15"
 # Already in the tree via reqwest; app icons travel to the webview as data URLs.
-base64 = "=0.22.1"
+base64 = "=0.23.1"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
