@@ -60,6 +60,16 @@ defaults write io.consus.launcher OrgName "Example Org"
 defaults delete io.consus.launcher    # back to defaults
 ```
 
+### Signing identity and permissions
+
+From v0.2.3, the macOS app is signed with Developer ID by Consus Industries, Inc. To grant its permissions ahead of time, so people see no prompts, add a Privacy Preferences Policy Control (PPPC) payload to the profile you push. macOS honors PPPC only from device management, not from a profile installed by hand.
+
+- **Bundle ID:** `io.consus.launcher`
+- **Team ID:** `K4P2D65BQD`
+- **Code requirement:** `identifier "io.consus.launcher" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] /* exists */ and certificate leaf[field.1.2.840.113635.100.6.1.13] /* exists */ and certificate leaf[subject.OU] = K4P2D65BQD`
+- **Apple Events (Automation)**, allowed, to: `com.apple.Terminal` (terminal tools), `com.apple.systemevents` (window placement), `com.anthropic.claudefordesktop` and `com.openai.codex` (the ChatGPT app), to close and reopen them with new settings.
+- **Accessibility**, allowed: to place app windows inside the launcher.
+
 ## Install
 
 Requires macOS 12 or later on Apple silicon or Intel (tested on macOS 26), and a Consus API key from your Consus admin.
@@ -89,6 +99,21 @@ On first use, macOS asks for:
 - **Keychain access**, to read your key. Choose Always Allow.
 - **Automation**, to open terminal tools in Terminal and to place windows.
 - **Accessibility** (System Settings, Privacy and Security, Accessibility), to place app windows inside the launcher. Without it, apps still open, just not in place.
+
+## Updating
+
+- **Machines IT manages:** push the new `.pkg` or `.msi` the way the first one went out. The launcher reads its settings each time it starts and rewrites a tool's settings the next time it opens it, so nothing else needs to change.
+- **Installed yourself:** the launcher says when a newer version is out (see [CHANGELOG.md](CHANGELOG.md) for what changed). Run the Terminal installer again, or download the new `.dmg`, `.pkg`, or `.msi` from [Releases](https://github.com/consusindustries/consus-launcher/releases). Your key stays in the keychain.
+
+The launcher never updates itself.
+
+## Uninstalling
+
+1. **Sign out first** (Keys tab, Sign out). It removes the launcher's settings from every tool and your key from the keychain. Without it, tools stay pointed at a key helper that is no longer there.
+2. **Remove the app.** macOS: quit it and move `/Applications/Consus Launcher.app` to the Trash. Windows: Settings, Apps, Installed apps, Consus Launcher, Uninstall.
+3. **Optional, everything else:** the profile folders that hold your tool history (`~/.claude-consus-gateway`, `~/.codex-consus-gateway`, `~/.pi-consus-gateway`, under `%USERPROFILE%` on Windows), the `~/Consus` folder, and the launcher's own folder (`~/Library/Application Support/io.consus.launcher` and `~/Library/Caches/io.consus.launcher` on macOS, `%APPDATA%\io.consus.launcher` on Windows).
+
+IT: also remove the settings profile (macOS) or the `HKLM\SOFTWARE\Policies\Consus\Launcher` key (Windows).
 
 ## Build from source
 
