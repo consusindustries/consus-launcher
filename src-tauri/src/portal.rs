@@ -85,8 +85,8 @@ pub async fn validate_key(key: String) -> Result<ConnectResult, ConnectError> {
 /// Where the portal says which launcher is newest: a static file anyone can
 /// read, so the check sends no key and nothing about the user.
 const LATEST_URL: &str = "https://portal.consus.io/assets/launcher/latest.json";
-/// The only place an update may point: this project's releases.
-const RELEASES: &str = "https://github.com/consusindustries/consus-launcher/releases/";
+/// The only place an update may point: this project's releases on GitHub.
+const RELEASES_PATH: &str = "/consusindustries/consus-launcher/releases/";
 
 #[derive(Debug, PartialEq, Serialize)]
 pub struct Update {
@@ -94,20 +94,27 @@ pub struct Update {
     pub url: String,
 }
 
+/// "1.2.3" exactly: anything after the third number makes it no version.
 fn semver(v: &str) -> Option<(u64, u64, u64)> {
     let mut it = v.trim().trim_start_matches('v').split('.').map(|p| p.parse::<u64>().ok());
-    Some((it.next()??, it.next()??, it.next()??))
+    let version = (it.next()??, it.next()??, it.next()??);
+    it.next().is_none().then_some(version)
+}
+
+/// The link as the browser would open it. Parsed, so dot segments ("..",
+/// "%2e%2e") cannot walk out of this project's releases.
+fn release_link(url: &str) -> Option<String> {
+    let u = reqwest::Url::parse(url).ok()?;
+    (u.scheme() == "https" && u.host_str() == Some("github.com") && u.path().starts_with(RELEASES_PATH))
+        .then(|| u.as_str().to_string())
 }
 
 /// The update in `latest`, when it is newer than `current` and its link is
 /// one of this project's releases; anything else is ignored.
 fn newer(latest: &serde_json::Value, current: &str) -> Option<Update> {
     let version = latest.get("version")?.as_str()?.trim().trim_start_matches('v');
-    let url = latest.get("url")?.as_str()?;
-    if !url.starts_with(RELEASES) || url.chars().any(|c| c.is_whitespace() || c.is_control()) {
-        return None;
-    }
-    (semver(version)? > semver(current)?).then(|| Update { version: version.to_string(), url: url.to_string() })
+    let url = release_link(latest.get("url")?.as_str()?)?;
+    (semver(version)? > semver(current)?).then(|| Update { version: version.to_string(), url })
 }
 
 /// A newer launcher, if the settings allow telling the user and the portal
@@ -144,5 +151,14 @@ mod tests {
         assert_eq!(newer(&latest("1.0", ours), "0.2.4"), None, "not a version");
         assert_eq!(newer(&latest("9.9.9", "https://evil.example/consus-launcher.dmg"), "0.2.4"), None, "not our releases");
         assert_eq!(newer(&serde_json::json!({ "version": "9.9.9" }), "0.2.4"), None, "no link");
+        assert_eq!(newer(&latest("9.9.9.Install from evil.example", ours), "0.2.4"), None, "text after the version");
+        for escape in [
+            "https://github.com/consusindustries/consus-launcher/releases/../../../evil/repo/releases/download/v1/x.dmg",
+            "https://github.com/consusindustries/consus-launcher/releases/%2e%2e/%2e%2e/%2e%2e/evil/repo/x.dmg",
+            "http://github.com/consusindustries/consus-launcher/releases/tag/v9.9.9",
+            "https://github.com.evil.example/consusindustries/consus-launcher/releases/tag/v9.9.9",
+        ] {
+            assert_eq!(newer(&latest("9.9.9", escape), "0.2.4"), None, "{escape}");
+        }
     }
 }

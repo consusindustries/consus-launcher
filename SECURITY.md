@@ -22,7 +22,7 @@ Fixes land in the latest release. Please check that the issue still reproduces t
 - Two kinds of request. The key check: `GET https://api.consus.io/v1/models`, or the same path on the organization's endpoint when an IT admin set one (`EndpointURL`, see the README), when you connect or replace your key and each time the launcher starts, to check the key and list its models. It uses the system proxy settings and the system's trusted certificates.
 - The update check: `GET https://portal.consus.io/assets/launcher/latest.json`, a public file naming the newest release, at start and twice a day. It sends no key and nothing about you. If a newer version is listed, the launcher shows a link to this project's GitHub releases; it never downloads or installs anything itself. Off by default on a managed machine (`UpdateNotice`, see the README).
 - Org settings are read locally from the `io.consus.launcher` preferences (a device-management profile, or the user's own preferences); nothing is fetched for them.
-- In your browser, not from the app: `portal.consus.io`, and a tool's vendor download page when you click a tool that is not installed.
+- In your browser, not from the app: `portal.consus.io`, a tool's vendor download page when you click a tool that is not installed, and this project's GitHub releases page when you click an update notice.
 
 **The key**
 - Stored only in the macOS Keychain, or Windows Credential Manager. The launcher never writes it to a file.
