@@ -124,7 +124,7 @@ pub fn write_config(home: &Path, models_json: &Value, bundled: Option<&Value>, t
     // Codex refuses to start when model_catalog_json names a missing file.
     let with_catalog = cpath.exists();
     let path = config_path(home);
-    chatgpt::write_config_at(&path, models_json, &extra(home, with_catalog), t)?;
+    chatgpt::write_config_at(&path, models_json, &extra(home, with_catalog), t, None)?;
     if !with_catalog {
         let text = fs::read_to_string(&path).map_err(|e| e.to_string())?;
         let mut doc: DocumentMut = text.parse().map_err(|e| format!("{}: {e}", path.display()))?;

@@ -670,8 +670,10 @@ fn launch_app(app: AppHandle, t: Tool, s: AppSpec, rect: Rect, models: &Value, t
         }
         Tool::ChatGpt => {
             let k = keychain::get_key().ok_or("No key in the keychain. Connect first.")?;
+            let helper = helper_path(&app.path().app_config_dir().map_err(|e| e.to_string())?, CODEX_HELPER_NAME);
+            config::write_helper(&helper)?;
             let catalog = chatgpt_catalog(&app, &bundle_dir.join("Contents/Resources/codex"), models, target);
-            chatgpt::write_config(&home, models, target, catalog.as_deref())?;
+            chatgpt::write_config(&home, models, target, catalog.as_deref(), &helper)?;
             env = Some(("CONSUS_API_KEY", k));
         }
         Tool::Code | Tool::Codex | Tool::Pi => return Err(format!("{} is not a desktop app.", name(t))),
@@ -1113,7 +1115,7 @@ mod tests {
         if desktop {
             config::write_claude_desktop(&home, &helper, &models, &t).unwrap();
         }
-        chatgpt::write_config(&home, &models, &t, Some(&catalog)).unwrap();
+        chatgpt::write_config(&home, &models, &t, Some(&catalog), &helper).unwrap();
         fs::write(&catalog, "{}").unwrap();
         claude_code::write_settings(&home, &helper, &models, &t).unwrap();
         codex::write_config(&home, &models, None, &t).unwrap();

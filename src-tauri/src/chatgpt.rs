@@ -2,8 +2,13 @@
 // one per-user file shared with Codex CLI, which the app also writes to. The
 // template and its provenance live in templates/chatgpt-desktop.toml.
 //
-// The launcher spawns the app itself, so the key travels in that process's
-// environment (env_http_headers) and is never written to the file. The
+// The key is never written to the file. It reaches the app two ways: in the
+// environment of the process the launcher starts (env_http_headers, sent as
+// x-api-key), and from the launcher's key helper, which the app runs itself
+// (auth.command, sent as a bearer token). The gateway prefers x-api-key when
+// both arrive. The helper is the only way when the app starts without the
+// launcher's environment: opened from the Dock, or on Windows, where the app
+// must be started through its package, which passes no environment. The
 // template is merged key by key: keys and tables the app or the user put in
 // the file stay, and sign out removes only the template's own keys. In TOML,
 // top-level keys must sit above the first [table] header; toml_edit keeps
@@ -15,7 +20,7 @@
 use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
-use toml_edit::{value, DocumentMut, Item, Table, TableLike};
+use toml_edit::{value, DocumentMut, InlineTable, Item, Table, TableLike};
 
 use crate::models::{self, Target};
 
@@ -122,14 +127,16 @@ fn extra(catalog: Option<&Path>) -> Table {
 }
 
 /// `catalog` is a catalog file the launcher wrote (see codex::catalog), or
-/// None to leave whatever the file has.
-pub fn write_config(home: &Path, models_json: &Value, t: &Target, catalog: Option<&Path>) -> Result<(), String> {
-    write_config_at(&config_path(home), models_json, &extra(catalog), t)
+/// None to leave whatever the file has. `helper` is the launcher's bare-key
+/// helper, which the app runs for the key.
+pub fn write_config(home: &Path, models_json: &Value, t: &Target, catalog: Option<&Path>, helper: &Path) -> Result<(), String> {
+    write_config_at(&config_path(home), models_json, &extra(catalog), t, Some(helper))
 }
 
 /// The template, then `extra` (keys only this file carries), merged into
-/// the config.toml at `path`.
-pub fn write_config_at(path: &Path, models_json: &Value, extra: &Table, t: &Target) -> Result<(), String> {
+/// the config.toml at `path`; with `helper`, the provider also runs it for
+/// the key.
+pub fn write_config_at(path: &Path, models_json: &Value, extra: &Table, t: &Target, helper: Option<&Path>) -> Result<(), String> {
     let model = select_model(models_json, t)
         .ok_or_else(|| format!("No GPT {} models are available to this key.", t.tag()))?;
 
@@ -154,6 +161,12 @@ pub fn write_config_at(path: &Path, models_json: &Value, extra: &Table, t: &Targ
     {
         set_leaf(consus, "base_url", value(t.v1()));
         consus.remove("http_headers");
+        if let Some(h) = helper {
+            // Run directly, not through a shell, so the path needs no quoting.
+            let mut auth = InlineTable::new();
+            auth.insert("command", h.display().to_string().into());
+            set_leaf(consus, "auth", value(auth));
+        }
     }
 
     fs::write(path, doc.to_string()).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -200,6 +213,15 @@ pub fn remove_config_at(path: &Path, extra: &Table) -> Result<(), String> {
     if !ours {
         return Ok(());
     }
+    // The helper entry is the launcher's too, though not in the template.
+    if let Some(consus) = doc
+        .get_mut("model_providers")
+        .and_then(Item::as_table_like_mut)
+        .and_then(|p| p.get_mut("consus"))
+        .and_then(Item::as_table_like_mut)
+    {
+        consus.remove("auth");
+    }
     strip_from(doc.as_table_mut(), template().as_table());
     strip_from(doc.as_table_mut(), extra);
     doc.as_table_mut().remove("model");
@@ -213,6 +235,10 @@ pub fn remove_config_at(path: &Path, extra: &Table) -> Result<(), String> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    fn helper() -> &'static Path {
+        Path::new("/Users/x/Library/Application Support/io.consus.launcher/codex-key-helper")
+    }
 
     // Shaped like a real file the app and a user have both written to.
     const EXISTING: &str = r#"# Consus Gateway: compliance baseline
@@ -263,7 +289,7 @@ followUpQueueMode = "steer"
     fn merge_keeps_user_content_and_drops_inline_key() {
         let home = temp_home("merge");
         fs::write(config_path(&home), EXISTING).unwrap();
-        write_config(&home, &serde_json::from_str(MODELS).unwrap(), &Target::default(), None).unwrap();
+        write_config(&home, &serde_json::from_str(MODELS).unwrap(), &Target::default(), None, helper()).unwrap();
         let out = fs::read_to_string(config_path(&home)).unwrap();
 
         assert!(out.contains("model = \"gpt-5.6-terra:itar\""));
@@ -290,7 +316,7 @@ followUpQueueMode = "steer"
     fn remove_strips_only_the_launchers_keys() {
         let home = temp_home("remove");
         fs::write(config_path(&home), EXISTING).unwrap();
-        write_config(&home, &serde_json::from_str(MODELS).unwrap(), &Target::default(), None).unwrap();
+        write_config(&home, &serde_json::from_str(MODELS).unwrap(), &Target::default(), None, helper()).unwrap();
         remove_config(&home, Path::new("/nowhere/chatgpt-models.json")).unwrap();
         let out = fs::read_to_string(config_path(&home)).unwrap();
 
@@ -307,7 +333,7 @@ followUpQueueMode = "steer"
     #[test]
     fn fresh_machine_ends_with_no_file() {
         let home = temp_home("fresh");
-        write_config(&home, &json!([{ "id": "consus/gpt-5.4:itar" }]), &Target::default(), None).unwrap();
+        write_config(&home, &json!([{ "id": "consus/gpt-5.4:itar" }]), &Target::default(), None, helper()).unwrap();
         assert!(config_path(&home).exists());
         remove_config(&home, Path::new("/nowhere/chatgpt-models.json")).unwrap();
         assert!(!config_path(&home).exists());
@@ -318,7 +344,7 @@ followUpQueueMode = "steer"
     fn a_non_table_in_the_way_is_an_error_not_a_panic() {
         let home = temp_home("conflict");
         fs::write(config_path(&home), "features = 1\n").unwrap();
-        let err = write_config(&home, &json!([{ "id": "consus/gpt-5.4:itar" }]), &Target::default(), None).unwrap_err();
+        let err = write_config(&home, &json!([{ "id": "consus/gpt-5.4:itar" }]), &Target::default(), None, helper()).unwrap_err();
         assert!(err.contains("features"), "{err}");
         let _ = fs::remove_dir_all(&home);
     }
@@ -339,7 +365,7 @@ followUpQueueMode = "steer"
         let home = std::env::temp_dir().join(format!("consus-launcher-chatgpt-target-{}", std::process::id()));
         let _ = fs::remove_dir_all(&home);
         let t = Target { endpoint: "https://ai-proxy.acme.example".into(), level: "fedramp-high".into() };
-        write_config(&home, &json!([{ "id": "consus/gpt-5.4:fedramp-high" }]), &t, None).unwrap();
+        write_config(&home, &json!([{ "id": "consus/gpt-5.4:fedramp-high" }]), &t, None, helper()).unwrap();
         let doc: DocumentMut = fs::read_to_string(config_path(&home)).unwrap().parse().unwrap();
         assert_eq!(doc["model_providers"]["consus"]["base_url"].as_str(), Some("https://ai-proxy.acme.example/v1"));
         assert_eq!(doc["model"].as_str(), Some("gpt-5.4:fedramp-high"));
@@ -365,11 +391,29 @@ followUpQueueMode = "steer"
         let home = std::env::temp_dir().join(format!("consus-launcher-chatgpt-catalog-{}", std::process::id()));
         let _ = fs::remove_dir_all(&home);
         let catalog = home.join("chatgpt-models.json");
-        write_config(&home, &json!([{ "id": "consus/gpt-5.4:itar" }]), &Target::default(), Some(&catalog)).unwrap();
+        write_config(&home, &json!([{ "id": "consus/gpt-5.4:itar" }]), &Target::default(), Some(&catalog), helper()).unwrap();
         let doc: DocumentMut = fs::read_to_string(config_path(&home)).unwrap().parse().unwrap();
         assert_eq!(doc["model_catalog_json"].as_str(), Some(catalog.to_str().unwrap()));
         remove_config(&home, &catalog).unwrap();
         assert!(!config_path(&home).exists(), "nothing of the user's was in it, so the file goes");
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn the_app_can_ask_the_key_helper_and_sign_out_removes_that() {
+        let home = std::env::temp_dir().join(format!("consus-launcher-chatgpt-helper-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&home);
+        fs::create_dir_all(home.join(".codex")).unwrap();
+        fs::write(config_path(&home), "notify = [\"x\"]\n").unwrap();
+        write_config(&home, &json!([{ "id": "consus/gpt-5.4:itar" }]), &Target::default(), None, helper()).unwrap();
+        let doc: DocumentMut = fs::read_to_string(config_path(&home)).unwrap().parse().unwrap();
+        let consus = &doc["model_providers"]["consus"];
+        assert_eq!(consus["auth"]["command"].as_str(), Some(helper().to_str().unwrap()));
+        assert_eq!(consus["env_http_headers"]["x-api-key"].as_str(), Some("CONSUS_API_KEY"), "the environment route stays");
+        remove_config(&home, Path::new("/nowhere/chatgpt-models.json")).unwrap();
+        let left = fs::read_to_string(config_path(&home)).unwrap();
+        assert!(!left.contains("auth") && !left.contains("consus"), "{left}");
+        assert!(left.contains("notify"), "the user's own keys stay");
         let _ = fs::remove_dir_all(&home);
     }
 }
