@@ -81,3 +81,68 @@ pub async fn validate_key(key: String) -> Result<ConnectResult, ConnectError> {
         email,
     })
 }
+
+/// Where the portal says which launcher is newest: a static file anyone can
+/// read, so the check sends no key and nothing about the user.
+const LATEST_URL: &str = "https://portal.consus.io/assets/launcher/latest.json";
+/// The only place an update may point: this project's releases.
+const RELEASES: &str = "https://github.com/consusindustries/consus-launcher/releases/";
+
+#[derive(Debug, PartialEq, Serialize)]
+pub struct Update {
+    pub version: String,
+    pub url: String,
+}
+
+fn semver(v: &str) -> Option<(u64, u64, u64)> {
+    let mut it = v.trim().trim_start_matches('v').split('.').map(|p| p.parse::<u64>().ok());
+    Some((it.next()??, it.next()??, it.next()??))
+}
+
+/// The update in `latest`, when it is newer than `current` and its link is
+/// one of this project's releases; anything else is ignored.
+fn newer(latest: &serde_json::Value, current: &str) -> Option<Update> {
+    let version = latest.get("version")?.as_str()?.trim().trim_start_matches('v');
+    let url = latest.get("url")?.as_str()?;
+    if !url.starts_with(RELEASES) || url.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return None;
+    }
+    (semver(version)? > semver(current)?).then(|| Update { version: version.to_string(), url: url.to_string() })
+}
+
+/// A newer launcher, if the settings allow telling the user and the portal
+/// lists one. Any failure (offline, a blocked host, a bad file) is silence.
+#[tauri::command]
+pub async fn check_update() -> Option<Update> {
+    if !crate::settings::current().ok()?.update_notice {
+        return None;
+    }
+    let client = reqwest::Client::builder()
+        .user_agent(USER_AGENT)
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .ok()?;
+    let latest: serde_json::Value = client.get(LATEST_URL).send().await.ok()?.error_for_status().ok()?.json().await.ok()?;
+    newer(&latest, env!("CARGO_PKG_VERSION"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_update_is_newer_and_points_at_our_releases() {
+        let latest = |v: &str, url: &str| serde_json::json!({ "version": v, "url": url });
+        let ours = "https://github.com/consusindustries/consus-launcher/releases/tag/v0.3.0";
+        assert_eq!(
+            newer(&latest("0.3.0", ours), "0.2.4"),
+            Some(Update { version: "0.3.0".into(), url: ours.into() })
+        );
+        assert_eq!(newer(&latest("v0.2.10", ours), "0.2.9").map(|u| u.version), Some("0.2.10".into()));
+        assert_eq!(newer(&latest("0.2.4", ours), "0.2.4"), None, "same version");
+        assert_eq!(newer(&latest("0.2.3", ours), "0.2.4"), None, "older");
+        assert_eq!(newer(&latest("1.0", ours), "0.2.4"), None, "not a version");
+        assert_eq!(newer(&latest("9.9.9", "https://evil.example/consus-launcher.dmg"), "0.2.4"), None, "not our releases");
+        assert_eq!(newer(&serde_json::json!({ "version": "9.9.9" }), "0.2.4"), None, "no link");
+    }
+}

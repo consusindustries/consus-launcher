@@ -35,7 +35,7 @@ Consus Launcher is a small open source desktop app for macOS, with Windows suppo
 
 ## What it connects to
 
-The launcher makes one kind of network request: `GET https://api.consus.io/v1/models` (or the same path on your organization's endpoint, if your IT admin set one), when you connect and each time the launcher starts, to check the key and list your models. `https://portal.consus.io` only ever opens in your browser. (The Terminal installer downloads from GitHub; the app itself never does.)
+The launcher makes two kinds of network request, both to Consus. `GET https://api.consus.io/v1/models` (or the same path on your organization's endpoint, if your IT admin set one), when you connect and each time the launcher starts, to check the key and list your models. And `GET https://portal.consus.io/assets/launcher/latest.json`, a public file naming the newest release, so it can say when an update is out; it sends no key and nothing about you, and is off by default on machines IT manages (`UpdateNotice` below). The portal itself only ever opens in your browser. (The Terminal installer downloads from GitHub; the app itself never does.)
 
 The tools you open send their requests to `api.consus.io`, or to your organization's endpoint, with the settings the launcher writes. What else a tool does is up to the tool. For ChatGPT and Codex, the launcher's config turns off analytics, feedback, and OpenTelemetry export, and Codex's update check; for Pi, install telemetry and the update check. On its first run, Pi downloads `fd` and `ripgrep` from GitHub, because its search tools need them.
 
@@ -49,6 +49,7 @@ On macOS the launcher reads settings for the `io.consus.launcher` preferences do
 | `ComplianceLevel` | string | The compliance level every tool is set up for: `itar` (default), `fedramp-low`, `fedramp-moderate`, `fedramp-high`, `il2`, `il4`, or `il5`, each optionally with `+itar` (for example `fedramp-high+itar`). |
 | `Tools` | array of strings | The tools shown: `claude-desktop`, `chatgpt-desktop`, `claude-code`, `codex-cli`, `pi`. Default: all. When a tool is left out, the launcher removes the settings it wrote for that tool when it starts, as sign out does; if Claude or ChatGPT is open then, at a later start. |
 | `OrgName` | string | Shown in the launcher's header. |
+| `UpdateNotice` | boolean | Whether the launcher says when a newer version is out (it reads a public file on `portal.consus.io` and links to the release; it never updates itself). Default: on, except on a machine with settings from device management, where IT pushes updates. |
 
 The launcher reads these when it starts; restart it after a change. If a value is present but invalid or blank, or a settings file cannot be read, the launcher explains the problem and sets nothing up, rather than falling back to defaults. Hiding a tool here is a convenience, not a control: what a key can do is enforced by the Consus gateway.
 
