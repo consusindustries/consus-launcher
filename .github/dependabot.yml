@@ -1,0 +1,31 @@
+# Keeps dependencies current. Each week, at most one pull request per
+# ecosystem for minor and patch updates (grouped); major versions come one
+# by one so each can be checked. Security fixes still arrive as soon as
+# GitHub knows of them. Every pull request runs the full build and tests.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /src-tauri
+    schedule:
+      interval: weekly
+    groups:
+      rust-minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      npm-minor-and-patch:
+        update-types: [minor, patch]
+
+  # Actions stay pinned to a commit; Dependabot updates the pin and its
+  # version comment together.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
