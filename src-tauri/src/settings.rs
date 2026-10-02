@@ -43,6 +43,9 @@ pub struct Settings {
     pub org_name: Option<String>,
     /// Whether any value came from device management.
     pub managed: bool,
+    /// Whether to tell the user a newer launcher exists. Off by default on a
+    /// managed machine, where IT pushes updates.
+    pub update_notice: bool,
 }
 
 impl Settings {
@@ -58,6 +61,7 @@ struct Raw {
     level: Option<Value>,
     tools: Option<Value>,
     org_name: Option<Value>,
+    update_notice: Option<Value>,
     managed: bool,
 }
 
@@ -75,6 +79,27 @@ fn string(v: Option<Value>, key: &str, blank_ok: bool) -> Result<Option<String>,
         }
         Some(Value::String(s)) => Ok(Some(s.trim().to_string())),
         Some(_) => Err(format!("{key} must be a string.")),
+    }
+}
+
+/// A yes/no setting: a plist boolean, or as text (a registry REG_DWORD reads
+/// "0x1"). Anything else is an error, like every other invalid value.
+fn flag(v: Option<Value>, key: &str) -> Result<Option<bool>, String> {
+    let bad = || Err(format!("{key} must be true or false."));
+    match v {
+        None => Ok(None),
+        Some(Value::Bool(b)) => Ok(Some(b)),
+        Some(Value::Number(n)) => match n.as_u64() {
+            Some(0) => Ok(Some(false)),
+            Some(1) => Ok(Some(true)),
+            _ => bad(),
+        },
+        Some(Value::String(s)) => match s.trim().to_ascii_lowercase().as_str() {
+            "true" | "1" | "0x1" | "yes" => Ok(Some(true)),
+            "false" | "0" | "0x0" | "no" => Ok(Some(false)),
+            _ => bad(),
+        },
+        Some(_) => bad(),
     }
 }
 
@@ -165,6 +190,7 @@ fn parse(raw: Raw) -> Result<Settings, String> {
         target: Target { endpoint, level },
         tools,
         org_name: string(raw.org_name, "OrgName", true)?,
+        update_notice: flag(raw.update_notice, "UpdateNotice")?.unwrap_or(!raw.managed),
         managed: raw.managed,
     })
 }
@@ -223,11 +249,12 @@ fn read_from(sources: Vec<(PathBuf, bool)>) -> Result<Raw, (String, bool)> {
             }
             Err(e) => return Err((format!("{} could not be checked ({e}).", path.display()), is_managed)),
         }
-        let slots: [(&str, &mut Option<Value>); 4] = [
+        let slots: [(&str, &mut Option<Value>); 5] = [
             ("EndpointURL", &mut raw.endpoint),
             ("ComplianceLevel", &mut raw.level),
             ("Tools", &mut raw.tools),
             ("OrgName", &mut raw.org_name),
+            ("UpdateNotice", &mut raw.update_notice),
         ];
         for (key, slot) in slots {
             if slot.is_none() {
@@ -276,11 +303,12 @@ fn read_registry() -> Raw {
     use std::os::windows::process::CommandExt;
     let mut raw = Raw::default();
     for (key, is_managed) in REG_SOURCES {
-        let slots: [(&str, &mut Option<Value>); 4] = [
+        let slots: [(&str, &mut Option<Value>); 5] = [
             ("EndpointURL", &mut raw.endpoint),
             ("ComplianceLevel", &mut raw.level),
             ("Tools", &mut raw.tools),
             ("OrgName", &mut raw.org_name),
+            ("UpdateNotice", &mut raw.update_notice),
         ];
         for (name, slot) in slots {
             if slot.is_some() {
@@ -362,7 +390,7 @@ mod tests {
     use serde_json::json;
 
     fn raw(endpoint: Option<Value>, level: Option<Value>, tools: Option<Value>) -> Raw {
-        Raw { endpoint, level, tools, org_name: None, managed: true }
+        Raw { endpoint, level, tools, org_name: None, update_notice: None, managed: true }
     }
 
     #[test]
@@ -500,5 +528,18 @@ mod tests {
         assert_eq!(parse_reg(dword, "ComplianceLevel"), Some(json!("0x1")), "a wrong type is kept, so it reads as invalid");
         let url = "    EndpointURL    REG_SZ    https://proxy.acme.example/v1\r\n";
         assert_eq!(parse_reg(url, "EndpointURL"), Some(json!("https://proxy.acme.example/v1")));
+    }
+
+    #[test]
+    fn update_notice_follows_the_setting_and_defaults_to_off_when_managed() {
+        let with = |v: Option<Value>, managed: bool| {
+            parse(Raw { update_notice: v, managed, ..Raw::default() }).map(|s| s.update_notice)
+        };
+        assert_eq!(with(None, false), Ok(true), "a launcher people installed themselves says so");
+        assert_eq!(with(None, true), Ok(false), "on a managed machine IT pushes updates");
+        assert_eq!(with(Some(json!(true)), true), Ok(true));
+        assert_eq!(with(Some(json!("0x1")), true), Ok(true), "a registry REG_DWORD");
+        assert_eq!(with(Some(json!("false")), false), Ok(false));
+        assert!(with(Some(json!("sometimes")), false).is_err());
     }
 }

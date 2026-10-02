@@ -1090,6 +1090,7 @@ mod tests {
             tools: tools.map(|t| t.into_iter().map(String::from).collect()),
             org_name: None,
             managed: true,
+            update_notice: false,
         }
     }
 

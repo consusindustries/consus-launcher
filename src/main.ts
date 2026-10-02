@@ -457,6 +457,25 @@ async function restoreSession(): Promise<void> {
   setConnected(true);
 }
 
+interface Update {
+  version: string;
+  url: string;
+}
+
+// The portal's note of the newest launcher, read at start and twice a day.
+// The launcher never updates itself: this only points at the download.
+async function checkUpdate(): Promise<void> {
+  const u = await invoke<Update | null>("check_update").catch(() => null);
+  const b = $("update");
+  if (!u) {
+    b.style.display = "none";
+    return;
+  }
+  b.textContent = `Consus Launcher ${u.version} is available. Download ↗`;
+  b.onclick = () => void openUrl(u.url);
+  b.style.display = "";
+}
+
 function init(): void {
   document.querySelectorAll<HTMLElement>(".tool [data-sb]").forEach((el) => {
     el.dataset.d = el.textContent ?? "";
@@ -491,6 +510,8 @@ function init(): void {
   void getCurrentWindow().onFocusChanged(({ payload: focused }) => {
     if (focused && K.def) void refreshTools();
   });
+  void checkUpdate();
+  setInterval(() => void checkUpdate(), 12 * 60 * 60 * 1000);
   void loadSettings()
     .catch(() => undefined)
     .then(restoreSession);

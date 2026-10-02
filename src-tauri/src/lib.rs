@@ -42,6 +42,7 @@ pub fn run() {
             keychain::keychain_set_key,
             keychain::keychain_delete_key,
             portal::validate_key,
+            portal::check_update,
             settings::get_settings,
             tools::detect_tools,
             tools::launch_tool,
