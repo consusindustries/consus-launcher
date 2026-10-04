@@ -2,7 +2,7 @@
 
 Paste your Consus API key once. Click a tool, and it opens already configured for the Consus gateway.
 
-Consus Launcher is a small open source desktop app for macOS, with Windows support in preview. It writes each tool's configuration and launches it. It is a front door, not a gateway and not an enforcement agent.
+Consus Launcher is a small open source desktop app for macOS and Windows. It writes each tool's configuration and launches it. It is a front door, not a gateway and not an enforcement agent.
 
 ## Tools
 
@@ -22,7 +22,7 @@ Consus Launcher is a small open source desktop app for macOS, with Windows suppo
 - **Sign out** removes the launcher's settings from each tool and keeps everything else, including your history.
 - A tool that is not installed links to its vendor. Consus never installs software.
 
-**On Windows (preview):** Claude Desktop's settings go to `%LOCALAPPDATA%\Claude-3p`; ChatGPT's to `%USERPROFILE%\.codex\config.toml`; the terminal tools' profile folders and `Consus` folder are in `%USERPROFILE%`, and each opens in its own console window.
+**On Windows:** Claude Desktop's settings go to `%LOCALAPPDATA%\Claude-3p`; ChatGPT's to `%USERPROFILE%\.codex\config.toml`; the terminal tools' profile folders and `Consus` folder are in `%USERPROFILE%`, and each opens in its own console window.
 
 ## What it does not do
 
@@ -85,7 +85,7 @@ curl -fsSL https://raw.githubusercontent.com/consusindustries/consus-launcher/ma
 
 The checksum catches a corrupted or mismatched download. Who built it is proven by the signature: from v0.2.3, releases are signed by Consus Industries, Inc. (Apple Developer ID, team K4P2D65BQD) and notarized by Apple.
 
-**On Windows (preview):** download the `.msi` for your PC (x64 or ARM64) from [Releases](https://github.com/consusindustries/consus-launcher/releases) and run it. Until the installers are code-signed, Windows SmartScreen warns on first run: choose More info, then Run anyway.
+**On Windows:** download the `.msi` for your PC (x64 or ARM64) from [Releases](https://github.com/consusindustries/consus-launcher/releases) and run it. From v1.0.0, the installer and the app are signed by Consus Industries, Inc. (Microsoft Artifact Signing). Earlier versions were unsigned, and SmartScreen warned on first run.
 
 **From the download (macOS):**
 
