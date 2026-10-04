@@ -2,6 +2,11 @@
 # ecosystem for minor and patch updates (grouped); major versions come one
 # by one so each can be checked. Security fixes still arrive as soon as
 # GitHub knows of them. Every pull request runs the full build and tests.
+#
+# Tauri's npm packages and Rust crates must stay on the same minor version,
+# or the build stops ("Found version mismatched Tauri packages"). Dependabot
+# cannot group across ecosystems, so Tauri gets its own group on each side;
+# its two pull requests are merged together, as one change.
 version: 2
 updates:
   - package-ecosystem: cargo
@@ -9,6 +14,8 @@ updates:
     schedule:
       interval: weekly
     groups:
+      tauri:
+        patterns: ["tauri", "tauri-*"]
       rust-minor-and-patch:
         update-types: [minor, patch]
 
@@ -17,6 +24,8 @@ updates:
     schedule:
       interval: weekly
     groups:
+      tauri:
+        patterns: ["@tauri-apps/*"]
       npm-minor-and-patch:
         update-types: [minor, patch]
 
