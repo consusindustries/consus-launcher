@@ -29,7 +29,7 @@ Decided since (Eric's calls):
 - **Compliance level is ITAR by default** (2026-09-22); an org can set another level through org settings (2026-09-24).
 - **Terminal.app only** for terminal tools on macOS; a terminal picker is later.
 - **One key.** The per-tool key override and the Log tab placeholder were removed (2026-09-24); org settings and the portal's usage view cover those needs.
-- **No auto-update, drafted releases** (2026-09-24). Releases were Mac-only until Windows support landed; they now include a Windows `.msi` (preview, 2026-09-25). See section 9.
+- **No auto-update, drafted releases** (2026-09-24). Releases were Mac-only until Windows support landed; they now include a Windows `.msi` (2026-09-25; signed from v1.0.0). See section 9.
 - **Line count** (2026-09-24): about 1,500 lines of app code is a guideline, not a limit.
 
 ## 3. Repo
@@ -104,16 +104,15 @@ Each template, or the module that embeds it, records the doc it was checked agai
 ## 9. Signing and release
 - `release.yml` builds a universal `.dmg` and `.pkg` on a `v*` tag, attaches SBOMs and checksums, and drafts the GitHub Release for a person to publish.
 - **Signing and notarization** run when the Apple secrets exist (names at the top of `release.yml`) and are skipped otherwise. Consus Industries, Inc. is enrolled (team K4P2D65BQD, 2026-09-29); from v0.2.3 the app and `.dmg` are signed with Developer ID Application, the `.pkg` with Developer ID Installer, and all three are notarized and stapled. A crash of Apple's `notarytool` on the runner is retried up to three times.
-- **Windows:** `.msi` for x64 and ARM64 in each release (preview). Not code-signed until Azure Trusted Signing is set up; window placement in the glass is not planned on Windows (Eric, 2026-09-25).
+- **Windows:** `.msi` for x64 and ARM64 in each release. From v1.0.0 the app and the `.msi` are signed with Microsoft Artifact Signing (account `consus-signing`, profile `consus-launcher`; the Consus Industries identity validation expires 2029-01-01, renew before then). Window placement in the glass is not planned on Windows (Eric, 2026-09-25).
 - **No in-app updater:** it would be a network host beyond the Consus hosts.
 
 ## 10. Status and what's next
-Done: connect flow, five tools on macOS, glass placement, quit together, sign out, CI with tests, release pipeline, README, Terminal installer, org settings from device management, removing a turned-off tool's settings, model names and limits from the gateway's `/v1/models` (Pi's list, the Codex and ChatGPT catalog, Claude Code's context window), signed and notarized macOS releases (v0.2.3).
+Done: connect flow, five tools on macOS, glass placement, quit together, sign out, CI with tests, release pipeline, README, Terminal installer, org settings from device management, removing a turned-off tool's settings, model names and limits from the gateway's `/v1/models` (Pi's list, the Codex and ChatGPT catalog, Claude Code's context window), signed and notarized macOS releases (v0.2.3), ChatGPT's key from the helper (v0.2.4), Windows at parity with signed releases and an update notice fed by the portal (v1.0.0).
 
 Next, in order:
 1. Org settings from the portal, fetched with the user's key, once the portal serves them (later; device management covers it until then). The design is kept with the Consus services.
 2. Device-management kit: the portal's Launcher page already builds the settings profile; next is its privacy (PPPC) payload, so employees get no Automation or Accessibility prompts, which the signed app now makes possible.
-3. Windows: tool detection, configs, launch, quit-with-launcher, org settings from the registry, and `.msi` releases (preview, 2026-09-25). Code signing waits on Azure Trusted Signing.
 
 ## 11. Working style
 Plan before building. One PR at a time, reviewed, with CI green before merge. Ask before a decision that changes scope; if something is not in these notes, the default answer is no. Short commit messages. No em dashes anywhere in copy or comments.

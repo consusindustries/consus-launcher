@@ -2,9 +2,12 @@
 
 What changed in each release. Each release's GitHub page shows its section.
 
-## Unreleased
+## v1.0.0 (2026-10-03)
 
+- Windows is no longer a preview: the `.msi` and the app are signed by Consus Industries, Inc. (Microsoft Artifact Signing), so Windows shows the publisher instead of "Unknown publisher".
 - Says when a newer launcher is out: it reads a public file on `portal.consus.io` and links to the release. It never updates itself. Off by default on machines IT manages; the `UpdateNotice` setting turns it on or off.
+- README: how to update and uninstall, and the signing identity IT needs to pre-approve the macOS permissions.
+- Tauri 2.12.
 
 ## v0.2.4 (2026-10-02)
 

@@ -510,7 +510,7 @@ dependencies = [
 
 [[package]]
 name = "consus-launcher"
-version = "0.2.4"
+version = "1.0.0"
 dependencies = [
  "base64 0.23.1",
  "keyring",

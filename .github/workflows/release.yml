@@ -337,7 +337,7 @@ jobs:
               echo "$changes"
               echo
             fi
-            echo "Consus Launcher $VERSION for macOS (Apple silicon and Intel) and Windows (x64 and ARM64, preview)."
+            echo "Consus Launcher $VERSION for macOS (Apple silicon and Intel) and Windows (x64 and ARM64)."
             echo
             echo "macOS: the .dmg, or the .pkg to install into /Applications. Windows: the .msi for your PC."
             echo "SHA256SUMS.txt lists the checksums; the .cdx.json files are the CycloneDX SBOMs."
