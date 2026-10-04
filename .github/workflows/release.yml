@@ -22,8 +22,14 @@ name: Release
 #   APPLE_API_KEY_P8            contents of that key's AuthKey_<id>.p8
 # The first four go together, and so do the last three.
 #
-# Windows gets an .msi for x64 and ARM64. It is not code-signed yet (Azure
-# Trusted Signing is not set up), so Windows SmartScreen warns on first run.
+# Windows gets an .msi for x64 and ARM64. The app and the .msi are signed
+# with Microsoft Artifact Signing (account consus-signing, certificate profile
+# consus-launcher, identity Consus Industries, Inc.) when these secrets exist,
+# and are unsigned otherwise:
+#   AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET
+#                               an app registration with the Artifact Signing
+#                               Certificate Profile Signer role on the account
+# Only the signing steps see them, not the build.
 # No updater manifest: the app does not auto-update, because an updater would
 # be a network host beyond the two Consus hosts.
 
@@ -194,6 +200,9 @@ jobs:
 
   windows:
     runs-on: windows-latest
+    env:
+      # Whether to sign; says nothing else about the secrets.
+      SIGN: ${{ github.event_name != 'pull_request' && secrets.AZURE_CLIENT_ID != '' && 'true' || 'false' }}
     strategy:
       fail-fast: false
       matrix:
@@ -226,8 +235,52 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      # Built, signed, then packaged, so the app inside the .msi is signed too.
+      - name: Build the app
+        run: npm run tauri -- build --target ${{ matrix.target }} --no-bundle
+
+      - name: Sign the app
+        if: env.SIGN == 'true'
+        uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: https://eus.codesigning.azure.net/
+          signing-account-name: consus-signing
+          certificate-profile-name: consus-launcher
+          files: ${{ github.workspace }}\src-tauri\target\${{ matrix.target }}\release\consus-launcher.exe
+          description: Consus Launcher
+          description-url: https://github.com/consusindustries/consus-launcher
+
       - name: Build the .msi
-        run: npm run tauri -- build --target ${{ matrix.target }} --bundles msi
+        run: npm run tauri -- bundle --target ${{ matrix.target }} --bundles msi
+
+      - name: Sign the .msi
+        if: env.SIGN == 'true'
+        uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: https://eus.codesigning.azure.net/
+          signing-account-name: consus-signing
+          certificate-profile-name: consus-launcher
+          files-folder: ${{ github.workspace }}\src-tauri\target\${{ matrix.target }}\release\bundle\msi
+          files-folder-filter: msi
+          description: Consus Launcher
+          description-url: https://github.com/consusindustries/consus-launcher
+
+      - name: Check the signatures
+        if: env.SIGN == 'true'
+        shell: pwsh
+        run: |
+          $files = @(Get-Item "src-tauri\target\${{ matrix.target }}\release\consus-launcher.exe") + @(Get-ChildItem "src-tauri\target\${{ matrix.target }}\release\bundle\msi\*.msi")
+          foreach ($f in $files) {
+            $s = Get-AuthenticodeSignature $f.FullName
+            "{0}: {1}, {2}" -f $f.Name, $s.Status, $s.SignerCertificate.Subject
+            if ($s.Status -ne 'Valid') { exit 1 }
+          }
 
       - name: Collect the installer
         shell: bash
@@ -274,6 +327,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           VERSION: ${{ needs.macos.outputs.version }}
           NOTARIZED: ${{ needs.macos.outputs.notarized }}
+          WINDOWS_SIGNED: ${{ secrets.AZURE_CLIENT_ID != '' && 'true' || 'false' }}
         run: |
           # This release's section of CHANGELOG.md, without its heading.
           changes=$(awk -v v="v$VERSION" '/^## /{ if (p) exit; p = ($2 == v); next } p' CHANGELOG.md)
@@ -288,8 +342,12 @@ jobs:
             echo "macOS: the .dmg, or the .pkg to install into /Applications. Windows: the .msi for your PC."
             echo "SHA256SUMS.txt lists the checksums; the .cdx.json files are the CycloneDX SBOMs."
             echo
-            echo "The Windows installers are not code-signed yet, so Windows SmartScreen warns on first run:"
-            echo "choose More info, then Run anyway."
+            if [ "$WINDOWS_SIGNED" = "true" ]; then
+              echo "The Windows installers and the app are signed by Consus Industries, Inc."
+            else
+              echo "The Windows installers are not code-signed yet, so Windows SmartScreen warns on first run:"
+              echo "choose More info, then Run anyway."
+            fi
             echo
             echo "Or install from Terminal (checks the checksum first):"
             echo
