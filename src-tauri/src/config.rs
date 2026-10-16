@@ -137,6 +137,17 @@ pub fn write_claude_desktop(home: &Path, helper: &Path, models: &Value, t: &Targ
         "inferenceCredentialHelper": helper.to_string_lossy(),
         "chatTabEnabled": true,
         "inferenceModels": picked,
+        // No traffic to Anthropic (the app's own settings schema, 1.26832.0):
+        // crash reports; usage analytics and diagnostic uploads; connector
+        // icons, the connector directory and the artifact preview frame, so
+        // artifacts do not render; and update checks, so IT installs new
+        // versions. Claude.ai sign-in is hidden too, the way /login is in
+        // Claude Code: it would send requests straight to Anthropic.
+        "disableEssentialTelemetry": true,
+        "disableNonessentialTelemetry": true,
+        "disableNonessentialServices": true,
+        "disableAutoUpdates": true,
+        "disableDeploymentModeChooser": true,
         "banner": {
             "enabled": true,
             "text": "Runs on the Consus gateway.",
@@ -224,6 +235,24 @@ mod tests {
         fs::create_dir_all(&lib).unwrap();
         fs::write(lib.join("_meta.json"), meta).unwrap();
         (home, lib)
+    }
+
+    #[test]
+    fn the_entry_keeps_the_app_off_anthropics_network() {
+        let (home, lib) = library("entry", r#"{ "appliedId": null, "entries": [] }"#);
+        let models = json!([{ "id": "consus/claude-sonnet-5:itar" }]);
+        write_claude_desktop(&home, Path::new("/x/helper"), &models, &Target::default()).unwrap();
+        let entry: Value = serde_json::from_str(&fs::read_to_string(lib.join(format!("{ENTRY_ID}.json"))).unwrap()).unwrap();
+        for k in [
+            "disableEssentialTelemetry",
+            "disableNonessentialTelemetry",
+            "disableNonessentialServices",
+            "disableAutoUpdates",
+            "disableDeploymentModeChooser",
+        ] {
+            assert_eq!(entry[k], true, "{k}");
+        }
+        let _ = fs::remove_dir_all(&home);
     }
 
     #[test]
