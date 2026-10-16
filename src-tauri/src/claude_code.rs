@@ -28,13 +28,16 @@ pub const WORK_DIR: &str = "Consus";
 // has one, else these, else anything but Sonnet 5.
 const BACKGROUND_PREFERENCE: [&str; 3] = ["claude-haiku-4-5", "claude-sonnet-4-5", "claude-sonnet-4-6"];
 
-const OWNED_TOP: [&str; 3] = ["apiKeyHelper", "model", "availableModels"];
-const OWNED_ENV: [&str; 5] = [
+const OWNED_TOP: [&str; 4] = ["apiKeyHelper", "skipWebFetchPreflight", "model", "availableModels"];
+const OWNED_ENV: [&str; 8] = [
     "ANTHROPIC_BASE_URL",
     "ANTHROPIC_DEFAULT_OPUS_MODEL",
     "ANTHROPIC_DEFAULT_SONNET_MODEL",
     "ANTHROPIC_DEFAULT_HAIKU_MODEL",
     "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+    "CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL",
+    "DISABLE_LOGIN_COMMAND",
 ];
 
 pub fn profile_dir(home: &Path) -> PathBuf {
@@ -88,6 +91,11 @@ fn owned(
     let mut top = Map::new();
     // apiKeyHelper runs through the shell; the path can contain a space.
     top.insert("apiKeyHelper".into(), json!(format!("\"{}\"", crate::config::command_path(helper))));
+    // Zero traffic to Anthropic takes three settings, each covering calls the
+    // others miss (measured on Claude Code 2.1.300; the Consus guide's "Keep
+    // Claude Code off Anthropic's network"). This one stops WebFetch sending
+    // each hostname to api.anthropic.com before fetching it.
+    top.insert("skipWebFetchPreflight".into(), json!(true));
     top.insert("model".into(), json!(main.id));
     top.insert("availableModels".into(), json!(list.iter().map(|m| &m.id).collect::<Vec<_>>()));
 
@@ -96,6 +104,14 @@ fn owned(
     env.insert("ANTHROPIC_DEFAULT_OPUS_MODEL".into(), json!(opus.id));
     env.insert("ANTHROPIC_DEFAULT_SONNET_MODEL".into(), json!(sonnet.id));
     env.insert("ANTHROPIC_DEFAULT_HAIKU_MODEL".into(), json!(background.id));
+    // Analytics, error reports, update checks and flag calls; then the official
+    // plugin marketplace download, which the first does not cover and which
+    // falls back to a git clone from github.com over SSH when blocked.
+    env.insert("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC".into(), json!("1"));
+    env.insert("CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL".into(), json!("1"));
+    // /login would sign this profile in to a Claude.ai or Console account,
+    // which sends requests straight to Anthropic instead of the gateway.
+    env.insert("DISABLE_LOGIN_COMMAND".into(), json!("1"));
     // Claude Code does not recognize model:level ids and would assume 200K,
     // so a larger window is spelled out: the gateway's, or 1M for a 5-series
     // model from a gateway that does not report windows.
@@ -206,6 +222,10 @@ mod tests {
         assert_eq!(doc["env"]["ANTHROPIC_DEFAULT_SONNET_MODEL"], "claude-sonnet-5:itar");
         assert_eq!(doc["env"]["ANTHROPIC_DEFAULT_HAIKU_MODEL"], "claude-sonnet-4-5:itar", "never Sonnet 5 in the background slot");
         assert_eq!(doc["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"], "1000000");
+        assert_eq!(doc["skipWebFetchPreflight"], true);
+        assert_eq!(doc["env"]["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"], "1");
+        assert_eq!(doc["env"]["CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL"], "1");
+        assert_eq!(doc["env"]["DISABLE_LOGIN_COMMAND"], "1");
         assert_eq!(doc["apiKeyHelper"], "\"/Users/x/Library/Application Support/io.consus.launcher/claude-code-key-helper\"");
         let ids: Vec<&str> = doc["availableModels"].as_array().unwrap().iter().map(|v| v.as_str().unwrap()).collect();
         assert_eq!(ids, ["claude-opus-5-5:itar", "claude-opus-5:itar", "claude-sonnet-5:itar", "claude-sonnet-4-5:itar"]);
