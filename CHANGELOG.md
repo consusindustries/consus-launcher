@@ -2,6 +2,12 @@
 
 What changed in each release. Each release's GitHub page shows its section.
 
+## v1.1.0 (2026-10-18)
+
+- Claude Code and Claude Desktop no longer contact Anthropic on their own; only the gateway's calls leave the machine. The launcher turns off their analytics, crash and error reports, feature flags, update checks, Claude Code's plugin marketplace download and WebFetch domain check, and Claude Desktop's connector icons, connector directory, and artifact preview.
+- In Claude Desktop, artifacts no longer render, and the app no longer updates itself: install new versions yourself. Claude Code doesn't update itself either; run `claude update`.
+- Signing in to a Claude.ai account is turned off, since it would bypass the gateway: `/login` in Claude Code, and the Claude.ai option on Claude Desktop's start screen.
+
 ## v1.0.0 (2026-10-03)
 
 - Windows is no longer a preview: the `.msi` and the app are signed by Consus Industries, Inc. (Microsoft Artifact Signing), so Windows shows the publisher instead of "Unknown publisher".
