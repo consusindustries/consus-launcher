@@ -4,6 +4,22 @@ Sign in with your company account once. Click a tool, and it opens already confi
 
 Consus Launcher is a small open source desktop app for macOS and Windows. It writes each tool's configuration and launches it. It is a front door, not a gateway and not an enforcement agent.
 
+## Signing in
+
+The launcher has no accounts of its own. It signs you in through the Consus portal, and the portal signs you in through your organization's identity provider (Okta, Microsoft Entra ID, Google Workspace, or any SAML or OIDC provider your Consus admin has connected). Click **Sign in with Consus**, approve in the browser, done.
+
+What that gets your organization:
+
+- **Every request has a name on it.** The portal issues a key owned by the person who signed in, labelled with their computer, and expiring after 30 days. The launcher keeps it in the system keychain and hands it to each tool. Nobody copies a key, so there is no key to share, leak, or lose track of.
+- **Admins see and revoke from one place.** Each key is listed in the portal under the person and computer it belongs to. Revoke it there and every tool on that computer stops at its next request. Leaving the organization, losing a laptop, and rotating on a schedule are all the same action.
+- **Sign out means revoked.** Signing out in the launcher revokes the key in Consus before forgetting it, so it does not live on for the rest of its 30 days.
+- **One key per computer.** Signing in again replaces and revokes the previous key. The same key serves the [Consus credential helper](https://docs.consus.io/credential-helper) for tools the launcher does not open, such as Factory, and the launcher adopts a key the helper already obtained.
+- **The source is open; the identity is yours.** Anyone can read what the launcher does. What it cannot do is mint a credential: only your identity provider, through the Consus portal, can put a person behind a key, and only the Consus gateway decides what that key may reach.
+
+Together with the gateway, which decides where every request goes and refuses what is outside the boundary, and the device-management settings below, which decide what each person's tools may do, this is the whole chain: your IdP decides who, the portal issues the credential, the gateway enforces, the launcher sets up the tools.
+
+Organizations that have not connected an identity provider yet can paste a key from the portal instead ("Have an API key instead?" on the sign-in screen). A pasted key has no expiry of its own and is revoked in the portal, not by signing out.
+
 ## Tools
 
 | Tool | How it opens | Where the launcher writes its settings |
@@ -16,8 +32,7 @@ Consus Launcher is a small open source desktop app for macOS and Windows. It wri
 
 - **Your own setup is left alone.** Claude Code, Codex CLI, and Pi each get a separate profile folder, so `~/.claude` and `~/.pi` are never touched and Codex CLI runs apart from `~/.codex`. ChatGPT has no such option: its settings are merged into `~/.codex/config.toml`, which your own `codex` also reads. Terminal tools start in an empty `~/Consus` folder.
 - **Models:** each tool is set up with the ITAR models your key can use, from `GET /v1/models`. ChatGPT and Codex also get a model catalog built from ChatGPT's own Codex engine, so their pickers list the Consus models by name.
-- **Sign in** opens the Consus portal in your browser. You sign in the way your organization does (SSO), click Approve, and the portal issues a key that is yours alone, named after this computer, and expires after 30 days; the launcher signs you in again when it does. You never see it. Organizations without SSO connected can paste a key from the portal instead. If the [Consus credential helper](https://docs.consus.io/credential-helper) already signed in on this machine, the launcher uses that key rather than asking again.
-- **The key** lives in the macOS Keychain (Windows Credential Manager on Windows) and is never written to a file. Tools fetch it through the launcher itself (a keychain helper), or receive it in the environment of the process the launcher starts. The Keys tab shows who is signed in and when the key expires.
+- **The key** (see "Signing in" above) lives in the macOS Keychain (Windows Credential Manager on Windows) and is never written to a file. Tools fetch it through the launcher itself (a keychain helper), or receive it in the environment of the process the launcher starts. The Keys tab shows who is signed in and when the key expires.
 - **App windows:** on macOS a tool opens inside the launcher's glass area, then moves freely (not yet on Windows). Quitting the launcher quits the tools it started, never ones you opened yourself.
 - **Claude and ChatGPT restart once.** If either app is already open when you click it, the launcher asks it to quit and reopens it in gateway mode, because both read their settings only at startup. On Windows, where closing these apps only hides them to the tray, the launcher ends them if they do not quit.
 - **Sign out** revokes this computer's key in Consus, so it stops working everywhere, then removes the launcher's settings from each tool and keeps everything else, including your history. A pasted key can only be revoked in the portal, and the launcher says so. One working key per computer: signing in or pasting a key while a sign-in key is held revokes that one, and signing out of a key adopted from the credential helper signs the helper out too.
