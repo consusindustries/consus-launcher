@@ -9,9 +9,16 @@
 //   only source, cwd ~/Consus; a request was answered.
 //
 // settings.json is merged key by key: the launcher owns apiKeyHelper, model,
-// availableModels, and the gateway keys under env; everything else, including
-// what Claude Code itself writes there, stays. Sign out removes only those.
-// The profile directory is never deleted: the user's history lives in it.
+// availableModels, the gateway keys under env, and the WebSearch and
+// WebFetch rules in permissions.deny, by name, as it owns the env keys by
+// name; everything else, including what Claude Code itself writes there,
+// stays. Sign out removes only those. The profile directory is
+// never deleted: the user's history lives in it.
+//
+// Not written here: allowedProviders, which refuses every claude.ai and
+// Console sign-in. Claude Code reads it from managed settings only (it is
+// inert in a user file), so it belongs in the org's managed-settings.json,
+// which the portal's deployment page generates.
 
 use serde_json::{json, Map, Value};
 use std::fs;
@@ -29,7 +36,7 @@ pub const WORK_DIR: &str = "Consus";
 const BACKGROUND_PREFERENCE: [&str; 3] = ["claude-haiku-4-5", "claude-sonnet-4-5", "claude-sonnet-4-6"];
 
 const OWNED_TOP: [&str; 4] = ["apiKeyHelper", "skipWebFetchPreflight", "model", "availableModels"];
-const OWNED_ENV: [&str; 8] = [
+const OWNED_ENV: [&str; 13] = [
     "ANTHROPIC_BASE_URL",
     "ANTHROPIC_DEFAULT_OPUS_MODEL",
     "ANTHROPIC_DEFAULT_SONNET_MODEL",
@@ -37,8 +44,16 @@ const OWNED_ENV: [&str; 8] = [
     "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
     "CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL",
+    "DISABLE_TELEMETRY",
+    "DISABLE_ERROR_REPORTING",
+    "DISABLE_FEEDBACK_COMMAND",
     "DISABLE_LOGIN_COMMAND",
+    "CLAUDE_CODE_DISABLE_LAUNCHER_SIGN_IN",
+    "CLAUDE_CODE_DISABLE_WEB_FETCH",
 ];
+/// The permissions.deny rules the launcher owns (Target::denied_web_tools
+/// says which of them a launch writes).
+const OWNED_DENY: [&str; 2] = ["WebSearch", "WebFetch"];
 
 pub fn profile_dir(home: &Path) -> PathBuf {
     home.join(PROFILE_DIR)
@@ -106,12 +121,25 @@ fn owned(
     env.insert("ANTHROPIC_DEFAULT_HAIKU_MODEL".into(), json!(background.id));
     // Analytics, error reports, update checks and flag calls; then the official
     // plugin marketplace download, which the first does not cover and which
-    // falls back to a git clone from github.com over SSH when blocked.
+    // falls back to a git clone from github.com over SSH when blocked. The
+    // next three are each covered by the first and set as well, so that the
+    // telemetry, error-report, and feedback switches Anthropic documents on
+    // their own are visibly off to anyone reading the file.
     env.insert("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC".into(), json!("1"));
     env.insert("CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL".into(), json!("1"));
+    env.insert("DISABLE_TELEMETRY".into(), json!("1"));
+    env.insert("DISABLE_ERROR_REPORTING".into(), json!("1"));
+    env.insert("DISABLE_FEEDBACK_COMMAND".into(), json!("1"));
     // /login would sign this profile in to a Claude.ai or Console account,
-    // which sends requests straight to Anthropic instead of the gateway.
+    // which sends requests straight to Anthropic instead of the gateway; so
+    // would the sign-in Claude Code offers when a desktop launcher starts it.
     env.insert("DISABLE_LOGIN_COMMAND".into(), json!("1"));
+    env.insert("CLAUDE_CODE_DISABLE_LAUNCHER_SIGN_IN".into(), json!("1"));
+    if !t.web_access {
+        // Removes the WebFetch tool (Claude Code 2.1.285 and later); the deny
+        // rule below covers earlier versions.
+        env.insert("CLAUDE_CODE_DISABLE_WEB_FETCH".into(), json!("1"));
+    }
     // Claude Code does not recognize model:level ids and would assume 200K,
     // so a larger window is spelled out: the gateway's, or 1M for a 5-series
     // model from a gateway that does not report windows.
@@ -147,8 +175,36 @@ pub fn write_settings(home: &Path, helper: &Path, models_json: &Value, t: &Targe
     }
     env_obj.extend(env);
 
+    set_deny(&mut doc, &t.denied_web_tools()).map_err(|e| format!("{}: {e}", path.display()))?;
+
     let text = serde_json::to_string_pretty(&Value::Object(doc)).map_err(|e| e.to_string())?;
     fs::write(&path, text + "\n").map_err(|e| format!("{}: {e}", path.display()))
+}
+
+/// Replaces the launcher's entries in permissions.deny with `ours`, keeping
+/// every other rule. A container left empty goes too; callers only get here
+/// when there is something to write or remove, so an empty list that was
+/// already there is never touched.
+fn set_deny(doc: &mut Map<String, Value>, ours: &[&str]) -> Result<(), String> {
+    let perms = doc
+        .entry("permissions")
+        .or_insert_with(|| json!({}))
+        .as_object_mut()
+        .ok_or("'permissions' is not an object")?;
+    let deny = perms
+        .entry("deny")
+        .or_insert_with(|| json!([]))
+        .as_array_mut()
+        .ok_or("'permissions.deny' is not a list")?;
+    deny.retain(|v| !v.as_str().is_some_and(|r| OWNED_DENY.contains(&r)));
+    deny.extend(ours.iter().map(|r| json!(r)));
+    if deny.is_empty() {
+        perms.remove("deny");
+    }
+    if perms.is_empty() {
+        doc.remove("permissions");
+    }
+    Ok(())
 }
 
 /// Removes the launcher's keys and leaves everything else, including the
@@ -169,6 +225,12 @@ pub fn remove_settings(home: &Path) -> Result<(), String> {
         if env.is_empty() {
             doc.remove("env");
         }
+    }
+    let has_ours = doc["permissions"]["deny"]
+        .as_array()
+        .is_some_and(|d| d.iter().any(|v| v.as_str().is_some_and(|r| OWNED_DENY.contains(&r))));
+    if has_ours {
+        set_deny(&mut doc, &[])?;
     }
     if doc.is_empty() {
         return fs::remove_file(&path).map_err(|e| e.to_string());
@@ -226,6 +288,12 @@ mod tests {
         assert_eq!(doc["env"]["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"], "1");
         assert_eq!(doc["env"]["CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL"], "1");
         assert_eq!(doc["env"]["DISABLE_LOGIN_COMMAND"], "1");
+        assert_eq!(doc["env"]["CLAUDE_CODE_DISABLE_LAUNCHER_SIGN_IN"], "1");
+        assert_eq!(doc["env"]["DISABLE_TELEMETRY"], "1");
+        assert_eq!(doc["env"]["DISABLE_ERROR_REPORTING"], "1");
+        assert_eq!(doc["env"]["DISABLE_FEEDBACK_COMMAND"], "1");
+        assert_eq!(doc["env"]["CLAUDE_CODE_DISABLE_WEB_FETCH"], "1");
+        assert_eq!(doc["permissions"]["deny"], json!(["WebSearch", "WebFetch"]));
         assert_eq!(doc["apiKeyHelper"], "\"/Users/x/Library/Application Support/io.consus.launcher/claude-code-key-helper\"");
         let ids: Vec<&str> = doc["availableModels"].as_array().unwrap().iter().map(|v| v.as_str().unwrap()).collect();
         assert_eq!(ids, ["claude-opus-5-5:itar", "claude-opus-5:itar", "claude-sonnet-5:itar", "claude-sonnet-4-5:itar"]);
@@ -236,12 +304,48 @@ mod tests {
     fn remove_strips_only_ours_and_keeps_the_directory() {
         let home = temp_home("remove");
         fs::create_dir_all(profile_dir(&home)).unwrap();
-        fs::write(settings_path(&home), r#"{ "theme": "dark", "env": { "FOO": "1" } }"#).unwrap();
+        fs::write(
+            settings_path(&home),
+            r#"{ "theme": "dark", "env": { "FOO": "1" }, "permissions": { "deny": ["Read(./.env)", "WebFetch"], "allow": ["Bash(ls)"] } }"#,
+        )
+        .unwrap();
         write_settings(&home, &helper(), &serde_json::from_str(MODELS).unwrap(), &Target::default()).unwrap();
+        let doc: Value = serde_json::from_str(&fs::read_to_string(settings_path(&home)).unwrap()).unwrap();
+        assert_eq!(doc["permissions"]["deny"], json!(["Read(./.env)", "WebSearch", "WebFetch"]), "the user's rule stays, ours once");
         remove_settings(&home).unwrap();
         let doc: Value = serde_json::from_str(&fs::read_to_string(settings_path(&home)).unwrap()).unwrap();
-        assert_eq!(doc, json!({ "theme": "dark", "env": { "FOO": "1" } }));
+        assert_eq!(
+            doc,
+            json!({ "theme": "dark", "env": { "FOO": "1" }, "permissions": { "deny": ["Read(./.env)"], "allow": ["Bash(ls)"] } })
+        );
         assert!(profile_dir(&home).exists());
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn a_deny_list_without_our_rules_is_left_alone_on_sign_out() {
+        let home = temp_home("deny-theirs");
+        fs::create_dir_all(profile_dir(&home)).unwrap();
+        let theirs = r#"{ "permissions": { "deny": [] }, "apiKeyHelper": "x" }"#;
+        fs::write(settings_path(&home), theirs).unwrap();
+        remove_settings(&home).unwrap();
+        let doc: Value = serde_json::from_str(&fs::read_to_string(settings_path(&home)).unwrap()).unwrap();
+        assert_eq!(doc, json!({ "permissions": { "deny": [] } }), "an empty list the user placed stays");
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn web_access_on_keeps_fetch_and_still_denies_search() {
+        let home = temp_home("web-on");
+        let t = Target { web_access: true, ..Target::default() };
+        write_settings(&home, &helper(), &serde_json::from_str(MODELS).unwrap(), &t).unwrap();
+        let doc: Value = serde_json::from_str(&fs::read_to_string(settings_path(&home)).unwrap()).unwrap();
+        assert!(doc["env"].get("CLAUDE_CODE_DISABLE_WEB_FETCH").is_none());
+        assert_eq!(doc["permissions"]["deny"], json!(["WebSearch"]));
+        // Turning it back off on the next launch replaces, never duplicates.
+        write_settings(&home, &helper(), &serde_json::from_str(MODELS).unwrap(), &Target::default()).unwrap();
+        let doc: Value = serde_json::from_str(&fs::read_to_string(settings_path(&home)).unwrap()).unwrap();
+        assert_eq!(doc["permissions"]["deny"], json!(["WebSearch", "WebFetch"]));
         let _ = fs::remove_dir_all(&home);
     }
 
@@ -289,7 +393,7 @@ mod tests {
     #[test]
     fn follows_the_target_level_and_endpoint() {
         let home = temp_home("target");
-        let t = Target { endpoint: "https://ai-proxy.acme.example".into(), level: "fedramp-high".into() };
+        let t = Target { endpoint: "https://ai-proxy.acme.example".into(), level: "fedramp-high".into(), ..Target::default() };
         let models = json!([{ "id": "consus/claude-opus-5-5:fedramp-high" }, { "id": "consus/claude-sonnet-4-5:itar" }]);
         write_settings(&home, &helper(), &models, &t).unwrap();
         let doc: Value = serde_json::from_str(&fs::read_to_string(settings_path(&home)).unwrap()).unwrap();

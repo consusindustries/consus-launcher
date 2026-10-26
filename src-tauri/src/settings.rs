@@ -10,6 +10,8 @@
 //                    of: claude-desktop, chatgpt-desktop, claude-code,
 //                    codex-cli, pi
 //   OrgName          shown in the launcher's header
+//   WebAccess        whether a tool's agent may fetch web pages from the
+//                    machine: off (default) or on
 //
 // A value that is present but invalid is an error, never a silent default:
 // falling back to api.consus.io would quietly bypass an org's proxy.
@@ -62,6 +64,7 @@ struct Raw {
     tools: Option<Value>,
     org_name: Option<Value>,
     update_notice: Option<Value>,
+    web_access: Option<Value>,
     managed: bool,
 }
 
@@ -83,9 +86,10 @@ fn string(v: Option<Value>, key: &str, blank_ok: bool) -> Result<Option<String>,
 }
 
 /// A yes/no setting: a plist boolean, or as text (a registry REG_DWORD reads
-/// "0x1"). Anything else is an error, like every other invalid value.
+/// "0x1"; "on" and "off" read as people write them). Anything else is an
+/// error, like every other invalid value.
 fn flag(v: Option<Value>, key: &str) -> Result<Option<bool>, String> {
-    let bad = || Err(format!("{key} must be true or false."));
+    let bad = || Err(format!("{key} must be on or off (true or false)."));
     match v {
         None => Ok(None),
         Some(Value::Bool(b)) => Ok(Some(b)),
@@ -95,8 +99,8 @@ fn flag(v: Option<Value>, key: &str) -> Result<Option<bool>, String> {
             _ => bad(),
         },
         Some(Value::String(s)) => match s.trim().to_ascii_lowercase().as_str() {
-            "true" | "1" | "0x1" | "yes" => Ok(Some(true)),
-            "false" | "0" | "0x0" | "no" => Ok(Some(false)),
+            "true" | "1" | "0x1" | "yes" | "on" => Ok(Some(true)),
+            "false" | "0" | "0x0" | "no" | "off" => Ok(Some(false)),
             _ => bad(),
         },
         Some(_) => bad(),
@@ -187,7 +191,7 @@ fn parse(raw: Raw) -> Result<Settings, String> {
         }
     };
     Ok(Settings {
-        target: Target { endpoint, level },
+        target: Target { endpoint, level, web_access: flag(raw.web_access, "WebAccess")?.unwrap_or(false) },
         tools,
         org_name: string(raw.org_name, "OrgName", true)?,
         update_notice: flag(raw.update_notice, "UpdateNotice")?.unwrap_or(!raw.managed),
@@ -249,12 +253,13 @@ fn read_from(sources: Vec<(PathBuf, bool)>) -> Result<Raw, (String, bool)> {
             }
             Err(e) => return Err((format!("{} could not be checked ({e}).", path.display()), is_managed)),
         }
-        let slots: [(&str, &mut Option<Value>); 5] = [
+        let slots: [(&str, &mut Option<Value>); 6] = [
             ("EndpointURL", &mut raw.endpoint),
             ("ComplianceLevel", &mut raw.level),
             ("Tools", &mut raw.tools),
             ("OrgName", &mut raw.org_name),
             ("UpdateNotice", &mut raw.update_notice),
+            ("WebAccess", &mut raw.web_access),
         ];
         for (key, slot) in slots {
             if slot.is_none() {
@@ -303,12 +308,13 @@ fn read_registry() -> Raw {
     use std::os::windows::process::CommandExt;
     let mut raw = Raw::default();
     for (key, is_managed) in REG_SOURCES {
-        let slots: [(&str, &mut Option<Value>); 5] = [
+        let slots: [(&str, &mut Option<Value>); 6] = [
             ("EndpointURL", &mut raw.endpoint),
             ("ComplianceLevel", &mut raw.level),
             ("Tools", &mut raw.tools),
             ("OrgName", &mut raw.org_name),
             ("UpdateNotice", &mut raw.update_notice),
+            ("WebAccess", &mut raw.web_access),
         ];
         for (name, slot) in slots {
             if slot.is_some() {
@@ -390,7 +396,7 @@ mod tests {
     use serde_json::json;
 
     fn raw(endpoint: Option<Value>, level: Option<Value>, tools: Option<Value>) -> Raw {
-        Raw { endpoint, level, tools, org_name: None, update_notice: None, managed: true }
+        Raw { endpoint, level, tools, org_name: None, update_notice: None, web_access: None, managed: true }
     }
 
     #[test]
@@ -528,6 +534,17 @@ mod tests {
         assert_eq!(parse_reg(dword, "ComplianceLevel"), Some(json!("0x1")), "a wrong type is kept, so it reads as invalid");
         let url = "    EndpointURL    REG_SZ    https://proxy.acme.example/v1\r\n";
         assert_eq!(parse_reg(url, "EndpointURL"), Some(json!("https://proxy.acme.example/v1")));
+    }
+
+    #[test]
+    fn web_access_is_off_unless_the_org_turns_it_on() {
+        let with = |v: Option<Value>| parse(Raw { web_access: v, ..Raw::default() }).map(|s| s.target.web_access);
+        assert_eq!(with(None), Ok(false), "ITAR work: nothing fetched from the machine unless the org says so");
+        assert_eq!(with(Some(json!("on"))), Ok(true));
+        assert_eq!(with(Some(json!("off"))), Ok(false));
+        assert_eq!(with(Some(json!(true))), Ok(true));
+        assert_eq!(with(Some(json!("0x1"))), Ok(true), "a registry REG_DWORD");
+        assert!(with(Some(json!("allowlist"))).is_err(), "an unknown value is an error, not off");
     }
 
     #[test]

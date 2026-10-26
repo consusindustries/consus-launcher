@@ -16,11 +16,17 @@ pub struct Target {
     pub endpoint: String,
     /// The id suffix: "itar", "fedramp-high", "fedramp-high+itar", ...
     pub level: String,
+    /// Whether a tool's agent may fetch web pages from this machine (the
+    /// org's WebAccess setting). Off by default: on ITAR work a page the
+    /// agent fetches, and the hostname it fetches it from, leave the
+    /// boundary. Web search is never on: it is a server tool the gateway
+    /// refuses, so each tool is told not to offer it.
+    pub web_access: bool,
 }
 
 impl Default for Target {
     fn default() -> Self {
-        Target { endpoint: DEFAULT_ENDPOINT.into(), level: DEFAULT_LEVEL.into() }
+        Target { endpoint: DEFAULT_ENDPOINT.into(), level: DEFAULT_LEVEL.into(), web_access: false }
     }
 }
 
@@ -28,6 +34,20 @@ impl Target {
     /// The OpenAI-compatible root: "<endpoint>/v1".
     pub fn v1(&self) -> String {
         format!("{}/v1", self.endpoint)
+    }
+
+    /// The agent's web tools the Claude tools are told not to offer, by
+    /// the names both Claude Code's permission rules and Claude Desktop's
+    /// disabledBuiltinTools use (bare "WebSearch" and "WebFetch", per
+    /// Anthropic's configuration reference, checked 2026-10-26). Search
+    /// always: it is a server tool the gateway refuses. Fetch unless the
+    /// org turned web access on.
+    pub fn denied_web_tools(&self) -> Vec<&'static str> {
+        let mut out = vec!["WebSearch"];
+        if !self.web_access {
+            out.push("WebFetch");
+        }
+        out
     }
 
     /// How people name the level: "ITAR", "FedRAMP High", "IL5 + ITAR".
@@ -212,7 +232,7 @@ mod tests {
         for bad in ["", "ITAR", "itar+itar", "fedramp-high+cui", "il6", "cui"] {
             assert!(!valid_level(bad), "{bad}");
         }
-        let t = |l: &str| Target { endpoint: DEFAULT_ENDPOINT.into(), level: l.into() }.tag();
+        let t = |l: &str| Target { level: l.into(), ..Target::default() }.tag();
         assert_eq!(t("itar"), "ITAR");
         assert_eq!(t("fedramp-high+itar"), "FedRAMP High + ITAR");
         assert_eq!(t("il5"), "IL5");

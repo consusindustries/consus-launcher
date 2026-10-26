@@ -2,6 +2,13 @@
 
 What changed in each release. Each release's GitHub page shows its section.
 
+## v1.2.0 (unreleased)
+
+- Claude Desktop no longer polls Anthropic's model catalog, checks fetched hostnames with Anthropic in Code sessions, or lets users add plugin marketplaces and uploads. Its remaining Anthropic connection, the sandbox VM bundle downloaded at the first Cowork or Code session, is now stated in the README.
+- Claude Code also gets the documented telemetry, error-report, and feedback switches, and the sign-in a desktop launcher can offer is off.
+- Web access is a policy. Web search is never offered in Claude Code or Claude Desktop (the gateway refuses it). What the agent reaches from the machine (Claude Code's WebFetch, Claude Desktop's Web Fetch and sandbox, the sandbox network of ChatGPT and Codex) is off by default; the new `WebAccess` org setting turns it on.
+- README: which settings the launcher cannot lock (and which managed files from the portal do), CUI means `fedramp-high`, and Codex's `requirements.toml` lock.
+
 ## v1.1.0 (2026-10-18)
 
 - Claude Code and Claude Desktop no longer contact Anthropic on their own; only the gateway's calls leave the machine. The launcher turns off their analytics, crash and error reports, feature flags, update checks, Claude Code's plugin marketplace download and WebFetch domain check, and Claude Desktop's connector icons, connector directory, and artifact preview.

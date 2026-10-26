@@ -129,6 +129,12 @@ pub fn write_claude_desktop(home: &Path, helper: &Path, models: &Value, t: &Targ
         write_json(&marker, &marker_json())?;
     }
 
+    // What the agent's sandboxed shell and Web Fetch may reach, per the
+    // app's web-tools reference (checked 2026-10-26): unset or [] refuses
+    // every fetch and host; ["*"] allows all. The app's own calls to the
+    // gateway and to downloads.claude.ai are not checked against this list.
+    let egress: Vec<&str> = if t.web_access { vec!["*"] } else { vec![] };
+
     let entry = json!({
         "inferenceProvider": "gateway",
         "inferenceGatewayBaseUrl": t.endpoint,
@@ -137,17 +143,35 @@ pub fn write_claude_desktop(home: &Path, helper: &Path, models: &Value, t: &Targ
         "inferenceCredentialHelper": helper.to_string_lossy(),
         "chatTabEnabled": true,
         "inferenceModels": picked,
-        // No traffic to Anthropic (the app's own settings schema, 1.26832.0):
-        // crash reports; usage analytics and diagnostic uploads; connector
-        // icons, the connector directory and the artifact preview frame, so
-        // artifacts do not render; and update checks, so IT installs new
-        // versions. Claude.ai sign-in is hidden too, the way /login is in
-        // Claude Code: it would send requests straight to Anthropic.
+        // No traffic to Anthropic (the app's telemetry and egress page,
+        // checked 2026-10-26): crash reports; usage analytics and diagnostic
+        // uploads; connector icons, the connector directory and the artifact
+        // preview frame, so artifacts do not render; update checks, so IT
+        // installs new versions; the signed model catalog the picker's labels
+        // come from (downloads.claude.ai, polled every few minutes; the
+        // gateway's names are used instead); and, in Code sessions, the
+        // check of each fetched hostname with api.anthropic.com. Claude.ai
+        // sign-in is hidden too, the way /login is in Claude Code: it would
+        // send requests straight to Anthropic. What stays: the VM bundle and
+        // Claude CLI binary from downloads.claude.ai at the first Cowork or
+        // Code session, which only Anthropic's offline installer avoids.
+        // Each key is ignored by an app older than the one that added it
+        // (modelCatalogEnabled 2.110.0, skipWebFetchPreflight 1.37937.0,
+        // the plugin keys 1.37937.0, the sandbox keys 1.2581.0).
         "disableEssentialTelemetry": true,
         "disableNonessentialTelemetry": true,
         "disableNonessentialServices": true,
         "disableAutoUpdates": true,
+        "modelCatalogEnabled": false,
+        "skipWebFetchPreflight": true,
         "disableDeploymentModeChooser": true,
+        // Plugins from a marketplace or an upload are downloads from wherever
+        // the marketplace is; the org's own plugins arrive through its
+        // device-management profile, which these keys do not touch.
+        "userPluginMarketplacesEnabled": false,
+        "userPluginUploadsEnabled": false,
+        "disabledBuiltinTools": t.denied_web_tools(),
+        "coworkEgressAllowedHosts": egress,
         "banner": {
             "enabled": true,
             "text": "Runs on the Consus gateway.",
@@ -249,10 +273,32 @@ mod tests {
             "disableNonessentialServices",
             "disableAutoUpdates",
             "disableDeploymentModeChooser",
+            "skipWebFetchPreflight",
         ] {
             assert_eq!(entry[k], true, "{k}");
         }
+        for k in ["modelCatalogEnabled", "userPluginMarketplacesEnabled", "userPluginUploadsEnabled"] {
+            assert_eq!(entry[k], false, "{k}");
+        }
         let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn web_access_is_closed_by_default_and_opened_by_the_org() {
+        let models = json!([{ "id": "consus/claude-sonnet-5:itar" }]);
+        let entry_for = |tag: &str, t: &Target| {
+            let (home, lib) = library(tag, r#"{ "appliedId": null, "entries": [] }"#);
+            write_claude_desktop(&home, Path::new("/x/helper"), &models, t).unwrap();
+            let e: Value = serde_json::from_str(&fs::read_to_string(lib.join(format!("{ENTRY_ID}.json"))).unwrap()).unwrap();
+            let _ = fs::remove_dir_all(&home);
+            e
+        };
+        let off = entry_for("web-off", &Target::default());
+        assert_eq!(off["disabledBuiltinTools"], json!(["WebSearch", "WebFetch"]));
+        assert_eq!(off["coworkEgressAllowedHosts"], json!([]), "the agent's shell reaches no host either");
+        let on = entry_for("web-on", &Target { web_access: true, ..Target::default() });
+        assert_eq!(on["disabledBuiltinTools"], json!(["WebSearch"]), "search is a server tool the gateway refuses");
+        assert_eq!(on["coworkEgressAllowedHosts"], json!(["*"]));
     }
 
     #[test]

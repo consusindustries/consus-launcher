@@ -30,7 +30,8 @@ Fixes land in the latest release. Please check that the issue still reproduces t
 - The keychain protects the key from other users and from files on disk, not from your own programs: any program running as you can run the helper or read a tool's environment and obtain the key.
 
 **Files it writes**
-- Each tool's settings, listed in the README: `~/Library/Application Support/Claude-3p/` (Claude Desktop, including a mode marker file and a one-time backup of its `_meta.json`), `~/.codex/config.toml` (ChatGPT), and the profile folders `~/.claude-consus-gateway`, `~/.codex-consus-gateway` (including a generated model catalog), and `~/.pi-consus-gateway`.
+- Each tool's settings, listed in the README: `~/Library/Application Support/Claude-3p/` (Claude Desktop, including a mode marker file and a one-time backup of its `_meta.json`), `~/.codex/config.toml` (ChatGPT), and the profile folders `~/.claude-consus-gateway`, `~/.codex-consus-gateway` (including a generated model catalog), and `~/.pi-consus-gateway`. In Claude Code's `settings.json` the launcher also owns two rules in `permissions.deny` (`WebSearch`, and `WebFetch` unless the org turns web access on); every other rule stays.
+- What those settings make the tools do on the network is in the README under "What it connects to". The claims there were checked against Claude Code 2.1.307 and Claude Desktop's published telemetry and egress reference on 2026-10-26.
 - `~/Consus`, an empty folder the terminal tools start in.
 - Links to its own binary, used as the key helpers, in `~/Library/Application Support/io.consus.launcher/` (on Windows, hard links named `*-key-helper.exe` in `%APPDATA%\io.consus.launcher\`). The same folder holds ChatGPT's generated model catalog (`chatgpt-models.json`) and an empty `codex-probe` folder used when building it.
 - An icon cache in `~/Library/Caches/io.consus.launcher/`.
