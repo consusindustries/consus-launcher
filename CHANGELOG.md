@@ -6,7 +6,7 @@ What changed in each release. Each release's GitHub page shows its section.
 
 - Claude Desktop no longer polls Anthropic's model catalog, checks fetched hostnames with Anthropic in Code sessions, or lets users add plugin marketplaces and uploads. Its remaining Anthropic connection, the sandbox VM bundle downloaded at the first Cowork or Code session, is now stated in the README.
 - Claude Code also gets the documented telemetry, error-report, and feedback switches, and the sign-in a desktop launcher can offer is off.
-- Web access is a policy. Web search is never offered in Claude Code or Claude Desktop (the gateway refuses it). What the agent reaches from the machine (Claude Code's WebFetch, Claude Desktop's Web Fetch and sandbox, the sandbox network of ChatGPT and Codex) is off by default; the new `WebAccess` org setting turns it on.
+- Web access is a policy. Web search is never offered in Claude Code or Claude Desktop (the gateway refuses it). What the agent reaches from the machine (Claude Code's WebFetch and, on macOS and Linux, its shell through Claude Code's own sandbox; Claude Desktop's Web Fetch and sandbox; the sandbox network of ChatGPT and Codex) is off by default; the new `WebAccess` org setting turns it on. Pi has no sandbox and Windows has none for Claude Code, so their shells are not restricted; the README says so, tool by tool.
 - README: which settings the launcher cannot lock (and which managed files from the portal do), CUI means `fedramp-high`, and Codex's `requirements.toml` lock.
 
 ## v1.1.0 (2026-10-18)

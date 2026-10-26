@@ -35,7 +35,7 @@ pub const WORK_DIR: &str = "Consus";
 // has one, else these, else anything but Sonnet 5.
 const BACKGROUND_PREFERENCE: [&str; 3] = ["claude-haiku-4-5", "claude-sonnet-4-5", "claude-sonnet-4-6"];
 
-const OWNED_TOP: [&str; 4] = ["apiKeyHelper", "skipWebFetchPreflight", "model", "availableModels"];
+const OWNED_TOP: [&str; 5] = ["apiKeyHelper", "skipWebFetchPreflight", "model", "availableModels", "sandbox"];
 const OWNED_ENV: [&str; 13] = [
     "ANTHROPIC_BASE_URL",
     "ANTHROPIC_DEFAULT_OPUS_MODEL",
@@ -113,6 +113,9 @@ fn owned(
     top.insert("skipWebFetchPreflight".into(), json!(true));
     top.insert("model".into(), json!(main.id));
     top.insert("availableModels".into(), json!(list.iter().map(|m| &m.id).collect::<Vec<_>>()));
+    if !t.web_access {
+        top.insert("sandbox".into(), shell_sandbox());
+    }
 
     let mut env = Map::new();
     env.insert("ANTHROPIC_BASE_URL".into(), json!(t.endpoint));
@@ -151,6 +154,33 @@ fn owned(
         env.insert("CLAUDE_CODE_MAX_CONTEXT_TOKENS".into(), json!(w.to_string()));
     }
     Some((top, env))
+}
+
+/// Claude Code's own sandbox, network part only, with no host allowed: the
+/// shell commands the agent runs (and their children) cannot reach the
+/// network, so "web access off" also holds for curl, pip, and git. Per the
+/// sandboxing reference, checked 2026-10-26:
+/// - macOS enforces it with the system's Seatbelt, nothing to install; Linux
+///   needs bubblewrap and socat; native Windows has no sandbox, and with
+///   failIfUnavailable false commands there run as before (so the launcher
+///   still opens; the README says so).
+/// - strictAllowlist (2.1.219+) refuses a host instead of asking, in every
+///   permission mode; an older Claude Code asks the user instead.
+/// - allowUnsandboxedCommands false: no "run it outside the sandbox" retry.
+/// - autoAllowBashIfSandboxed false: being sandboxed does not skip the
+///   usual permission prompts.
+/// - filesystem.disabled (2.1.216+): file isolation is not this setting's
+///   business; the agent's file tools run outside the sandbox anyway.
+/// Claude Code's own API calls and the key helper run outside the sandbox.
+fn shell_sandbox() -> Value {
+    json!({
+        "enabled": true,
+        "failIfUnavailable": false,
+        "allowUnsandboxedCommands": false,
+        "autoAllowBashIfSandboxed": false,
+        "filesystem": { "disabled": true },
+        "network": { "allowedDomains": [], "strictAllowlist": true, "allowLocalBinding": false }
+    })
 }
 
 pub fn write_settings(home: &Path, helper: &Path, models_json: &Value, t: &Target) -> Result<(), String> {
@@ -294,6 +324,11 @@ mod tests {
         assert_eq!(doc["env"]["DISABLE_FEEDBACK_COMMAND"], "1");
         assert_eq!(doc["env"]["CLAUDE_CODE_DISABLE_WEB_FETCH"], "1");
         assert_eq!(doc["permissions"]["deny"], json!(["WebSearch", "WebFetch"]));
+        assert_eq!(doc["sandbox"]["enabled"], true);
+        assert_eq!(doc["sandbox"]["network"]["allowedDomains"], json!([]));
+        assert_eq!(doc["sandbox"]["network"]["strictAllowlist"], true);
+        assert_eq!(doc["sandbox"]["allowUnsandboxedCommands"], false);
+        assert_eq!(doc["sandbox"]["filesystem"]["disabled"], true, "network only");
         assert_eq!(doc["apiKeyHelper"], "\"/Users/x/Library/Application Support/io.consus.launcher/claude-code-key-helper\"");
         let ids: Vec<&str> = doc["availableModels"].as_array().unwrap().iter().map(|v| v.as_str().unwrap()).collect();
         assert_eq!(ids, ["claude-opus-5-5:itar", "claude-opus-5:itar", "claude-sonnet-5:itar", "claude-sonnet-4-5:itar"]);
@@ -341,11 +376,15 @@ mod tests {
         write_settings(&home, &helper(), &serde_json::from_str(MODELS).unwrap(), &t).unwrap();
         let doc: Value = serde_json::from_str(&fs::read_to_string(settings_path(&home)).unwrap()).unwrap();
         assert!(doc["env"].get("CLAUDE_CODE_DISABLE_WEB_FETCH").is_none());
+        assert!(doc.get("sandbox").is_none(), "the shell reaches the network when the org allows the web");
         assert_eq!(doc["permissions"]["deny"], json!(["WebSearch"]));
         // Turning it back off on the next launch replaces, never duplicates.
         write_settings(&home, &helper(), &serde_json::from_str(MODELS).unwrap(), &Target::default()).unwrap();
         let doc: Value = serde_json::from_str(&fs::read_to_string(settings_path(&home)).unwrap()).unwrap();
         assert_eq!(doc["permissions"]["deny"], json!(["WebSearch", "WebFetch"]));
+        assert_eq!(doc["sandbox"]["enabled"], true);
+        remove_settings(&home).unwrap();
+        assert!(!settings_path(&home).exists(), "sandbox is the launcher's key and goes with the rest");
         let _ = fs::remove_dir_all(&home);
     }
 
