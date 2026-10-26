@@ -18,7 +18,7 @@ Original decisions (2026-09-21), still in force:
 - **App, not a daemon.** No tray process, no background service, nothing resident.
 - **Consus enforces nothing on the machine.** The launcher does not watch, reset, or block configs. Enforcement is the gateway's job.
 - **Consus installs nothing third-party.** A tool that is not installed links to its vendor.
-- **Paste-a-key onboarding.** The user creates a key at portal.consus.io and pastes it. The launcher validates it with `GET /v1/models`.
+- **Paste-a-key onboarding.** The user creates a key at portal.consus.io and pastes it. The launcher validates it with `GET /v1/models`. Superseded as the default on 2026-10-26: sign in with SSO through the portal's CLI-login protocol (`signin.rs`); paste stays as the fallback for orgs without SSO.
 - **Key lives in the OS keychain.** Never written to a file by the launcher. Never shown after entry; only the last four characters.
 - **Open source**, Apache-2.0, public repo. Releases on GitHub; signed once the Apple enrollment clears (section 9).
 
@@ -79,6 +79,8 @@ README.md  SECURITY.md  CONTRIBUTING.md  NOTICE  LICENSE
 ## 6. Consus services the launcher depends on
 
 - `GET /v1/models` with `x-api-key`: validates the key and lists the models it can use.
+- `DELETE /v1/me/key` with `x-api-key`: sign out revokes a sign-in key (origin `cli-login`); a pasted key gets 403 and the portal is the place.
+- Portal: `GET /cli/login?v=1&challenge=…&device=…&tool=launcher` (browser) and `POST /api/cli/exchange {verifier}` (polled). Contract: `gov_open_router/specs/cli-login/README.md`. The portal must list `launcher` in `CLI_TOOLS` (both copies) before a launcher with sign-in is published.
 
 Org settings (built 2026-09-24): read from the `io.consus.launcher` managed preferences a device-management profile sets (keys in the README): allowed tools, compliance level, endpoint, org name. Next (section 10): the same settings from the portal, fetched with the user's key.
 
@@ -97,7 +99,6 @@ Each template, or the module that embeds it, records the doc it was checked agai
 ## 8. Non-goals
 - No local proxy. No TLS interception ever.
 - No enforcement, watching, or config repair.
-- No sign-in flow in the launcher (paste a key).
 - No tray icon, autostart, or background process.
 - No local database.
 - No network calls beyond the Consus hosts. No analytics, telemetry, or crash reporting.

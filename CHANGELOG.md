@@ -4,6 +4,9 @@ What changed in each release. Each release's GitHub page shows its section.
 
 ## v1.2.0 (unreleased)
 
+- Sign in with your company account instead of pasting a key. The launcher opens the Consus portal, you approve in the browser, and a key that is yours alone, named after this computer and expiring after 30 days, goes straight to the keychain. Pasting a key stays for organizations without SSO. A key the Consus credential helper already obtained on the machine is used as is.
+- Sign out revokes the key in Consus, not just on this computer. The Keys tab shows who is signed in and when the key expires.
+
 - Claude Desktop no longer polls Anthropic's model catalog, checks fetched hostnames with Anthropic in Code sessions, or lets users add plugin marketplaces and uploads. Its remaining Anthropic connection, the sandbox VM bundle downloaded at the first Cowork or Code session, is now stated in the README.
 - Claude Code also gets the documented telemetry, error-report, and feedback switches, and the sign-in a desktop launcher can offer is off.
 - Web access is a policy. Web search is never offered in Claude Code or Claude Desktop (the gateway refuses it). What the agent reaches from the machine (Claude Code's WebFetch and, on macOS and Linux, its shell through Claude Code's own sandbox; Claude Desktop's Web Fetch and sandbox; the sandbox network of ChatGPT and Codex) is off by default; the new `WebAccess` org setting turns it on. Pi has no sandbox and Windows has none for Claude Code, so their shells are not restricted; the README says so, tool by tool.
