@@ -257,6 +257,7 @@ async function signIn(): Promise<void> {
   const btn = $<HTMLButtonElement>("signinBtn");
   btn.disabled = true;
   $("signinErr").textContent = "";
+  $("signinWait").querySelector("span")!.textContent = "Waiting for you to approve in the browser\u2026";
   $("signinWait").style.display = "";
   const deadline = Date.now() + SIGNIN_BUDGET_MS;
   try {
@@ -273,6 +274,8 @@ async function signIn(): Promise<void> {
       if (!mine()) return;
       if (p.meta) {
         signinMeta = p.meta;
+        // The key is issued; the gateway takes a few seconds to accept it.
+        $("signinWait").querySelector("span")!.textContent = "Approved. Preparing your key, about 15 seconds\u2026";
         break;
       }
       await new Promise((r) => setTimeout(r, Math.max(1000, p.retry_ms)));
