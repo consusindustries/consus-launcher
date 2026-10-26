@@ -16,9 +16,13 @@ pub fn keychain_get_key() -> Option<String> {
     get_key()
 }
 
+pub fn set_key(key: &str) -> Result<(), String> {
+    entry()?.set_password(key).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn keychain_set_key(key: String) -> Result<(), String> {
-    entry()?.set_password(&key).map_err(|e| e.to_string())
+    set_key(&key)
 }
 
 #[tauri::command]

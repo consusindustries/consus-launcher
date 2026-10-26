@@ -328,8 +328,11 @@ pub fn remove_settings(home: &Path) -> Result<(), String> {
             doc.remove("env");
         }
     }
-    let has_ours = doc["permissions"]["deny"]
-        .as_array()
+    // Map indexing panics on a missing key; get() does not.
+    let has_ours = doc
+        .get("permissions")
+        .and_then(|p| p.get("deny"))
+        .and_then(Value::as_array)
         .is_some_and(|d| d.iter().any(|v| v.as_str().is_some_and(|r| OWNED_DENY.contains(&r))));
     if has_ours {
         set_deny(&mut doc, &[])?;
@@ -460,6 +463,18 @@ mod tests {
             doc,
             json!({ "sandbox": { "excludedCommands": ["docker compose *"], "network": { "allowUnixSockets": ["/tmp/ssh-agent"] } } })
         );
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn signing_out_twice_or_from_a_file_without_permissions_is_fine() {
+        let home = temp_home("remove-twice");
+        fs::create_dir_all(profile_dir(&home)).unwrap();
+        fs::write(settings_path(&home), r#"{ "theme": "dark", "apiKeyHelper": "x" }"#).unwrap();
+        remove_settings(&home).unwrap();
+        remove_settings(&home).unwrap();
+        let doc: Value = serde_json::from_str(&fs::read_to_string(settings_path(&home)).unwrap()).unwrap();
+        assert_eq!(doc, json!({ "theme": "dark" }));
         let _ = fs::remove_dir_all(&home);
     }
 

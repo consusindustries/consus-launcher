@@ -1,6 +1,6 @@
 # Consus Launcher
 
-Paste your Consus API key once. Click a tool, and it opens already configured for the Consus gateway.
+Sign in with your company account once. Click a tool, and it opens already configured for the Consus gateway.
 
 Consus Launcher is a small open source desktop app for macOS and Windows. It writes each tool's configuration and launches it. It is a front door, not a gateway and not an enforcement agent.
 
@@ -16,10 +16,11 @@ Consus Launcher is a small open source desktop app for macOS and Windows. It wri
 
 - **Your own setup is left alone.** Claude Code, Codex CLI, and Pi each get a separate profile folder, so `~/.claude` and `~/.pi` are never touched and Codex CLI runs apart from `~/.codex`. ChatGPT has no such option: its settings are merged into `~/.codex/config.toml`, which your own `codex` also reads. Terminal tools start in an empty `~/Consus` folder.
 - **Models:** each tool is set up with the ITAR models your key can use, from `GET /v1/models`. ChatGPT and Codex also get a model catalog built from ChatGPT's own Codex engine, so their pickers list the Consus models by name.
-- **The key** lives in the macOS Keychain (Windows Credential Manager on Windows) and is never written to a file. Tools fetch it through the launcher itself (a keychain helper), or receive it in the environment of the process the launcher starts.
+- **Sign in** opens the Consus portal in your browser. You sign in the way your organization does (SSO), click Approve, and the portal issues a key that is yours alone, named after this computer, and expires after 30 days; the launcher signs you in again when it does. You never see it. Organizations without SSO connected can paste a key from the portal instead. If the [Consus credential helper](https://docs.consus.io/credential-helper) already signed in on this machine, the launcher uses that key rather than asking again.
+- **The key** lives in the macOS Keychain (Windows Credential Manager on Windows) and is never written to a file. Tools fetch it through the launcher itself (a keychain helper), or receive it in the environment of the process the launcher starts. The Keys tab shows who is signed in and when the key expires.
 - **App windows:** on macOS a tool opens inside the launcher's glass area, then moves freely (not yet on Windows). Quitting the launcher quits the tools it started, never ones you opened yourself.
 - **Claude and ChatGPT restart once.** If either app is already open when you click it, the launcher asks it to quit and reopens it in gateway mode, because both read their settings only at startup. On Windows, where closing these apps only hides them to the tray, the launcher ends them if they do not quit.
-- **Sign out** removes the launcher's settings from each tool and keeps everything else, including your history.
+- **Sign out** revokes this computer's key in Consus, so it stops working everywhere, then removes the launcher's settings from each tool and keeps everything else, including your history. A pasted key can only be revoked in the portal, and the launcher says so.
 - A tool that is not installed links to its vendor. Consus never installs software.
 
 **On Windows:** Claude Desktop's settings go to `%LOCALAPPDATA%\Claude-3p`; ChatGPT's to `%USERPROFILE%\.codex\config.toml`; the terminal tools' profile folders and `Consus` folder are in `%USERPROFILE%`, and each opens in its own console window.
@@ -28,14 +29,13 @@ Consus Launcher is a small open source desktop app for macOS and Windows. It wri
 
 - No proxy and no TLS interception, ever.
 - No enforcement, monitoring, or config repair.
-- No sign-in flow; you paste a key.
 - No tray icon, no autostart, no background process.
 - No local database; no analytics, telemetry, or crash reporting.
 - No auto-update. New versions come from the [Releases](https://github.com/consusindustries/consus-launcher/releases) page.
 
 ## What it connects to
 
-The launcher makes two kinds of network request, both to Consus. `GET https://api.consus.io/v1/models` (or the same path on your organization's endpoint, if your IT admin set one), when you connect and each time the launcher starts, to check the key and list your models. And `GET https://portal.consus.io/assets/launcher/latest.json`, a public file naming the newest release, so it can say when an update is out; it sends no key and nothing about you, and is off by default on machines IT manages (`UpdateNotice` below). The portal itself only ever opens in your browser. (The Terminal installer downloads from GitHub; the app itself never does.)
+The launcher makes three kinds of network request, all to Consus. `GET https://api.consus.io/v1/models` (or the same path on your organization's endpoint, if your IT admin set one), when you connect and each time the launcher starts, to check the key and list your models; and `DELETE .../v1/me/key` on the same host when you sign out, to revoke it. `POST https://portal.consus.io/api/cli/exchange` while you sign in, every two seconds until you approve in the browser; it carries a one-time secret and receives your key once. And `GET https://portal.consus.io/assets/launcher/latest.json`, a public file naming the newest release, so it can say when an update is out; it sends no key and nothing about you, and is off by default on machines IT manages (`UpdateNotice` below). The portal's sign-in page opens in your browser. (The Terminal installer downloads from GitHub; the app itself never does.)
 
 The tools you open send their requests to `api.consus.io`, or to your organization's endpoint, with the settings the launcher writes. What else a tool does is up to the tool. For Claude Code and Claude Desktop, the launcher's config turns off every connection to Anthropic that a setting can turn off: analytics, error and crash reports, feature flags, update checks, the WebFetch domain check, and the plugin marketplace download (Claude Code), and connector icons, the connector directory, the artifact preview (so artifacts do not render), the model catalog poll, and user-added plugin marketplaces and uploads (Claude Desktop). It also removes signing in to a Claude.ai account: `/login` and the launcher sign-in in Claude Code, and the Claude.ai option on Claude Desktop's start screen. One connection remains: at the first Cowork or Code session, Claude Desktop downloads its sandbox VM bundle and Claude CLI binary from `downloads.claude.ai`; only Anthropic's offline installer avoids that. Neither app updates itself, so install new versions yourself (`claude update` for Claude Code). If your organization's managed settings configure either app, the launcher writes nothing and these settings come from your organization. For ChatGPT and Codex, the launcher's config turns off analytics, feedback, and OpenTelemetry export, and Codex's update check; for Pi, install telemetry and the update check. On its first run, Pi downloads `fd` and `ripgrep` from GitHub, because its search tools need them.
 
@@ -106,7 +106,7 @@ The checksum catches a corrupted or mismatched download. Who built it is proven 
 
 1. Download the `.dmg` (drag to Applications) or the `.pkg` (installs to `/Applications`) from [Releases](https://github.com/consusindustries/consus-launcher/releases).
 2. Optionally, check the download against `SHA256SUMS.txt` with `shasum -a 256 -c --ignore-missing SHA256SUMS.txt`.
-3. Open Consus Launcher and paste your key.
+3. Open Consus Launcher and sign in.
 
 From v0.2.3, the `.dmg`, the `.pkg`, and the app are signed by Consus Industries, Inc. and notarized by Apple, so macOS opens a downloaded copy without a warning. (Earlier releases were not notarized; use v0.2.3 or later.)
 
@@ -125,7 +125,7 @@ The launcher never updates itself.
 
 ## Uninstalling
 
-1. **Sign out first** (Keys tab, Sign out). It removes the launcher's settings from every tool and your key from the keychain. Without it, tools stay pointed at a key helper that is no longer there.
+1. **Sign out first** (Keys tab, Sign out). It revokes your key, removes the launcher's settings from every tool, and removes the key from the keychain. Without it, tools stay pointed at a key helper that is no longer there.
 2. **Remove the app.** macOS: quit it and move `/Applications/Consus Launcher.app` to the Trash. Windows: Settings, Apps, Installed apps, Consus Launcher, Uninstall.
 3. **Optional, everything else:** the profile folders that hold your tool history (`~/.claude-consus-gateway`, `~/.codex-consus-gateway`, `~/.pi-consus-gateway`, under `%USERPROFILE%` on Windows), the `~/Consus` folder, and the launcher's own folder (`~/Library/Application Support/io.consus.launcher` and `~/Library/Caches/io.consus.launcher` on macOS, `%APPDATA%\io.consus.launcher` on Windows).
 

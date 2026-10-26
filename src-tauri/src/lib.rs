@@ -7,6 +7,7 @@ mod models;
 mod pi;
 mod portal;
 mod settings;
+mod signin;
 mod tools;
 
 use std::sync::Mutex;
@@ -32,6 +33,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(tools::Children(Mutex::new(Vec::new())))
+        .manage(signin::Pending(Mutex::new(None)))
         .setup(|app| {
             let handle = app.handle().clone();
             std::thread::spawn(move || tools::remove_turned_off(&handle));
@@ -44,6 +46,13 @@ pub fn run() {
             portal::validate_key,
             portal::check_update,
             settings::get_settings,
+            signin::start_signin,
+            signin::cancel_signin,
+            signin::poll_signin,
+            signin::signin_info,
+            signin::note_pasted_key,
+            signin::adopt_helper_key,
+            signin::revoke_key,
             tools::detect_tools,
             tools::launch_tool,
             tools::remove_tool_configs,
