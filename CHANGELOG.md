@@ -2,7 +2,7 @@
 
 What changed in each release. Each release's GitHub page shows its section.
 
-## v1.2.0 (unreleased)
+## v1.2.0 (2026-10-26)
 
 - Sign in with your company account instead of pasting a key. The launcher opens the Consus portal, you approve in the browser, and a key that is yours alone, named after this computer and expiring after 30 days, goes straight to the keychain. Pasting a key stays for organizations without SSO. A key the Consus credential helper already obtained on the machine is used as is.
 - Sign out revokes the key in Consus, not just on this computer. The Keys tab shows who is signed in and when the key expires.
