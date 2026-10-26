@@ -89,7 +89,7 @@ fn string(v: Option<Value>, key: &str, blank_ok: bool) -> Result<Option<String>,
 /// "0x1"; "on" and "off" read as people write them). Anything else is an
 /// error, like every other invalid value.
 fn flag(v: Option<Value>, key: &str) -> Result<Option<bool>, String> {
-    let bad = || Err(format!("{key} must be on or off."));
+    let bad = || Err(format!("{key} must be on or off (true or false)."));
     match v {
         None => Ok(None),
         Some(Value::Bool(b)) => Ok(Some(b)),

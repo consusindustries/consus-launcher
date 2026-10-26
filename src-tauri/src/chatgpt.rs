@@ -151,6 +151,13 @@ pub fn write_config_at(path: &Path, models_json: &Value, extra: &Table, t: &Targ
     merge_into(doc.as_table_mut(), template().as_table(), "")?;
     merge_into(doc.as_table_mut(), extra, "")?;
     set_leaf(doc.as_table_mut(), "model", value(model));
+    // The agent's commands reach the network only when the org turned web
+    // access on; the template's own value is the closed one. (web_search
+    // stays "disabled" either way: it is OpenAI's hosted tool, which the
+    // gateway strips from every request.)
+    if let Some(sandbox) = doc.get_mut("sandbox_workspace_write").and_then(Item::as_table_like_mut) {
+        set_leaf(sandbox, "network_access", value(t.web_access));
+    }
     // Point the provider at the org's endpoint. A hand-made config carries
     // the key inline; the environment replaces it.
     if let Some(consus) = doc
@@ -346,6 +353,25 @@ followUpQueueMode = "steer"
         fs::write(config_path(&home), "features = 1\n").unwrap();
         let err = write_config(&home, &json!([{ "id": "consus/gpt-5.4:itar" }]), &Target::default(), None, helper()).unwrap_err();
         assert!(err.contains("features"), "{err}");
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn the_agents_network_follows_web_access() {
+        let home = std::env::temp_dir().join(format!("consus-launcher-chatgpt-web-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&home);
+        let models = json!([{ "id": "consus/gpt-5.4:itar" }]);
+        write_config(&home, &models, &Target::default(), None, helper()).unwrap();
+        let doc: DocumentMut = fs::read_to_string(config_path(&home)).unwrap().parse().unwrap();
+        assert_eq!(doc["sandbox_workspace_write"]["network_access"].as_bool(), Some(false));
+        assert_eq!(doc["web_search"].as_str(), Some("disabled"));
+        let on = Target { web_access: true, ..Target::default() };
+        write_config(&home, &models, &on, None, helper()).unwrap();
+        let doc: DocumentMut = fs::read_to_string(config_path(&home)).unwrap().parse().unwrap();
+        assert_eq!(doc["sandbox_workspace_write"]["network_access"].as_bool(), Some(true));
+        assert_eq!(doc["web_search"].as_str(), Some("disabled"), "a hosted tool the gateway strips, whatever the setting");
+        remove_config(&home, Path::new("/nowhere/chatgpt-models.json")).unwrap();
+        assert!(!config_path(&home).exists());
         let _ = fs::remove_dir_all(&home);
     }
 

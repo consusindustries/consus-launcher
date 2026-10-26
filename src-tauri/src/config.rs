@@ -129,14 +129,10 @@ pub fn write_claude_desktop(home: &Path, helper: &Path, models: &Value, t: &Targ
         write_json(&marker, &marker_json())?;
     }
 
-    // The agent's web tools. WebSearch is a server tool the gateway refuses
-    // (it would run outside the boundary), so the model is never offered it.
-    // WebFetch, and anything the agent's sandboxed shell reaches, follows the
-    // org's WebAccess setting: no host, or any host.
-    let mut disabled_tools = vec!["WebSearch"];
-    if !t.web_access {
-        disabled_tools.push("WebFetch");
-    }
+    // What the agent's sandboxed shell and Web Fetch may reach, per the
+    // app's web-tools reference (checked 2026-10-26): unset or [] refuses
+    // every fetch and host; ["*"] allows all. The app's own calls to the
+    // gateway and to downloads.claude.ai are not checked against this list.
     let egress: Vec<&str> = if t.web_access { vec!["*"] } else { vec![] };
 
     let entry = json!({
@@ -174,7 +170,7 @@ pub fn write_claude_desktop(home: &Path, helper: &Path, models: &Value, t: &Targ
         // device-management profile, which these keys do not touch.
         "userPluginMarketplacesEnabled": false,
         "userPluginUploadsEnabled": false,
-        "disabledBuiltinTools": disabled_tools,
+        "disabledBuiltinTools": t.denied_web_tools(),
         "coworkEgressAllowedHosts": egress,
         "banner": {
             "enabled": true,

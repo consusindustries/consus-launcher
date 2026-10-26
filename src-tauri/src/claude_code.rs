@@ -9,9 +9,10 @@
 //   only source, cwd ~/Consus; a request was answered.
 //
 // settings.json is merged key by key: the launcher owns apiKeyHelper, model,
-// availableModels, the gateway keys under env, and two entries in
-// permissions.deny; everything else, including what Claude Code itself
-// writes there, stays. Sign out removes only those. The profile directory is
+// availableModels, the gateway keys under env, and the WebSearch and
+// WebFetch rules in permissions.deny, by name, as it owns the env keys by
+// name; everything else, including what Claude Code itself writes there,
+// stays. Sign out removes only those. The profile directory is
 // never deleted: the user's history lives in it.
 //
 // Not written here: allowedProviders, which refuses every claude.ai and
@@ -50,13 +51,9 @@ const OWNED_ENV: [&str; 13] = [
     "CLAUDE_CODE_DISABLE_LAUNCHER_SIGN_IN",
     "CLAUDE_CODE_DISABLE_WEB_FETCH",
 ];
-/// The permissions.deny rules the launcher owns. WebSearch is a server tool
-/// the gateway refuses (it would run outside the boundary), so the model is
-/// never offered it. WebFetch runs on this machine and follows the org's
-/// WebAccess setting.
-const DENY_SEARCH: &str = "WebSearch";
-const DENY_FETCH: &str = "WebFetch";
-const OWNED_DENY: [&str; 2] = [DENY_SEARCH, DENY_FETCH];
+/// The permissions.deny rules the launcher owns (Target::denied_web_tools
+/// says which of them a launch writes).
+const OWNED_DENY: [&str; 2] = ["WebSearch", "WebFetch"];
 
 pub fn profile_dir(home: &Path) -> PathBuf {
     home.join(PROFILE_DIR)
@@ -178,18 +175,16 @@ pub fn write_settings(home: &Path, helper: &Path, models_json: &Value, t: &Targe
     }
     env_obj.extend(env);
 
-    let mut deny = vec![DENY_SEARCH];
-    if !t.web_access {
-        deny.push(DENY_FETCH);
-    }
-    set_deny(&mut doc, &deny).map_err(|e| format!("{}: {e}", path.display()))?;
+    set_deny(&mut doc, &t.denied_web_tools()).map_err(|e| format!("{}: {e}", path.display()))?;
 
     let text = serde_json::to_string_pretty(&Value::Object(doc)).map_err(|e| e.to_string())?;
     fs::write(&path, text + "\n").map_err(|e| format!("{}: {e}", path.display()))
 }
 
 /// Replaces the launcher's entries in permissions.deny with `ours`, keeping
-/// every rule the user added. Empty containers the launcher emptied go too.
+/// every other rule. A container left empty goes too; callers only get here
+/// when there is something to write or remove, so an empty list that was
+/// already there is never touched.
 fn set_deny(doc: &mut Map<String, Value>, ours: &[&str]) -> Result<(), String> {
     let perms = doc
         .entry("permissions")
@@ -231,7 +226,10 @@ pub fn remove_settings(home: &Path) -> Result<(), String> {
             doc.remove("env");
         }
     }
-    if doc.get("permissions").is_some_and(|p| p.get("deny").is_some_and(Value::is_array)) {
+    let has_ours = doc["permissions"]["deny"]
+        .as_array()
+        .is_some_and(|d| d.iter().any(|v| v.as_str().is_some_and(|r| OWNED_DENY.contains(&r))));
+    if has_ours {
         set_deny(&mut doc, &[])?;
     }
     if doc.is_empty() {
@@ -321,6 +319,18 @@ mod tests {
             json!({ "theme": "dark", "env": { "FOO": "1" }, "permissions": { "deny": ["Read(./.env)"], "allow": ["Bash(ls)"] } })
         );
         assert!(profile_dir(&home).exists());
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn a_deny_list_without_our_rules_is_left_alone_on_sign_out() {
+        let home = temp_home("deny-theirs");
+        fs::create_dir_all(profile_dir(&home)).unwrap();
+        let theirs = r#"{ "permissions": { "deny": [] }, "apiKeyHelper": "x" }"#;
+        fs::write(settings_path(&home), theirs).unwrap();
+        remove_settings(&home).unwrap();
+        let doc: Value = serde_json::from_str(&fs::read_to_string(settings_path(&home)).unwrap()).unwrap();
+        assert_eq!(doc, json!({ "permissions": { "deny": [] } }), "an empty list the user placed stays");
         let _ = fs::remove_dir_all(&home);
     }
 

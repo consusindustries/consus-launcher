@@ -36,6 +36,20 @@ impl Target {
         format!("{}/v1", self.endpoint)
     }
 
+    /// The agent's web tools the Claude tools are told not to offer, by
+    /// the names both Claude Code's permission rules and Claude Desktop's
+    /// disabledBuiltinTools use (bare "WebSearch" and "WebFetch", per
+    /// Anthropic's configuration reference, checked 2026-10-26). Search
+    /// always: it is a server tool the gateway refuses. Fetch unless the
+    /// org turned web access on.
+    pub fn denied_web_tools(&self) -> Vec<&'static str> {
+        let mut out = vec!["WebSearch"];
+        if !self.web_access {
+            out.push("WebFetch");
+        }
+        out
+    }
+
     /// How people name the level: "ITAR", "FedRAMP High", "IL5 + ITAR".
     pub fn tag(&self) -> String {
         self.level.split('+').map(level_tag).collect::<Vec<_>>().join(" + ")
