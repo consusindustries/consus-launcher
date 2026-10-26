@@ -279,7 +279,7 @@ mod tests {
     #[test]
     fn follows_the_target_level_and_endpoint() {
         let home = temp_home("target");
-        let t = Target { endpoint: "https://ai-proxy.acme.example".into(), level: "fedramp-high".into() };
+        let t = Target { endpoint: "https://ai-proxy.acme.example".into(), level: "fedramp-high".into(), ..Target::default() };
         let models = json!([
             { "id": "consus/claude-opus-5-5:fedramp-high", "display_name": "Claude Opus 5.5" },
             { "id": "consus/claude-opus-5-5:itar", "display_name": "Claude Opus 5.5" }

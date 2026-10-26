@@ -364,7 +364,7 @@ followUpQueueMode = "steer"
     fn points_at_the_target_endpoint() {
         let home = std::env::temp_dir().join(format!("consus-launcher-chatgpt-target-{}", std::process::id()));
         let _ = fs::remove_dir_all(&home);
-        let t = Target { endpoint: "https://ai-proxy.acme.example".into(), level: "fedramp-high".into() };
+        let t = Target { endpoint: "https://ai-proxy.acme.example".into(), level: "fedramp-high".into(), ..Target::default() };
         write_config(&home, &json!([{ "id": "consus/gpt-5.4:fedramp-high" }]), &t, None, helper()).unwrap();
         let doc: DocumentMut = fs::read_to_string(config_path(&home)).unwrap().parse().unwrap();
         assert_eq!(doc["model_providers"]["consus"]["base_url"].as_str(), Some("https://ai-proxy.acme.example/v1"));

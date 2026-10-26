@@ -247,7 +247,7 @@ mod tests {
 
     #[test]
     fn catalog_follows_the_target_level() {
-        let t = Target { endpoint: "https://ai-proxy.acme.example".into(), level: "fedramp-high".into() };
+        let t = Target { endpoint: "https://ai-proxy.acme.example".into(), level: "fedramp-high".into(), ..Target::default() };
         let models = json!([
             { "id": "consus/gpt-5.6-terra:fedramp-high", "display_name": "GPT-5.6 Terra" },
             { "id": "consus/gpt-5.6-terra:itar", "display_name": "GPT-5.6 Terra" }

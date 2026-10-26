@@ -16,11 +16,17 @@ pub struct Target {
     pub endpoint: String,
     /// The id suffix: "itar", "fedramp-high", "fedramp-high+itar", ...
     pub level: String,
+    /// Whether a tool's agent may fetch web pages from this machine (the
+    /// org's WebAccess setting). Off by default: on ITAR work a page the
+    /// agent fetches, and the hostname it fetches it from, leave the
+    /// boundary. Web search is never on: it is a server tool the gateway
+    /// refuses, so each tool is told not to offer it.
+    pub web_access: bool,
 }
 
 impl Default for Target {
     fn default() -> Self {
-        Target { endpoint: DEFAULT_ENDPOINT.into(), level: DEFAULT_LEVEL.into() }
+        Target { endpoint: DEFAULT_ENDPOINT.into(), level: DEFAULT_LEVEL.into(), web_access: false }
     }
 }
 
@@ -212,7 +218,7 @@ mod tests {
         for bad in ["", "ITAR", "itar+itar", "fedramp-high+cui", "il6", "cui"] {
             assert!(!valid_level(bad), "{bad}");
         }
-        let t = |l: &str| Target { endpoint: DEFAULT_ENDPOINT.into(), level: l.into() }.tag();
+        let t = |l: &str| Target { level: l.into(), ..Target::default() }.tag();
         assert_eq!(t("itar"), "ITAR");
         assert_eq!(t("fedramp-high+itar"), "FedRAMP High + ITAR");
         assert_eq!(t("il5"), "IL5");

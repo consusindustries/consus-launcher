@@ -27,6 +27,7 @@ Decided since (Eric's calls):
 - **Your own setup is left alone** (2026-09-23): terminal tools get their own profile folders (`~/.claude-consus-gateway`, `~/.codex-consus-gateway`, `~/.pi-consus-gateway`) and start in an empty `~/Consus` folder. The launcher never reads or writes `~/.claude` or `~/.pi`. ChatGPT has no such option: its settings are merged into `~/.codex/config.toml`, which the user's own `codex` also reads, so that `codex` routes to Consus until sign out.
 - **Standalone windows** (2026-09-22): a launched app is placed in the launcher's glass area once, then moves freely. Quitting the launcher quits the apps it started, never ones the user opened.
 - **Compliance level is ITAR by default** (2026-09-22); an org can set another level through org settings (2026-09-24).
+- **Web access is off by default** (2026-10-26, after the NASA call): web search is never offered to Claude Code or Claude Desktop, and fetching pages from the machine needs the org's `WebAccess` setting. A per-session "I am on ITAR data" switch is what NASA actually asked for; no tool offers that from config, so it stays an org-wide setting.
 - **Terminal.app only** for terminal tools on macOS; a terminal picker is later.
 - **One key.** The per-tool key override and the Log tab placeholder were removed (2026-09-24); org settings and the portal's usage view cover those needs.
 - **No auto-update, drafted releases** (2026-09-24). Releases were Mac-only until Windows support landed; they now include a Windows `.msi` (2026-09-25; signed from v1.0.0). See section 9.
@@ -108,7 +109,7 @@ Each template, or the module that embeds it, records the doc it was checked agai
 - **No in-app updater:** it would be a network host beyond the Consus hosts.
 
 ## 10. Status and what's next
-Done: connect flow, five tools on macOS, glass placement, quit together, sign out, CI with tests, release pipeline, README, Terminal installer, org settings from device management, removing a turned-off tool's settings, model names and limits from the gateway's `/v1/models` (Pi's list, the Codex and ChatGPT catalog, Claude Code's context window), signed and notarized macOS releases (v0.2.3), ChatGPT's key from the helper (v0.2.4), Windows at parity with signed releases and an update notice fed by the portal (v1.0.0), Claude Code and Claude Desktop kept off Anthropic's network (v1.1.0).
+Done: connect flow, five tools on macOS, glass placement, quit together, sign out, CI with tests, release pipeline, README, Terminal installer, org settings from device management, removing a turned-off tool's settings, model names and limits from the gateway's `/v1/models` (Pi's list, the Codex and ChatGPT catalog, Claude Code's context window), signed and notarized macOS releases (v0.2.3), ChatGPT's key from the helper (v0.2.4), Windows at parity with signed releases and an update notice fed by the portal (v1.0.0), Claude Code and Claude Desktop kept off Anthropic's network (v1.1.0), the model catalog and plugin downloads off too, and web access as an org setting (v1.2.0).
 
 Next, in order:
 1. Org settings from the portal, fetched with the user's key, once the portal serves them (later; device management covers it until then). The design is kept with the Consus services.
