@@ -8,12 +8,14 @@
 //   showed auth via apiKeyHelper, base URL api.consus.io, User settings as the
 //   only source, cwd ~/Consus; a request was answered.
 //
-// settings.json is merged key by key: the launcher owns apiKeyHelper, model,
-// availableModels, the gateway keys under env, and the WebSearch and
-// WebFetch rules in permissions.deny, by name, as it owns the env keys by
-// name; everything else, including what Claude Code itself writes there,
-// stays. Sign out removes only those. The profile directory is
-// never deleted: the user's history lives in it.
+// settings.json is merged key by key. The launcher owns, by name:
+// apiKeyHelper, skipWebFetchPreflight, model, availableModels; the gateway
+// and traffic keys under env; the WebSearch and WebFetch rules in
+// permissions.deny; and the network keys under sandbox (OWNED_SANDBOX).
+// Everything else, including what Claude Code itself writes there and a
+// user's own sandbox sub-keys such as excludedCommands, stays. Sign out
+// removes only the owned keys. The profile directory is never deleted: the
+// user's history lives in it.
 //
 // Not written here: allowedProviders, which refuses every claude.ai and
 // Console sign-in. Claude Code reads it from managed settings only (it is
@@ -35,7 +37,7 @@ pub const WORK_DIR: &str = "Consus";
 // has one, else these, else anything but Sonnet 5.
 const BACKGROUND_PREFERENCE: [&str; 3] = ["claude-haiku-4-5", "claude-sonnet-4-5", "claude-sonnet-4-6"];
 
-const OWNED_TOP: [&str; 5] = ["apiKeyHelper", "skipWebFetchPreflight", "model", "availableModels", "sandbox"];
+const OWNED_TOP: [&str; 4] = ["apiKeyHelper", "skipWebFetchPreflight", "model", "availableModels"];
 const OWNED_ENV: [&str; 13] = [
     "ANTHROPIC_BASE_URL",
     "ANTHROPIC_DEFAULT_OPUS_MODEL",
@@ -54,6 +56,16 @@ const OWNED_ENV: [&str; 13] = [
 /// The permissions.deny rules the launcher owns (Target::denied_web_tools
 /// says which of them a launch writes).
 const OWNED_DENY: [&str; 2] = ["WebSearch", "WebFetch"];
+/// The paths under `sandbox` the launcher owns (shell_sandbox writes them).
+const OWNED_SANDBOX: [&[&str]; 7] = [
+    &["enabled"],
+    &["failIfUnavailable"],
+    &["allowUnsandboxedCommands"],
+    &["autoAllowBashIfSandboxed"],
+    &["filesystem", "disabled"],
+    &["network", "allowedDomains"],
+    &["network", "strictAllowlist"],
+];
 
 pub fn profile_dir(home: &Path) -> PathBuf {
     home.join(PROFILE_DIR)
@@ -113,9 +125,6 @@ fn owned(
     top.insert("skipWebFetchPreflight".into(), json!(true));
     top.insert("model".into(), json!(main.id));
     top.insert("availableModels".into(), json!(list.iter().map(|m| &m.id).collect::<Vec<_>>()));
-    if !t.web_access {
-        top.insert("sandbox".into(), shell_sandbox());
-    }
 
     let mut env = Map::new();
     env.insert("ANTHROPIC_BASE_URL".into(), json!(t.endpoint));
@@ -138,9 +147,10 @@ fn owned(
     // would the sign-in Claude Code offers when a desktop launcher starts it.
     env.insert("DISABLE_LOGIN_COMMAND".into(), json!("1"));
     env.insert("CLAUDE_CODE_DISABLE_LAUNCHER_SIGN_IN".into(), json!("1"));
+    // Web access off is three things, kept together in write_settings: this
+    // variable removes the WebFetch tool (2.1.285 and later), the deny rule
+    // covers earlier versions, and the sandbox closes the shell.
     if !t.web_access {
-        // Removes the WebFetch tool (Claude Code 2.1.285 and later); the deny
-        // rule below covers earlier versions.
         env.insert("CLAUDE_CODE_DISABLE_WEB_FETCH".into(), json!("1"));
     }
     // Claude Code does not recognize model:level ids and would assume 200K,
@@ -161,16 +171,19 @@ fn owned(
 /// network, so "web access off" also holds for curl, pip, and git. Per the
 /// sandboxing reference, checked 2026-10-26:
 /// - macOS enforces it with the system's Seatbelt, nothing to install; Linux
-///   needs bubblewrap and socat; native Windows has no sandbox, and with
-///   failIfUnavailable false commands there run as before (so the launcher
-///   still opens; the README says so).
+///   needs bubblewrap and socat, and without them, as on native Windows,
+///   which has no sandbox, failIfUnavailable false lets commands run as
+///   before, so Claude Code still opens (the README says where this holds).
 /// - strictAllowlist (2.1.219+) refuses a host instead of asking, in every
 ///   permission mode; an older Claude Code asks the user instead.
 /// - allowUnsandboxedCommands false: no "run it outside the sandbox" retry.
 /// - autoAllowBashIfSandboxed false: being sandboxed does not skip the
 ///   usual permission prompts.
 /// - filesystem.disabled (2.1.216+): file isolation is not this setting's
-///   business; the agent's file tools run outside the sandbox anyway.
+///   business; the agent's file tools run outside the sandbox anyway. An
+///   older Claude Code ignores the key and also confines shell writes to
+///   the working folder.
+/// Local binding and anything else under sandbox are left to the user.
 /// Claude Code's own API calls and the key helper run outside the sandbox.
 fn shell_sandbox() -> Value {
     json!({
@@ -179,8 +192,66 @@ fn shell_sandbox() -> Value {
         "allowUnsandboxedCommands": false,
         "autoAllowBashIfSandboxed": false,
         "filesystem": { "disabled": true },
-        "network": { "allowedDomains": [], "strictAllowlist": true, "allowLocalBinding": false }
+        "network": { "allowedDomains": [], "strictAllowlist": true }
     })
+}
+
+/// Removes the launcher's paths under `sandbox`, pruning objects that are
+/// left empty, then writes `ours` into it key by key. The user's other
+/// sandbox keys stay.
+fn set_sandbox(doc: &mut Map<String, Value>, ours: Option<Value>) -> Result<(), String> {
+    fn remove_path(obj: &mut Map<String, Value>, path: &[&str]) {
+        match path {
+            [] => {}
+            [k] => {
+                obj.remove(*k);
+            }
+            [k, rest @ ..] => {
+                if let Some(child) = obj.get_mut(*k).and_then(Value::as_object_mut) {
+                    remove_path(child, rest);
+                    if child.is_empty() {
+                        obj.remove(*k);
+                    }
+                }
+            }
+        }
+    }
+    fn merge(dst: &mut Map<String, Value>, src: Map<String, Value>) -> Result<(), String> {
+        for (k, v) in src {
+            match v {
+                Value::Object(sub) => {
+                    let child = dst
+                        .entry(k.clone())
+                        .or_insert_with(|| json!({}))
+                        .as_object_mut()
+                        .ok_or_else(|| format!("'sandbox.{k}' is not an object"))?;
+                    merge(child, sub)?;
+                }
+                other => {
+                    dst.insert(k, other);
+                }
+            }
+        }
+        Ok(())
+    }
+    if let Some(sandbox) = doc.get_mut("sandbox") {
+        let obj = sandbox.as_object_mut().ok_or("'sandbox' is not an object")?;
+        for path in OWNED_SANDBOX {
+            remove_path(obj, path);
+        }
+        if obj.is_empty() {
+            doc.remove("sandbox");
+        }
+    }
+    if let Some(Value::Object(ours)) = ours {
+        let obj = doc
+            .entry("sandbox")
+            .or_insert_with(|| json!({}))
+            .as_object_mut()
+            .ok_or("'sandbox' is not an object")?;
+        merge(obj, ours)?;
+    }
+    Ok(())
 }
 
 pub fn write_settings(home: &Path, helper: &Path, models_json: &Value, t: &Target) -> Result<(), String> {
@@ -206,6 +277,7 @@ pub fn write_settings(home: &Path, helper: &Path, models_json: &Value, t: &Targe
     env_obj.extend(env);
 
     set_deny(&mut doc, &t.denied_web_tools()).map_err(|e| format!("{}: {e}", path.display()))?;
+    set_sandbox(&mut doc, (!t.web_access).then(shell_sandbox)).map_err(|e| format!("{}: {e}", path.display()))?;
 
     let text = serde_json::to_string_pretty(&Value::Object(doc)).map_err(|e| e.to_string())?;
     fs::write(&path, text + "\n").map_err(|e| format!("{}: {e}", path.display()))
@@ -261,6 +333,9 @@ pub fn remove_settings(home: &Path) -> Result<(), String> {
         .is_some_and(|d| d.iter().any(|v| v.as_str().is_some_and(|r| OWNED_DENY.contains(&r))));
     if has_ours {
         set_deny(&mut doc, &[])?;
+    }
+    if doc.get("sandbox").is_some_and(Value::is_object) {
+        set_sandbox(&mut doc, None)?;
     }
     if doc.is_empty() {
         return fs::remove_file(&path).map_err(|e| e.to_string());
@@ -354,6 +429,37 @@ mod tests {
             json!({ "theme": "dark", "env": { "FOO": "1" }, "permissions": { "deny": ["Read(./.env)"], "allow": ["Bash(ls)"] } })
         );
         assert!(profile_dir(&home).exists());
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn a_users_own_sandbox_keys_survive_in_both_states_and_on_sign_out() {
+        let home = temp_home("sandbox-theirs");
+        fs::create_dir_all(profile_dir(&home)).unwrap();
+        let theirs = r#"{ "sandbox": { "excludedCommands": ["docker compose *"], "network": { "allowUnixSockets": ["/tmp/ssh-agent"], "allowedDomains": ["github.com"] } } }"#;
+        fs::write(settings_path(&home), theirs).unwrap();
+        let models: Value = serde_json::from_str(MODELS).unwrap();
+
+        write_settings(&home, &helper(), &models, &Target::default()).unwrap();
+        let doc: Value = serde_json::from_str(&fs::read_to_string(settings_path(&home)).unwrap()).unwrap();
+        assert_eq!(doc["sandbox"]["enabled"], true);
+        assert_eq!(doc["sandbox"]["network"]["allowedDomains"], json!([]), "web off: the launcher's list, not the user's");
+        assert_eq!(doc["sandbox"]["network"]["allowUnixSockets"], json!(["/tmp/ssh-agent"]), "the user's own key stays");
+        assert_eq!(doc["sandbox"]["excludedCommands"], json!(["docker compose *"]));
+
+        write_settings(&home, &helper(), &models, &Target { web_access: true, ..Target::default() }).unwrap();
+        let doc: Value = serde_json::from_str(&fs::read_to_string(settings_path(&home)).unwrap()).unwrap();
+        assert!(doc["sandbox"].get("enabled").is_none(), "web on: the launcher's keys go");
+        assert!(doc["sandbox"]["network"].get("allowedDomains").is_none());
+        assert_eq!(doc["sandbox"]["network"]["allowUnixSockets"], json!(["/tmp/ssh-agent"]));
+        assert_eq!(doc["sandbox"]["excludedCommands"], json!(["docker compose *"]));
+
+        remove_settings(&home).unwrap();
+        let doc: Value = serde_json::from_str(&fs::read_to_string(settings_path(&home)).unwrap()).unwrap();
+        assert_eq!(
+            doc,
+            json!({ "sandbox": { "excludedCommands": ["docker compose *"], "network": { "allowUnixSockets": ["/tmp/ssh-agent"] } } })
+        );
         let _ = fs::remove_dir_all(&home);
     }
 
