@@ -61,7 +61,11 @@ type SigninError =
   | { kind: "Network"; message: string };
 
 let signinMeta: SigninMeta | null = null;
-let signingIn = false;
+// The sign-in attempt in progress, if any; a new attempt or Cancel retires
+// the old one, whose loop then stops at its next turn.
+let signinAttempt = 0;
+// How long one attempt waits for the approval, as the helper script does.
+const SIGNIN_BUDGET_MS = 10 * 60 * 1000;
 
 interface KeyStore {
   def: KeyInfo | null;
@@ -97,7 +101,7 @@ const REVOKED_MESSAGE = "This key was revoked. Sign in again.";
 
 // Portal commands reject with a ConnectError object; keychain commands reject with a string.
 function connectErrorMessage(err: unknown): string {
-  if (typeof err === "string") return "The portal accepted the key, but it could not be saved to your keychain.";
+  if (typeof err === "string") return "The portal accepted the key, but it could not be saved to your keychain. (" + err + ")";
   if ((err as ConnectError).kind === "Network") {
     const detail = (err as { message?: string }).message;
     return "Could not reach the portal. Check your connection." + (detail ? " (" + detail + ")" : "");
@@ -211,23 +215,19 @@ function editor(slot: string): void {
 }
 
 async function resetAll(): Promise<void> {
-  let note = "";
+  // Revokes the key and forgets it (keychain, record, an adopted helper copy).
+  const r = await invoke<{ revoked: boolean; message: string }>("revoke_key").catch((err) => ({
+    revoked: false,
+    message: "Signed out on this computer. " + String(err),
+  }));
   try {
-    const r = await invoke<{ revoked: boolean; message: string }>("revoke_key");
-    note = r.message;
-  } catch (err) {
-    note = "Signed out on this computer. " + String(err);
-  }
-  for (const cmd of ["keychain_delete_key", "remove_tool_configs"]) {
-    try {
-      await invoke(cmd);
-    } catch {
-      // best-effort; UI state still resets below
-    }
+    await invoke("remove_tool_configs");
+  } catch {
+    // best-effort; UI state still resets below
   }
   signinMeta = null;
   K = { def: null };
-  $("signinErr").textContent = note;
+  $("signinErr").textContent = r.message;
   cur = null;
   $("empty").style.display = "";
   document.querySelectorAll<HTMLElement>(".tool").forEach((x) => {
@@ -248,26 +248,34 @@ function signinErrorMessage(err: unknown): string {
   return String(err);
 }
 
-// Sign in through the portal: open the approval page, then ask every two
-// seconds whether it was approved, until it was, failed, or was cancelled.
+// Sign in through the portal: open the approval page, then ask (at the pace
+// the portal allows) whether it was approved, until it was, failed, was
+// cancelled, or ten minutes passed.
 async function signIn(): Promise<void> {
-  if (signingIn) return;
-  signingIn = true;
+  const attempt = ++signinAttempt;
+  const mine = () => signinAttempt === attempt;
   const btn = $<HTMLButtonElement>("signinBtn");
   btn.disabled = true;
   $("signinErr").textContent = "";
   $("signinWait").style.display = "";
+  const deadline = Date.now() + SIGNIN_BUDGET_MS;
   try {
     const url = await invoke<string>("start_signin");
     await openUrl(url);
     for (;;) {
-      if (!signingIn) return;
-      const meta = await invoke<SigninMeta | null>("poll_signin");
-      if (meta) {
-        signinMeta = meta;
+      if (!mine()) return;
+      if (Date.now() > deadline) {
+        void invoke("cancel_signin");
+        $("signinErr").textContent = "No approval arrived in ten minutes. Start again when you are ready.";
+        return;
+      }
+      const p = await invoke<{ meta: SigninMeta | null; retry_ms: number }>("poll_signin");
+      if (!mine()) return;
+      if (p.meta) {
+        signinMeta = p.meta;
         break;
       }
-      await new Promise((r) => setTimeout(r, 2000));
+      await new Promise((r) => setTimeout(r, Math.max(1000, p.retry_ms)));
     }
     userConnected = true;
     const key = (await invoke<string | null>("keychain_get_key")) ?? "";
@@ -275,16 +283,17 @@ async function signIn(): Promise<void> {
     K.def = applyConnectResult(key, result);
     setConnected(true);
   } catch (err) {
-    if (signingIn) $("signinErr").textContent = signinErrorMessage(err) || connectErrorMessage(err);
+    if (mine()) $("signinErr").textContent = signinErrorMessage(err) || connectErrorMessage(err);
   } finally {
-    signingIn = false;
-    btn.disabled = false;
-    $("signinWait").style.display = "none";
+    if (mine()) {
+      btn.disabled = false;
+      $("signinWait").style.display = "none";
+    }
   }
 }
 
 function cancelSignIn(): void {
-  signingIn = false;
+  signinAttempt++;
   void invoke("cancel_signin");
   $("signinWait").style.display = "none";
   $<HTMLButtonElement>("signinBtn").disabled = false;
@@ -335,9 +344,7 @@ function wireConnect(): void {
       userConnected = true;
       try {
         const result = await invoke<ConnectResult>("validate_key", { key: rawKey });
-        await invoke("keychain_set_key", { key: rawKey });
-        await invoke("note_pasted_key", { owner: result.email }).catch(() => undefined);
-        signinMeta = { owner: result.email ?? "", org_id: "", key_id: "", label: "", expires: "", source: "pasted" };
+        signinMeta = await invoke<SigninMeta>("store_pasted_key", { key: rawKey, owner: result.email });
         K.def = applyConnectResult(rawKey, result);
         setConnected(true);
       } catch (err) {
@@ -383,9 +390,7 @@ function wireKeysTab(): void {
         btn.disabled = true;
         try {
           const result = await invoke<ConnectResult>("validate_key", { key: rawKey });
-          await invoke("keychain_set_key", { key: rawKey });
-          await invoke("note_pasted_key", { owner: result.email }).catch(() => undefined);
-          signinMeta = { owner: result.email ?? "", org_id: "", key_id: "", label: "", expires: "", source: "pasted" };
+          signinMeta = await invoke<SigninMeta>("store_pasted_key", { key: rawKey, owner: result.email });
           K.def = applyConnectResult(rawKey, result);
           setConnected(true);
         } catch (err) {
@@ -553,11 +558,9 @@ async function restoreSession(): Promise<void> {
     // stored key is no longer the one we validated, so leave it alone.
     if (userConnected) return;
     if ((err as ConnectError).kind === "Revoked") {
-      try {
-        await invoke("keychain_delete_key");
-      } catch {
-        // the next successful connect overwrites it anyway
-      }
+      // Forgotten for good, the helper script's copy included, so it is
+      // not adopted again at the next start.
+      await invoke("discard_dead_key").catch(() => undefined);
       signinMeta = null;
       $("signinErr").textContent = REVOKED_MESSAGE;
     } else if (settingsError) {

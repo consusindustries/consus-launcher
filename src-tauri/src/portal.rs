@@ -1,6 +1,7 @@
 use serde::Serialize;
 
-const USER_AGENT: &str = concat!("ConsusLauncher/", env!("CARGO_PKG_VERSION"));
+pub const USER_AGENT: &str = concat!("ConsusLauncher/", env!("CARGO_PKG_VERSION"));
+pub const PORTAL_URL: &str = "https://portal.consus.io";
 
 #[derive(Debug, Serialize)]
 pub struct ConnectResult {
@@ -84,7 +85,7 @@ pub async fn validate_key(key: String) -> Result<ConnectResult, ConnectError> {
 
 /// Where the portal says which launcher is newest: a static file anyone can
 /// read, so the check sends no key and nothing about the user.
-const LATEST_URL: &str = "https://portal.consus.io/assets/launcher/latest.json";
+const LATEST_URL: &str = concat!("https://portal.consus.io", "/assets/launcher/latest.json");
 /// The only place an update may point: this project's releases on GitHub.
 const RELEASES_PATH: &str = "/consusindustries/consus-launcher/releases/";
 

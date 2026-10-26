@@ -25,12 +25,16 @@ pub fn keychain_set_key(key: String) -> Result<(), String> {
     set_key(&key)
 }
 
-#[tauri::command]
-pub fn keychain_delete_key() -> Result<(), String> {
+pub fn delete_key() -> Result<(), String> {
     match entry()?.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
         Err(e) => Err(e.to_string()),
     }
+}
+
+#[tauri::command]
+pub fn keychain_delete_key() -> Result<(), String> {
+    delete_key()
 }
 
 /// Credential-helper modes: print the key for a tool that asked for it, as

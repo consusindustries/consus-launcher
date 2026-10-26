@@ -11,10 +11,13 @@
 // links records who signed in and when the key expires (no secret in it).
 //
 // A key the helper script already obtained on this machine (~/.consus/key)
-// is adopted on first run rather than asking the person to sign in again.
+// is adopted on first run rather than asking the person to sign in again;
+// the two then share one key, so signing out here also signs the helper out
+// (its files go), and a key the helper replaces shows up here as revoked.
 // Sign out revokes the key through the gateway (DELETE /v1/me/key), which
 // a sign-in key may do for itself; a pasted key may not, and the portal is
-// where those are revoked.
+// where those are revoked. One working key per computer: storing a new key
+// revokes the sign-in key it replaces (specs/cli-login/logout-revokes.md).
 //
 // No sleeping here: each poll is one request, and the UI decides the pace.
 
@@ -23,14 +26,28 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use tauri::{AppHandle, Manager, State};
 
-pub const PORTAL_URL: &str = "https://portal.consus.io";
+use crate::portal::{PORTAL_URL, USER_AGENT};
+
 /// How the portal names this tool on its approval page.
 const TOOL: &str = "launcher";
 const META_FILE: &str = "signin.json";
-const USER_AGENT: &str = concat!("ConsusLauncher/", env!("CARGO_PKG_VERSION"));
+/// Between polls, unless the portal asks for longer.
+const POLL_MS: u64 = 2000;
+
+/// One client for every request this module makes.
+fn client() -> &'static reqwest::Client {
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .user_agent(USER_AGENT)
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .expect("a default TLS client")
+    })
+}
 
 /// The sign-in in progress: its verifier never leaves the Rust side.
 pub struct Pending(pub Mutex<Option<String>>);
@@ -120,6 +137,17 @@ pub fn read_meta_at(path: &Path) -> Option<Meta> {
     serde_json::from_str(&fs::read_to_string(path).ok()?).ok()
 }
 
+fn remove_meta(app: &AppHandle) {
+    if let Ok(p) = meta_path(app) {
+        let _ = fs::remove_file(p);
+    }
+}
+
+/// The helper script's files, which an adopted key came from.
+fn helper_files(home: &Path) -> [PathBuf; 2] {
+    [home.join(".consus/key"), home.join(".consus/meta.json")]
+}
+
 fn write_meta(app: &AppHandle, m: &Meta) -> Result<(), String> {
     let path = meta_path(app)?;
     if let Some(dir) = path.parent() {
@@ -159,14 +187,15 @@ fn today() -> String {
 /// What one exchange answer means (spec §2.3).
 #[derive(Debug, PartialEq)]
 pub enum Exchange {
-    Pending,
+    /// Not approved yet; ask again after this many milliseconds.
+    Pending(u64),
     Key(Meta, String),
     Gone,
     Refused(String),
     BadRequest,
 }
 
-pub fn classify(status: u16, body: &Value) -> Exchange {
+pub fn classify(status: u16, body: &Value, retry_after: Option<&str>) -> Exchange {
     match status {
         200 => match body.get("key").and_then(Value::as_str).filter(|k| !k.is_empty()) {
             Some(key) => {
@@ -185,9 +214,61 @@ pub fn classify(status: u16, body: &Value) -> Exchange {
             let detail = body.get("detail").and_then(Value::as_str).unwrap_or("mint_failed");
             Exchange::Refused(format!("the portal could not issue a key ({detail}); sign in again"))
         }
-        // 202 pending, 429 slow down, 5xx unavailable: keep asking.
-        _ => Exchange::Pending,
+        // 429: as slowly as the portal asks. 202 pending and 5xx
+        // unavailable: keep asking at the usual pace.
+        429 => Exchange::Pending(retry_after.and_then(|s| s.trim().parse::<u64>().ok()).map_or(5000, |s| s.max(1) * 1000)),
+        _ => Exchange::Pending(POLL_MS),
     }
+}
+
+/// DELETE /v1/me/key with `key`: a sign-in key revoking itself. Ok(true)
+/// when the key is dead (revoked now, already disabled, or expired);
+/// Ok(false) when only the portal may revoke it; Err when the gateway
+/// could not be asked.
+async fn self_revoke(key: &str) -> Result<bool, String> {
+    let target = crate::settings::current().map(|s| s.target).unwrap_or_default();
+    let resp = client()
+        .delete(format!("{}/me/key", target.v1()))
+        .header("x-api-key", key)
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let status = resp.status();
+    if status.is_success() {
+        return Ok(true);
+    }
+    if status.as_u16() == 403 {
+        let body: Value = resp.json().await.unwrap_or(Value::Null);
+        // A bare 403 is a key already disabled; an expired key is dead too.
+        let kind = body.pointer("/error/type").and_then(Value::as_str).unwrap_or("");
+        return Ok(kind.is_empty() || kind == "key_expired");
+    }
+    Err(format!("the gateway answered {status}"))
+}
+
+/// Puts `key` in the keychain in place of whatever was there. The sign-in
+/// key it replaces is revoked first (best effort: the portal lists what
+/// could not be), so this computer holds one working key.
+async fn store_key(app: &AppHandle, key: &str, meta: &Meta) -> Result<(), String> {
+    let previous = crate::keychain::get_key().filter(|k| k != key);
+    let prev_meta = meta_path(app).ok().and_then(|p| read_meta_at(&p)).unwrap_or_default();
+    crate::keychain::set_key(key)?;
+    if let Err(e) = write_meta(app, meta) {
+        eprintln!("signin.json: {e}");
+    }
+    if let Some(old) = previous {
+        if prev_meta.source == "signin" || prev_meta.source == "helper" {
+            let _ = self_revoke(&old).await;
+        }
+    }
+    Ok(())
+}
+
+#[derive(Debug, Serialize)]
+pub struct Poll {
+    pub meta: Option<Meta>,
+    pub retry_ms: u64,
 }
 
 /// Starts a sign-in: remembers the verifier and returns the page to open in
@@ -205,29 +286,25 @@ pub fn cancel_signin(pending: State<'_, Pending>) {
     *pending.0.lock().unwrap() = None;
 }
 
-/// One question to the portal: has the person approved? Ok(None) means not
-/// yet (ask again in a couple of seconds). Ok(Some) means the key is in the
+/// One question to the portal: has the person approved? `meta` is None
+/// while not (ask again after `retry_ms`), and Some once the key is in the
 /// keychain and signin.json is written.
 #[tauri::command]
-pub async fn poll_signin(app: AppHandle, pending: State<'_, Pending>) -> Result<Option<Meta>, SigninError> {
+pub async fn poll_signin(app: AppHandle, pending: State<'_, Pending>) -> Result<Poll, SigninError> {
     let Some(verifier) = pending.0.lock().unwrap().clone() else {
         return Err(SigninError::NotStarted);
     };
-    let client = reqwest::Client::builder()
-        .user_agent(USER_AGENT)
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .map_err(|e| SigninError::Network { message: e.to_string() })?;
-    let resp = client
+    let resp = client()
         .post(format!("{PORTAL_URL}/api/cli/exchange"))
         .json(&serde_json::json!({ "verifier": verifier }))
         .send()
         .await
         .map_err(|e| SigninError::Network { message: e.to_string() })?;
     let status = resp.status().as_u16();
+    let retry_after = resp.headers().get("retry-after").and_then(|v| v.to_str().ok()).map(String::from);
     let body: Value = resp.json().await.unwrap_or(Value::Null);
-    match classify(status, &body) {
-        Exchange::Pending => Ok(None),
+    match classify(status, &body, retry_after.as_deref()) {
+        Exchange::Pending(retry_ms) => Ok(Poll { meta: None, retry_ms }),
         Exchange::Gone => {
             *pending.0.lock().unwrap() = None;
             Err(SigninError::Expired)
@@ -242,9 +319,13 @@ pub async fn poll_signin(app: AppHandle, pending: State<'_, Pending>) -> Result<
         }
         Exchange::Key(meta, key) => {
             *pending.0.lock().unwrap() = None;
-            crate::keychain::set_key(&key).map_err(|message| SigninError::Refused { message })?;
-            write_meta(&app, &meta).map_err(|message| SigninError::Refused { message })?;
-            Ok(Some(meta))
+            // The exchange hands the key over once. If it cannot be kept, it
+            // must not stay live with nothing holding it.
+            if let Err(message) = store_key(&app, &key, &meta).await {
+                let _ = self_revoke(&key).await;
+                return Err(SigninError::Refused { message: format!("the key could not be saved to your keychain ({message}); it was revoked") });
+            }
+            Ok(Poll { meta: Some(meta), retry_ms: 0 })
         }
     }
 }
@@ -256,10 +337,30 @@ pub fn signin_info(app: AppHandle) -> Option<Meta> {
     read_meta_at(&meta_path(&app).ok()?)
 }
 
-/// Records a pasted key's provenance so the Keys tab can say so.
+/// Keeps a key the person pasted (already validated by the caller),
+/// revoking the sign-in key it replaces, and returns its record.
 #[tauri::command]
-pub fn note_pasted_key(app: AppHandle, owner: Option<String>) -> Result<(), String> {
-    write_meta(&app, &Meta { owner: owner.unwrap_or_default(), source: "pasted".into(), ..Meta::default() })
+pub async fn store_pasted_key(app: AppHandle, key: String, owner: Option<String>) -> Result<Meta, String> {
+    let meta = Meta { owner: owner.unwrap_or_default(), source: "pasted".into(), ..Meta::default() };
+    store_key(&app, &key, &meta).await?;
+    Ok(meta)
+}
+
+/// Forgets a key the gateway no longer accepts: the keychain entry, the
+/// record, and, when it came from the helper script, the helper's files,
+/// so it is not adopted again at the next start.
+#[tauri::command]
+pub fn discard_dead_key(app: AppHandle) -> Result<(), String> {
+    let from_helper = meta_path(&app).ok().and_then(|p| read_meta_at(&p)).is_some_and(|m| m.source == "helper");
+    remove_meta(&app);
+    if from_helper {
+        if let Ok(home) = app.path().home_dir() {
+            for f in helper_files(&home) {
+                let _ = fs::remove_file(f);
+            }
+        }
+    }
+    crate::keychain::delete_key()
 }
 
 /// The helper script's key on this machine (~/.consus/key with meta.json),
@@ -300,37 +401,31 @@ pub struct Revoked {
     pub message: String,
 }
 
-/// Revokes the keychain's key through the gateway and forgets who was
-/// signed in. The keychain entry and tool settings are the caller's to
-/// remove next, whatever this answers.
+/// Sign out: revokes the keychain's key through the gateway, then forgets
+/// it, its record and, for an adopted key, the helper script's copy. The
+/// tool settings are the caller's to remove next. Never fails: the message
+/// says what happened and, when the key is still live, how to finish.
 #[tauri::command]
-pub async fn revoke_key(app: AppHandle) -> Result<Revoked, String> {
-    let _ = meta_path(&app).map(|p| fs::remove_file(p));
+pub async fn revoke_key(app: AppHandle) -> Revoked {
+    let meta = meta_path(&app).ok().and_then(|p| read_meta_at(&p)).unwrap_or_default();
     let Some(key) = crate::keychain::get_key() else {
-        return Ok(Revoked { revoked: true, message: "Signed out.".into() });
+        remove_meta(&app);
+        return Revoked { revoked: true, message: "Signed out.".into() };
     };
-    let target = crate::settings::current()?.target;
-    let client = reqwest::Client::builder()
-        .user_agent(USER_AGENT)
-        .timeout(std::time::Duration::from_secs(10))
-        .build()
-        .map_err(|e| e.to_string())?;
-    let resp = client.delete(format!("{}/me/key", target.v1())).header("x-api-key", key).send().await;
-    Ok(match resp {
-        Ok(r) if r.status().is_success() => Revoked { revoked: true, message: "Signed out. This computer's key is revoked.".into() },
-        Ok(r) if r.status().as_u16() == 403 => {
-            let body: Value = r.json().await.unwrap_or(Value::Null);
-            // A bare 403 is a key already disabled; an expired key is dead too.
-            let kind = body.pointer("/error/type").and_then(Value::as_str).unwrap_or("");
-            if kind.is_empty() || kind == "key_expired" {
-                Revoked { revoked: true, message: "Signed out. The key was already disabled.".into() }
-            } else {
-                Revoked { revoked: false, message: "Signed out on this computer. The key was pasted, so revoke it in the portal.".into() }
-            }
-        }
-        Ok(r) => Revoked { revoked: false, message: format!("Signed out on this computer, but the gateway answered {}. Revoke the key in the portal.", r.status()) },
-        Err(e) => Revoked { revoked: false, message: format!("Signed out on this computer, but the gateway could not be reached ({e}). Revoke the key in the portal.") },
-    })
+    let which = if meta.label.is_empty() { String::new() } else { format!(" ({})", meta.label) };
+    let outcome = match self_revoke(&key).await {
+        Ok(true) => Revoked { revoked: true, message: "Signed out. This computer's key is revoked.".into() },
+        Ok(false) => Revoked {
+            revoked: false,
+            message: format!("Signed out on this computer. This key{which} can only be revoked in the Consus portal; do that if you are done with it."),
+        },
+        Err(e) => Revoked {
+            revoked: false,
+            message: format!("Signed out on this computer, but the key{which} could not be revoked: {e}. Revoke it in the Consus portal."),
+        },
+    };
+    let _ = discard_dead_key(app);
+    outcome
 }
 
 #[cfg(test)]
@@ -358,22 +453,23 @@ mod tests {
 
     #[test]
     fn exchange_answers_are_read_as_the_spec_says() {
-        assert_eq!(classify(202, &json!({ "status": "pending" })), Exchange::Pending);
-        assert_eq!(classify(429, &Value::Null), Exchange::Pending);
-        assert_eq!(classify(503, &json!({ "error": "cli_login_unavailable" })), Exchange::Pending);
-        assert_eq!(classify(502, &json!({ "error": "x" })), Exchange::Pending, "an unavailable portal, not a refusal");
-        assert_eq!(classify(410, &json!({ "error": "gone" })), Exchange::Gone);
-        assert_eq!(classify(400, &json!({ "error": "bad_request" })), Exchange::BadRequest);
-        assert!(matches!(classify(502, &json!({ "error": "mint_failed", "detail": "no models" })), Exchange::Refused(m) if m.contains("no models")));
+        assert_eq!(classify(202, &json!({ "status": "pending" }), None), Exchange::Pending(2000));
+        assert_eq!(classify(429, &Value::Null, None), Exchange::Pending(5000), "slow down even without a header");
+        assert_eq!(classify(429, &Value::Null, Some("12")), Exchange::Pending(12_000), "as long as the portal asks");
+        assert_eq!(classify(503, &json!({ "error": "cli_login_unavailable" }), None), Exchange::Pending(2000));
+        assert_eq!(classify(502, &json!({ "error": "x" }), None), Exchange::Pending(2000), "an unavailable portal, not a refusal");
+        assert_eq!(classify(410, &json!({ "error": "gone" }), None), Exchange::Gone);
+        assert_eq!(classify(400, &json!({ "error": "bad_request" }), None), Exchange::BadRequest);
+        assert!(matches!(classify(502, &json!({ "error": "mint_failed", "detail": "no models" }), None), Exchange::Refused(m) if m.contains("no models")));
         let ok = json!({ "key": "sk-1", "key_id": "k1", "expires": "2026-11-25", "org_id": "org", "owner": "e@x.gov", "label": "cli - mbp" });
-        match classify(200, &ok) {
+        match classify(200, &ok, None) {
             Exchange::Key(m, k) => {
                 assert_eq!(k, "sk-1");
                 assert_eq!((m.owner.as_str(), m.expires.as_str(), m.source.as_str()), ("e@x.gov", "2026-11-25", "signin"));
             }
             other => panic!("{other:?}"),
         }
-        assert!(matches!(classify(200, &json!({})), Exchange::Refused(_)));
+        assert!(matches!(classify(200, &json!({}), None), Exchange::Refused(_)));
     }
 
     #[test]
