@@ -329,22 +329,6 @@ fn scrub(cmd: &mut Command, drop: impl Fn(&str) -> bool) {
     }
 }
 
-fn claude_var(n: &str) -> bool {
-    n.starts_with("CLAUDE") || n.starts_with("ANTHROPIC")
-}
-
-fn codex_var(n: &str) -> bool {
-    n.starts_with("OPENAI") || n.starts_with("CODEX")
-}
-
-/// Pi would otherwise offer other providers' models next to Consus.
-fn pi_var(n: &str) -> bool {
-    ["CLAUDE", "ANTHROPIC", "AWS", "GOOGLE", "GCLOUD", "AZURE"].iter().any(|p| n.starts_with(p))
-        || n.ends_with("_API_KEY")
-        || n == "HF_TOKEN"
-        || n == "COPILOT_GITHUB_TOKEN"
-}
-
 /// Runs a command-line tool; npm installs it as a .cmd, which needs cmd.
 fn cli_command(exe: &Path) -> Command {
     let script = exe.extension().is_some_and(|e| e.eq_ignore_ascii_case("cmd") || e.eq_ignore_ascii_case("bat"));
@@ -385,7 +369,7 @@ pub fn launch(app: AppHandle, t: Tool, models: &Value, target: &Target) -> Resul
                 config::write_claude_desktop(&home, &helper, models, target)?;
             }
             let mut c = Command::new(exe);
-            scrub(&mut c, claude_var);
+            scrub(&mut c, |n| super::CLAUDE_SCRUB.matches(n));
             c
         }
         Tool::ChatGpt => {
@@ -417,7 +401,7 @@ pub fn launch(app: AppHandle, t: Tool, models: &Value, target: &Target) -> Resul
                 claude_code::write_settings(&home, &helper, models, target)?;
             }
             let mut c = cli_command(&exe);
-            scrub(&mut c, claude_var);
+            scrub(&mut c, |n| super::CLAUDE_SCRUB.matches(n));
             c.env("CLAUDE_CONFIG_DIR", claude_code::profile_dir(&home));
             c
         }
@@ -431,7 +415,7 @@ pub fn launch(app: AppHandle, t: Tool, models: &Value, target: &Target) -> Resul
             let bundled = output_within(&mut list, Duration::from_secs(20)).and_then(|s| serde_json::from_str::<Value>(&s).ok());
             codex::write_config(&home, models, bundled.as_ref(), target)?;
             let mut c = cli_command(&exe);
-            scrub(&mut c, codex_var);
+            scrub(&mut c, |n| super::CODEX_SCRUB.matches(n));
             c.env("CODEX_HOME", &profile).env("CONSUS_API_KEY", key);
             c
         }
@@ -441,10 +425,11 @@ pub fn launch(app: AppHandle, t: Tool, models: &Value, target: &Target) -> Resul
             config::write_helper(&helper)?;
             pi::write_config(&home, &helper, models, target)?;
             let mut c = cli_command(&exe);
-            scrub(&mut c, pi_var);
-            c.env("PI_CODING_AGENT_DIR", pi::profile_dir(&home))
-                .env("PI_TELEMETRY", "0")
-                .env("PI_SKIP_VERSION_CHECK", "1");
+            scrub(&mut c, |n| super::PI_SCRUB.matches(n));
+            c.env("PI_CODING_AGENT_DIR", pi::profile_dir(&home));
+            for (k, v) in crate::policy::policy().pi_env() {
+                c.env(k, v);
+            }
             c
         }
     };

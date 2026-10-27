@@ -2,6 +2,10 @@
 
 What changed in each release. Each release's GitHub page shows its section.
 
+## Unreleased
+
+- One policy document. Every setting the launcher writes into a tool, and every setting only a device-management lock may carry, now lives in `policy/launcher-policy.json`; the launcher embeds it, the README's per-tool table is generated from it, and each release attaches it so the Consus portal renders the lock files from the same values. What the launcher writes is unchanged.
+
 ## v1.2.0 (2026-10-26)
 
 - Sign in with your company account instead of pasting a key. The launcher opens the Consus portal, you approve in the browser, and a key that is yours alone, named after this computer and expiring after 30 days, goes straight to the keychain. Pasting a key stays for organizations without SSO. A key the Consus credential helper already obtained on the machine is used as is.

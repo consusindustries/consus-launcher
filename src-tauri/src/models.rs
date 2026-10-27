@@ -36,20 +36,6 @@ impl Target {
         format!("{}/v1", self.endpoint)
     }
 
-    /// The agent's web tools the Claude tools are told not to offer, by
-    /// the names both Claude Code's permission rules and Claude Desktop's
-    /// disabledBuiltinTools use (bare "WebSearch" and "WebFetch", per
-    /// Anthropic's configuration reference, checked 2026-10-26). Search
-    /// always: it is a server tool the gateway refuses. Fetch unless the
-    /// org turned web access on.
-    pub fn denied_web_tools(&self) -> Vec<&'static str> {
-        let mut out = vec!["WebSearch"];
-        if !self.web_access {
-            out.push("WebFetch");
-        }
-        out
-    }
-
     /// How people name the level: "ITAR", "FedRAMP High", "IL5 + ITAR".
     pub fn tag(&self) -> String {
         self.level.split('+').map(level_tag).collect::<Vec<_>>().join(" + ")
@@ -236,23 +222,6 @@ mod tests {
         assert_eq!(t("itar"), "ITAR");
         assert_eq!(t("fedramp-high+itar"), "FedRAMP High + ITAR");
         assert_eq!(t("il5"), "IL5");
-    }
-
-    #[test]
-    fn denied_web_tools_match_the_policy_document() {
-        let p = crate::policy::policy();
-        for on in [false, true] {
-            let t = Target { web_access: on, ..Target::default() };
-            let (_, deny, _) = p.claude_code_variant(on);
-            assert_eq!(t.denied_web_tools(), deny, "Claude Code, web access {on}");
-            let desktop: Vec<String> = p.claude_desktop_variant(on)["disabledBuiltinTools"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|v| v.as_str().unwrap().to_string())
-                .collect();
-            assert_eq!(t.denied_web_tools(), desktop, "Claude Desktop, web access {on}");
-        }
     }
 
     #[test]

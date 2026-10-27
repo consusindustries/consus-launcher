@@ -10,9 +10,6 @@
 // Parsed once, strictly: a key this code does not know is a build defect,
 // the same posture as a template that fails to parse.
 
-// Read by the writers from PR 2 on; until then only the tests use it.
-#![allow(dead_code)]
-
 use serde::Deserialize;
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
@@ -20,8 +17,11 @@ use std::sync::OnceLock;
 
 pub const SOURCE: &str = include_str!("../../policy/launcher-policy.json");
 
+// Fields that describe the document for the portal and the README table
+// are read by the tests, not the writers.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[allow(dead_code)]
 pub struct Policy {
     pub schema: u32,
     pub launcher: String,
@@ -32,6 +32,7 @@ pub struct Policy {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[allow(dead_code)]
 pub struct Slot {
     pub kind: String,
     pub note: Option<String>,
@@ -39,6 +40,7 @@ pub struct Slot {
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[allow(dead_code)]
 pub struct Tool {
     pub name: String,
     pub file: String,
@@ -66,6 +68,7 @@ pub struct Tool {
 /// What only a device-management lock may carry.
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[allow(dead_code)]
 pub struct LockOnly {
     /// Always in the lock.
     #[serde(default)]
@@ -86,6 +89,7 @@ pub struct LockOnly {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[allow(dead_code)]
 pub struct Lock {
     pub kind: String,
     pub domain: Option<String>,
@@ -96,6 +100,7 @@ pub struct Lock {
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[allow(dead_code)]
 pub struct Readme {
     pub telemetry: String,
     pub web_search: String,
@@ -125,10 +130,16 @@ impl Policy {
         }
     }
 
+    /// A tool that has web-access variants must have both; one that has
+    /// none (Pi) gets an empty map.
     fn web(&self, id: &str, web_access: bool) -> &Map<String, Value> {
         static EMPTY: OnceLock<Map<String, Value>> = OnceLock::new();
+        let variants = &self.base(id).by_web_access;
+        if variants.is_empty() {
+            return EMPTY.get_or_init(Map::new);
+        }
         let key = if web_access { "on" } else { "off" };
-        self.base(id).by_web_access.get(key).unwrap_or_else(|| EMPTY.get_or_init(Map::new))
+        variants.get(key).unwrap_or_else(|| panic!("policy: {id} has no {key} web-access variant"))
     }
 
     /// Claude Desktop's static entry keys, as the writer puts them.
@@ -176,7 +187,9 @@ impl Policy {
     }
 
     /// Codex's requirements.toml, the lock, verbatim, with its slot
-    /// placeholders ({{endpoint_host}}) still in place.
+    /// placeholders ({{endpoint_host}}) still in place. The portal's, not
+    /// the launcher's, to render; the tests check it parses.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn codex_requirements_toml(&self) -> &str {
         self.base("codex-cli").lock_only.requirements_toml.as_deref().unwrap_or("")
     }
@@ -197,6 +210,7 @@ impl Policy {
 }
 
 /// Every leaf path of a JSON object, dotted, in sorted order.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn leaf_paths(v: &Value) -> Vec<String> {
     fn walk(v: &Value, prefix: &str, out: &mut Vec<String>) {
         match v.as_object() {
@@ -248,6 +262,21 @@ mod tests {
         }
         // Claude Code's managed settings reject a non-string env value.
         assert!(p.claude_code_env_static().values().all(Value::is_string));
+        // Env values travel into a shell line (Pi) and a JSON file: plain text.
+        let plain = |v: &str| v.chars().all(|c| c.is_ascii_alphanumeric() || "._-/:".contains(c));
+        for (id, t) in &p.tools {
+            for (k, v) in &t.env {
+                assert!(plain(v), "{id}: {k}={v}");
+            }
+            for (name, variant) in &t.by_web_access {
+                for (k, v) in variant.get("env").and_then(Value::as_object).into_iter().flatten() {
+                    assert!(v.as_str().is_some_and(plain), "{id} {name}: {k}={v}");
+                }
+            }
+        }
+        for on in [false, true] {
+            assert!(!p.claude_desktop_variant(on).is_empty() && !p.claude_code_variant(on).1.is_empty());
+        }
     }
 
     /// Codex's top-level keys. One of these written below a [table] header
@@ -305,11 +334,48 @@ mod tests {
         }
         let extra: DocumentMut = p.codex_extra_toml().parse().unwrap();
         assert_eq!(extra["check_for_update_on_startup"].as_bool(), Some(false));
+        // codex.rs copies these as plain values; a table or dotted key here
+        // would panic at launch.
+        assert!(extra.as_table().iter().all(|(_, item)| item.is_value()), "toml_extra holds plain values only");
         let lock = p.base("codex-cli").lock_only.requirements_toml.as_deref().unwrap();
         assert!(lock.contains("allowed_web_search_modes = []"));
         assert!(lock.contains("\"{{endpoint_host}}\" = \"allow\""), "the gateway host is a slot, not api.consus.io");
         assert_eq!(p.base("codex-cli").lock_only.requirements_slots.get("{{endpoint_host}}").map(String::as_str), Some("endpoint_host"));
         assert!(p.slots.contains_key("endpoint_host"));
+    }
+
+    /// The README's per-tool table, rendered from the document. Rows in
+    /// the order people read them, not the map's.
+    fn readme_table() -> String {
+        let p = policy();
+        let mut out = String::from(
+            "| | Inference | Vendor telemetry and updates | Web search | Web fetch, off / on | Agent shell network, off / on | What still leaves the machine | Lock it for the user |\n|---|---|---|---|---|---|---|---|\n",
+        );
+        for id in ["claude-desktop", "claude-code", "chatgpt-desktop", "codex-cli", "pi"] {
+            let t = p.tool(id);
+            let r = &t.readme;
+            out.push_str(&format!(
+                "| {} | Gateway only | {} | {} | {} | {} | {} | {} |\n",
+                t.name, r.telemetry, r.web_search, r.web_fetch, r.shell, r.leaves_machine, r.lock
+            ));
+        }
+        out
+    }
+
+    #[test]
+    fn the_readme_table_is_the_document() {
+        // A Windows checkout has CRLF line endings; the table is compared as LF.
+        let readme = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../README.md")).unwrap().replace("\r\n", "\n");
+        let (start_tag, end_tag) = ("<!-- lockdown-table:start", "<!-- lockdown-table:end -->");
+        let start = readme.find(start_tag).expect("README has the table's start marker");
+        let body_start = start + readme[start..].find("-->\n").expect("start marker closes") + 4;
+        let end = readme.find(end_tag).expect("README has the table's end marker");
+        let current = &readme[body_start..end];
+        let rendered = readme_table();
+        assert!(
+            current == rendered,
+            "README's per-tool table differs from policy/launcher-policy.json. Paste this between the markers:\n\n{rendered}"
+        );
     }
 
     #[test]
@@ -327,13 +393,6 @@ mod tests {
         assert_eq!(leaf_paths(&Value::Object(cc.lock_only.admin.clone())), ["allowManagedMcpServersOnly", "allowedMcpServers", "sandbox.network.allowManagedDomainsOnly"]);
         assert_eq!(p.tool("codex-cli").extends.as_deref(), Some("chatgpt-desktop"));
         assert!(p.tool("codex-cli").toml.is_none(), "codex-cli takes its TOML from chatgpt-desktop");
-    }
-
-    #[test]
-    fn until_the_writers_read_it_the_toml_equals_the_template() {
-        // Temporary: removed when chatgpt.rs reads the document (PR 2).
-        // The Windows checkout turns the template's line endings into CRLF.
-        assert_eq!(policy().chatgpt_toml(), include_str!("../templates/chatgpt-desktop.toml").replace("\r\n", "\n"));
     }
 
     #[test]

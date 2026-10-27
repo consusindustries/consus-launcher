@@ -129,58 +129,25 @@ pub fn write_claude_desktop(home: &Path, helper: &Path, models: &Value, t: &Targ
         write_json(&marker, &marker_json())?;
     }
 
-    // What the agent's sandboxed shell and Web Fetch may reach, per the
-    // app's web-tools reference (checked 2026-10-26): unset or [] refuses
-    // every fetch and host; ["*"] allows all. The app's own calls to the
-    // gateway and to downloads.claude.ai are not checked against this list.
-    let egress: Vec<&str> = if t.web_access { vec!["*"] } else { vec![] };
-
-    let entry = json!({
-        "inferenceProvider": "gateway",
-        "inferenceGatewayBaseUrl": t.endpoint,
-        "inferenceGatewayAuthScheme": "x-api-key",
-        "inferenceCredentialKind": "helper-script",
-        "inferenceCredentialHelper": helper.to_string_lossy(),
-        "chatTabEnabled": true,
-        "inferenceModels": picked,
-        // No traffic to Anthropic (the app's telemetry and egress page,
-        // checked 2026-10-26): crash reports; usage analytics and diagnostic
-        // uploads; connector icons, the connector directory and the artifact
-        // preview frame, so artifacts do not render; update checks, so IT
-        // installs new versions; the signed model catalog the picker's labels
-        // come from (downloads.claude.ai, polled every few minutes; the
-        // gateway's names are used instead); and, in Code sessions, the
-        // check of each fetched hostname with api.anthropic.com. Claude.ai
-        // sign-in is hidden too, the way /login is in Claude Code: it would
-        // send requests straight to Anthropic. What stays: the VM bundle and
-        // Claude CLI binary from downloads.claude.ai at the first Cowork or
-        // Code session, which only Anthropic's offline installer avoids.
-        // Each key is ignored by an app older than the one that added it
-        // (modelCatalogEnabled 2.110.0, skipWebFetchPreflight 1.37937.0,
-        // the plugin keys 1.37937.0, the sandbox keys 1.2581.0).
-        "disableEssentialTelemetry": true,
-        "disableNonessentialTelemetry": true,
-        "disableNonessentialServices": true,
-        "disableAutoUpdates": true,
-        "modelCatalogEnabled": false,
-        "skipWebFetchPreflight": true,
-        "disableDeploymentModeChooser": true,
-        // Plugins from a marketplace or an upload are downloads from wherever
-        // the marketplace is; the org's own plugins arrive through its
-        // device-management profile, which these keys do not touch.
-        "userPluginMarketplacesEnabled": false,
-        "userPluginUploadsEnabled": false,
-        "disabledBuiltinTools": t.denied_web_tools(),
-        "coworkEgressAllowedHosts": egress,
-        "banner": {
-            "enabled": true,
-            "text": "Runs on the Consus gateway.",
-            "backgroundColor": "#E4DCBE",
-            "textColor": "#231B15",
-            "linkUrl": "https://consus.io",
-        },
-    });
-    write_json(&lib.join(format!("{ENTRY_ID}.json")), &entry)?;
+    // The entry's values come from the policy document (policy/
+    // launcher-policy.json): the static keys that keep the app off
+    // Anthropic's network (telemetry, update checks, the model catalog poll,
+    // the WebFetch hostname check, plugin marketplaces, Claude.ai sign-in),
+    // then the web-access variant (the agent's web tools and what its
+    // sandbox may reach: unset or [] refuses every host, ["*"] allows all).
+    // What stays is the VM bundle from downloads.claude.ai at the first
+    // Cowork or Code session, which only Anthropic's offline installer
+    // avoids. An app older than the one that added a key ignores it
+    // (modelCatalogEnabled 2.110.0, skipWebFetchPreflight 1.37937.0, the
+    // plugin keys 1.37937.0, the sandbox keys 1.2581.0). Only the three
+    // slots are filled here.
+    let policy = crate::policy::policy();
+    let mut entry = policy.claude_desktop_static();
+    entry.insert("inferenceGatewayBaseUrl".into(), json!(t.endpoint));
+    entry.insert("inferenceCredentialHelper".into(), json!(helper.to_string_lossy()));
+    entry.insert("inferenceModels".into(), json!(picked));
+    entry.extend(policy.claude_desktop_variant(t.web_access));
+    write_json(&lib.join(format!("{ENTRY_ID}.json")), &Value::Object(entry))?;
 
     let meta_path = lib.join("_meta.json");
     let backup = lib.join("_meta.json.consus-bak");

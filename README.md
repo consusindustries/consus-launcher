@@ -58,6 +58,7 @@ The tools you open send their requests to `api.consus.io`, or to your organizati
 
 Per tool, with `WebAccess` off (the default) and on:
 
+<!-- lockdown-table:start (generated from policy/launcher-policy.json; `cargo test` prints the table when it drifts) -->
 | | Inference | Vendor telemetry and updates | Web search | Web fetch, off / on | Agent shell network, off / on | What still leaves the machine | Lock it for the user |
 |---|---|---|---|---|---|---|---|
 | Claude Desktop | Gateway only | Off: crash and error reports, analytics, model catalog, connector icons, previews, auto-update | Never offered | None / any host | None / any host (its sandbox VM) | Sandbox VM bundle from `downloads.claude.ai` at the first Cowork or Code session | `com.anthropic.claudefordesktop` profile from the portal |
@@ -65,6 +66,7 @@ Per tool, with `WebAccess` off (the default) and on:
 | ChatGPT | Gateway only | Off in the agent: analytics, feedback upload, OpenTelemetry export. The app around it keeps OpenAI's own update and product-analytics connections | Off in the file; the gateway strips it if turned back on | No such tool | None / any host (Codex's sandbox) | The app's own connections to OpenAI | `requirements.toml` from the portal |
 | Codex CLI | Gateway only | Off: analytics, feedback, OpenTelemetry export, update check | Same as ChatGPT | No such tool | None / any host (Codex's sandbox) | Nothing the launcher knows of | `requirements.toml` from the portal |
 | Pi | Gateway only | Off: install telemetry, update check | No such tool | No such tool | Not restricted: Pi has no sandbox | `fd` and `ripgrep` from GitHub on first run | Pi offers no lock; a container or the network edge |
+<!-- lockdown-table:end -->
 
 ## For IT admins: org settings
 
@@ -80,6 +82,8 @@ On macOS the launcher reads settings for the `io.consus.launcher` preferences do
 | `WebAccess` | `on` or `off` | Whether the agent in each tool may reach the web from the machine: Claude Code's WebFetch and shell sandbox, Claude Desktop's Web Fetch and sandbox, and the sandbox network of ChatGPT and Codex (the table above). Default `off`. Web search stays off either way. |
 
 The launcher reads these when it starts; restart it after a change. If a value is present but invalid or blank, or a settings file cannot be read, the launcher explains the problem and sets nothing up, rather than falling back to defaults. Hiding a tool here is a convenience, not a control: what a key can do is enforced by the Consus gateway.
+
+**One policy document.** Every value the launcher writes into a tool, and every value only a lock may carry, is in one file in this repository, [`policy/launcher-policy.json`](policy/launcher-policy.json). The launcher embeds it; the Consus portal renders the same file into the lock files below for the launcher version it offers; the table above is generated from it. Read that file to know exactly what a locked-down tool looks like.
 
 The launcher writes each tool's settings where the user can edit them. To make them a policy the user cannot change, push the tool's own managed settings as well: Claude Code's `managed-settings.json` (which can also carry `allowedProviders`, a key Claude Code reads only from managed settings, refusing every claude.ai and Console sign-in), Claude Desktop's `com.anthropic.claudefordesktop` profile, and Codex's `requirements.toml`. The Consus portal's deployment page generates all three; when one is present, the launcher leaves that tool's connection settings alone and labels the tool "Managed by your organization".
 
@@ -165,13 +169,14 @@ Release builds are made only in GitHub Actions ([`release.yml`](.github/workflow
 
 - `Consus-Launcher-<version>-universal.dmg` and `.pkg` (macOS), and `Consus-Launcher-<version>-x64.msi` and `-arm64.msi` (Windows, not yet code-signed)
 - `consus-launcher-rust.cdx.json` and `consus-launcher-npm.cdx.json`: CycloneDX SBOMs for the Rust crates and the npm packages in the app
+- `consus-launcher-policy-<version>.json`: the policy document, every setting this version writes (see "One policy document" under "For IT admins" above)
 - `SHA256SUMS.txt`
 
 Signing and notarization run in that same workflow once the Apple secrets are set; the secret names are listed at the top of `release.yml`. Run the workflow by hand (Actions, Release, Run workflow) to try signing before tagging.
 
 To cut a release:
 
-1. Set the new version with `npm version --no-git-tag-version <version>` (updates `package.json` and `package-lock.json`), then in `src-tauri/tauri.conf.json` and `src-tauri/Cargo.toml`. Commit it with the updated `Cargo.lock`. The workflow refuses to build if any of these differ.
+1. Set the new version with `npm version --no-git-tag-version <version>` (updates `package.json` and `package-lock.json`), then in `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, and `launcher` in `policy/launcher-policy.json`. Commit it with the updated `Cargo.lock`. The workflow refuses to build if any of the five differ.
 2. Tag the commit `v<version>` and push the tag.
 3. The workflow drafts a GitHub Release with the files above. Review it, then publish.
 
