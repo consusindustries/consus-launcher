@@ -355,7 +355,8 @@ mod tests {
 
     #[test]
     fn the_readme_table_is_the_document() {
-        let readme = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../README.md")).unwrap();
+        // A Windows checkout has CRLF line endings; the table is compared as LF.
+        let readme = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../README.md")).unwrap().replace("\r\n", "\n");
         let (start_tag, end_tag) = ("<!-- lockdown-table:start", "<!-- lockdown-table:end -->");
         let start = readme.find(start_tag).expect("README has the table's start marker");
         let body_start = start + readme[start..].find("-->\n").expect("start marker closes") + 4;
