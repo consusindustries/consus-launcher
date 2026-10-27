@@ -713,17 +713,49 @@ fn scrub(names: &str) -> String {
     format!("for v in $(env | grep -oE \"^({names})=\" | tr -d =); do unset \"$v\"; done;")
 }
 
-/// The same scrub as inherited_claude_var, for Claude Code.
-const CLAUDE_VARS: &str = "(CLAUDE|ANTHROPIC)[A-Za-z0-9_]*";
+/// Which variables each terminal tool must not inherit, as prefixes,
+/// suffixes and exact names. The macOS shell scrub and the Windows
+/// predicates (tools/win.rs) are both built from these, so they cannot
+/// disagree.
+pub(crate) struct Scrub {
+    pub prefixes: &'static [&'static str],
+    pub suffixes: &'static [&'static str],
+    pub exact: &'static [&'static str],
+}
 
+impl Scrub {
+    /// The grep -E pattern the shell scrub uses.
+    fn pattern(&self) -> String {
+        let mut parts: Vec<String> = Vec::new();
+        if !self.prefixes.is_empty() {
+            parts.push(format!("({})[A-Za-z0-9_]*", self.prefixes.join("|")));
+        }
+        parts.extend(self.suffixes.iter().map(|s| format!("[A-Za-z0-9_]*{s}")));
+        parts.extend(self.exact.iter().map(|s| s.to_string()));
+        parts.join("|")
+    }
+
+    #[cfg_attr(not(windows), allow(dead_code))]
+    pub fn matches(&self, name: &str) -> bool {
+        self.prefixes.iter().any(|p| name.starts_with(p))
+            || self.suffixes.iter().any(|s| name.ends_with(s))
+            || self.exact.contains(&name)
+    }
+}
+
+/// The same scrub as inherited_claude_var, for Claude Code.
+pub(crate) const CLAUDE_SCRUB: Scrub = Scrub { prefixes: &["CLAUDE", "ANTHROPIC"], suffixes: &[], exact: &[] };
+/// Anything that could point Codex at OpenAI directly or at another home.
+pub(crate) const CODEX_SCRUB: Scrub = Scrub { prefixes: &["OPENAI", "CODEX"], suffixes: &[], exact: &[] };
 /// Every credential Pi would otherwise use to offer another provider's
 /// models next to Consus (its env-api-keys list: *_API_KEY, the cloud SDK
 /// variables, HF_TOKEN, COPILOT_GITHUB_TOKEN), and the user's own
 /// CONSUS_API_KEY, which Pi does not need and the agent's shell should not see.
-/// Anything that could point Codex at OpenAI directly or at another home.
-const CODEX_VARS: &str = "(OPENAI|CODEX)[A-Za-z0-9_]*";
-
-const PI_VARS: &str = "(CLAUDE|ANTHROPIC|AWS|GOOGLE|GCLOUD|AZURE)[A-Za-z0-9_]*|[A-Za-z0-9_]*_API_KEY|HF_TOKEN|COPILOT_GITHUB_TOKEN";
+pub(crate) const PI_SCRUB: Scrub = Scrub {
+    prefixes: &["CLAUDE", "ANTHROPIC", "AWS", "GOOGLE", "GCLOUD", "AZURE"],
+    suffixes: &["_API_KEY"],
+    exact: &["HF_TOKEN", "COPILOT_GITHUB_TOKEN"],
+};
 
 fn applescript_string(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
@@ -765,7 +797,7 @@ fn terminal_script(app: &AppHandle, t: Tool, models: &Value, target: &Target) ->
             Ok(format!(
                 "cd \"{}\" || exit 1; {} export CLAUDE_CONFIG_DIR=\"{}\"; clear; exec \"{}\"",
                 work.display(),
-                scrub(CLAUDE_VARS),
+                scrub(&CLAUDE_SCRUB.pattern()),
                 claude_code::profile_dir(&home).display(),
                 cli.display()
             ))
@@ -806,7 +838,7 @@ fn terminal_script(app: &AppHandle, t: Tool, models: &Value, target: &Target) ->
             Ok(format!(
                 "cd \"{}\" || exit 1; {} CONSUS_API_KEY=\"$(\"{}\")\" || exit 1; export PATH=\"{}:$PATH\" CONSUS_API_KEY CODEX_HOME=\"{}\"; clear; exec \"{}\"",
                 work.display(),
-                scrub(CODEX_VARS),
+                scrub(&CODEX_SCRUB.pattern()),
                 helper.display(),
                 bin.display(),
                 profile.display(),
@@ -820,17 +852,20 @@ fn terminal_script(app: &AppHandle, t: Tool, models: &Value, target: &Target) ->
             pi::write_config(&home, &helper, models, target)?;
             fs::create_dir_all(&work).map_err(|e| format!("{}: {e}", work.display()))?;
             // pi is a Node script; the node it was installed with (nvm, the
-            // installer's own) sits next to it. The two PI_ switches turn off
-            // Pi's calls to pi.dev (install telemetry, update check). Not
-            // PI_OFFLINE: that also stops Pi fetching fd and ripgrep, and its
-            // find and grep tools fail without them.
+            // installer's own) sits next to it. The policy document's PI_
+            // switches turn off Pi's calls to pi.dev (install telemetry,
+            // update check). Not PI_OFFLINE: that also stops Pi fetching fd
+            // and ripgrep, and its find and grep tools fail without them.
             let bin = cli.parent().ok_or("Pi is not installed.")?;
+            let pi_env: Vec<String> =
+                crate::policy::policy().pi_env().into_iter().map(|(k, v)| format!("{k}={v}")).collect();
             Ok(format!(
-                "cd \"{}\" || exit 1; {} export PATH=\"{}:$PATH\" PI_CODING_AGENT_DIR=\"{}\" PI_TELEMETRY=0 PI_SKIP_VERSION_CHECK=1; clear; exec \"{}\"",
+                "cd \"{}\" || exit 1; {} export PATH=\"{}:$PATH\" PI_CODING_AGENT_DIR=\"{}\" {}; clear; exec \"{}\"",
                 work.display(),
-                scrub(PI_VARS),
+                scrub(&PI_SCRUB.pattern()),
                 bin.display(),
                 pi::profile_dir(&home).display(),
+                pi_env.join(" "),
                 cli.display()
             ))
         }
@@ -1074,6 +1109,30 @@ fn other_terminate(_: &[Running]) {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_scrub_patterns_are_what_the_shell_always_ran_and_match_the_predicates() {
+        assert_eq!(CLAUDE_SCRUB.pattern(), "(CLAUDE|ANTHROPIC)[A-Za-z0-9_]*");
+        assert_eq!(CODEX_SCRUB.pattern(), "(OPENAI|CODEX)[A-Za-z0-9_]*");
+        assert_eq!(
+            PI_SCRUB.pattern(),
+            "(CLAUDE|ANTHROPIC|AWS|GOOGLE|GCLOUD|AZURE)[A-Za-z0-9_]*|[A-Za-z0-9_]*_API_KEY|HF_TOKEN|COPILOT_GITHUB_TOKEN"
+        );
+        for (name, claude, codex, pi) in [
+            ("CLAUDE_CONFIG_DIR", true, false, true),
+            ("ANTHROPIC_API_KEY", true, false, true),
+            ("OPENAI_API_KEY", false, true, true),
+            ("CODEX_HOME", false, true, false),
+            ("CONSUS_API_KEY", false, false, true),
+            ("AWS_PROFILE", false, false, true),
+            ("HF_TOKEN", false, false, true),
+            ("PATH", false, false, false),
+        ] {
+            assert_eq!(CLAUDE_SCRUB.matches(name), claude, "{name} claude");
+            assert_eq!(CODEX_SCRUB.matches(name), codex, "{name} codex");
+            assert_eq!(PI_SCRUB.matches(name), pi, "{name} pi");
+        }
+    }
 
     #[test]
     fn a_policy_counts_only_when_it_sets_the_connection() {
