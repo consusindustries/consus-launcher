@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Consus lockdown checklist</title>
+<style>
+  :root { --ink:#231B15; --muted:#6b6259; --line:#e4dcbe; --bg:#fbf9f2; --code:#f3efe2; --accent:#8a5a1f; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  main { max-width: 860px; margin: 0 auto; padding: 40px 24px 80px; }
+  h1 { font-size: 26px; margin: 0 0 4px; }
+  h2 { font-size: 19px; margin: 40px 0 6px; padding-top: 16px; border-top: 2px solid var(--line); }
+  h3 { font-size: 14px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 18px 0 6px; }
+  p.sub { color: var(--muted); margin: 0 0 20px; }
+  .where { font-size: 13px; color: var(--muted); margin: 0 0 8px; }
+  code { font: 13px/1.4 ui-monospace, "JetBrains Mono", Menlo, monospace; background: var(--code); padding: 1px 5px; border-radius: 4px; }
+  pre { font: 12.5px/1.5 ui-monospace, "JetBrains Mono", Menlo, monospace; background: var(--code); padding: 12px 14px; border-radius: 6px; overflow-x: auto; margin: 6px 0 0; }
+  ul.check { list-style: none; padding: 0; margin: 0; }
+  ul.check li { display: flex; gap: 10px; align-items: flex-start; padding: 6px 0; border-bottom: 1px solid var(--line); }
+  ul.check li:last-child { border-bottom: 0; }
+  ul.check input { margin-top: 4px; flex: none; accent-color: var(--accent); }
+  ul.check label { flex: 1; }
+  .why { color: var(--muted); }
+  .note { background: #fff; border-left: 3px solid var(--accent); padding: 8px 12px; margin: 12px 0; font-size: 14px; }
+  nav { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0 8px; }
+  nav a { color: var(--ink); text-decoration: none; border: 1px solid var(--line); background: #fff; padding: 4px 10px; border-radius: 999px; font-size: 13px; }
+  details { margin-top: 8px; }
+  summary { cursor: pointer; font-size: 13px; color: var(--accent); }
+  @media print { body { background:#fff; } nav, summary { display:none; } details { display:block; } details > * { display:block; } h2 { break-before: auto; } li { break-inside: avoid; } }
+</style>
+</head>
+<body>
+<main>
+
+<h1>Lockdown checklist: desktop AI tools on the Consus gateway</h1>
+<p class="sub">Every setting the Consus Launcher applies, per application, so you can apply it yourself. Tick each box as you go. "Web off" is the default; the <em>web on</em> variant is noted where it differs.</p>
+
+<nav>
+  <a href="#all">All tools</a>
+  <a href="#claude-desktop">Claude Desktop</a>
+  <a href="#claude-code">Claude Code</a>
+  <a href="#chatgpt">ChatGPT desktop</a>
+  <a href="#codex">Codex CLI</a>
+  <a href="#pi">Pi</a>
+  <a href="#mdm">Enforce with MDM</a>
+</nav>
+
+<!-- ============================================================ -->
+<h2 id="all">0. All tools</h2>
+<ul class="check">
+  <li><input type="checkbox" id="a1"><label for="a1">Point inference at the gateway: <code>https://api.consus.io</code> (or your org's endpoint). <span class="why">Every model request goes through Consus, never straight to the vendor.</span></label></li>
+  <li><input type="checkbox" id="a2"><label for="a2">Offer only models at your compliance level (e.g. <code>:itar</code>, <code>:fedramp-high</code>). List them from <code>GET /v1/models</code>.</label></li>
+  <li><input type="checkbox" id="a3"><label for="a3">Never write the API key into a config file. Use a key-helper command (prints the key from the keychain) or an environment variable on the launched process.</label></li>
+  <li><input type="checkbox" id="a4"><label for="a4">One key per person per computer, from portal SSO, 30-day expiry. Revoke in the portal on offboarding or device loss.</label></li>
+  <li><input type="checkbox" id="a5"><label for="a5">Web search: off everywhere, always. <span class="why">It runs on the provider's side, outside the boundary. The gateway also refuses it.</span></label></li>
+  <li><input type="checkbox" id="a6"><label for="a6">Run terminal agents in an empty working folder (<code>~/Consus</code>) and a separate profile folder, so the user's own config and files are not in scope.</label></li>
+  <li><input type="checkbox" id="a7"><label for="a7">Turn off auto-update for every tool. IT ships new versions.</label></li>
+</ul>
+
+<!-- ============================================================ -->
+<h2 id="claude-desktop">1. Claude Desktop</h2>
+<p class="where">macOS: <code>~/Library/Application Support/Claude-3p/</code> &nbsp;·&nbsp; Windows: <code>%LOCALAPPDATA%\Claude-3p\</code> &nbsp;·&nbsp; MDM domain: <code>com.anthropic.claudefordesktop</code></p>
+
+<h3>Gateway mode</h3>
+<ul class="check">
+  <li><input type="checkbox" id="cd1"><label for="cd1"><code>claude_desktop_config.json</code> → <code>{"deploymentMode": "3p"}</code></label></li>
+  <li><input type="checkbox" id="cd2"><label for="cd2"><code>inferenceProvider</code> = <code>"gateway"</code>, <code>inferenceGatewayBaseUrl</code> = gateway URL, <code>inferenceGatewayAuthScheme</code> = <code>"x-api-key"</code></label></li>
+  <li><input type="checkbox" id="cd3"><label for="cd3"><code>inferenceCredentialKind</code> = <code>"helper-script"</code>, <code>inferenceCredentialHelper</code> = path to key helper</label></li>
+  <li><input type="checkbox" id="cd4"><label for="cd4"><code>inferenceModels</code> = only the Claude models at your level</label></li>
+  <li><input type="checkbox" id="cd5"><label for="cd5"><code>disableDeploymentModeChooser</code> = <code>true</code> <span class="why">(removes the Claude.ai sign-in option)</span></label></li>
+</ul>
+
+<h3>Zero traffic to Anthropic</h3>
+<ul class="check">
+  <li><input type="checkbox" id="cd6"><label for="cd6"><code>disableEssentialTelemetry</code> = <code>true</code> <span class="why">(crash reports)</span></label></li>
+  <li><input type="checkbox" id="cd7"><label for="cd7"><code>disableNonessentialTelemetry</code> = <code>true</code> <span class="why">(analytics, diagnostics)</span></label></li>
+  <li><input type="checkbox" id="cd8"><label for="cd8"><code>disableNonessentialServices</code> = <code>true</code> <span class="why">(connector icons/directory, artifact preview)</span></label></li>
+  <li><input type="checkbox" id="cd9"><label for="cd9"><code>disableAutoUpdates</code> = <code>true</code></label></li>
+  <li><input type="checkbox" id="cd10"><label for="cd10"><code>modelCatalogEnabled</code> = <code>false</code> <span class="why">(stops the model catalog poll)</span></label></li>
+  <li><input type="checkbox" id="cd11"><label for="cd11"><code>skipWebFetchPreflight</code> = <code>true</code> <span class="why">(no hostname check with api.anthropic.com)</span></label></li>
+  <li><input type="checkbox" id="cd12"><label for="cd12"><code>userPluginMarketplacesEnabled</code> = <code>false</code>, <code>userPluginUploadsEnabled</code> = <code>false</code></label></li>
+</ul>
+
+<h3>Web access</h3>
+<ul class="check">
+  <li><input type="checkbox" id="cd13"><label for="cd13"><code>disabledBuiltinTools</code> = <code>["WebSearch", "WebFetch"]</code> &nbsp;<span class="why">web on: <code>["WebSearch"]</code></span></label></li>
+  <li><input type="checkbox" id="cd14"><label for="cd14"><code>coworkEgressAllowedHosts</code> = <code>[]</code> <span class="why">(sandbox reaches no host)</span> &nbsp;<span class="why">web on: <code>["*"]</code></span></label></li>
+</ul>
+<div class="note"><strong>Still leaves the machine:</strong> the sandbox VM bundle and Claude CLI binary from <code>downloads.claude.ai</code> at the first Cowork/Code session. Only Anthropic's offline installer avoids it. Block at the network edge if needed.</div>
+
+<details><summary>Show full config entry</summary>
+<pre>{
+  "inferenceProvider": "gateway",
+  "inferenceGatewayBaseUrl": "https://api.consus.io",
+  "inferenceGatewayAuthScheme": "x-api-key",
+  "inferenceCredentialKind": "helper-script",
+  "inferenceCredentialHelper": "/path/to/key-helper",
+  "chatTabEnabled": true,
+  "inferenceModels": [ { "name": "claude-opus-5-5:itar", "anthropicFamilyTier": "opus", "isFamilyDefault": true } ],
+  "disableEssentialTelemetry": true,
+  "disableNonessentialTelemetry": true,
+  "disableNonessentialServices": true,
+  "disableAutoUpdates": true,
+  "modelCatalogEnabled": false,
+  "skipWebFetchPreflight": true,
+  "disableDeploymentModeChooser": true,
+  "userPluginMarketplacesEnabled": false,
+  "userPluginUploadsEnabled": false,
+  "disabledBuiltinTools": ["WebSearch", "WebFetch"],
+  "coworkEgressAllowedHosts": []
+}</pre>
+</details>
+
+<!-- ============================================================ -->
+<h2 id="claude-code">2. Claude Code</h2>
+<p class="where">Profile: <code>~/.claude-consus-gateway/settings.json</code>, launched with <code>CLAUDE_CONFIG_DIR</code> set to it. User's <code>~/.claude</code> is untouched.</p>
+
+<h3>Gateway and key</h3>
+<ul class="check">
+  <li><input type="checkbox" id="cc1"><label for="cc1">Launch with <code>CLAUDE_CONFIG_DIR=~/.claude-consus-gateway</code>, from <code>~/Consus</code>, with every inherited <code>CLAUDE*</code> / <code>ANTHROPIC*</code> variable unset.</label></li>
+  <li><input type="checkbox" id="cc2"><label for="cc2"><code>apiKeyHelper</code> = path to key helper</label></li>
+  <li><input type="checkbox" id="cc3"><label for="cc3"><code>env.ANTHROPIC_BASE_URL</code> = gateway URL</label></li>
+  <li><input type="checkbox" id="cc4"><label for="cc4"><code>model</code>, <code>availableModels</code>, and <code>env.ANTHROPIC_DEFAULT_OPUS_MODEL</code> / <code>_SONNET_MODEL</code> / <code>_HAIKU_MODEL</code> = models at your level. <span class="why">Background (Haiku) slot must not be Sonnet 5.</span></label></li>
+  <li><input type="checkbox" id="cc5"><label for="cc5"><code>env.CLAUDE_CODE_MAX_CONTEXT_TOKENS</code> = model's window if over 200K (e.g. <code>"1000000"</code>)</label></li>
+</ul>
+
+<h3>Zero traffic to Anthropic and no sign-in</h3>
+<ul class="check">
+  <li><input type="checkbox" id="cc6"><label for="cc6"><code>env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC</code> = <code>"1"</code></label></li>
+  <li><input type="checkbox" id="cc7"><label for="cc7"><code>env.CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL</code> = <code>"1"</code></label></li>
+  <li><input type="checkbox" id="cc8"><label for="cc8"><code>env.DISABLE_TELEMETRY</code>, <code>DISABLE_ERROR_REPORTING</code>, <code>DISABLE_FEEDBACK_COMMAND</code> = <code>"1"</code></label></li>
+  <li><input type="checkbox" id="cc9"><label for="cc9"><code>skipWebFetchPreflight</code> = <code>true</code></label></li>
+  <li><input type="checkbox" id="cc10"><label for="cc10"><code>env.DISABLE_LOGIN_COMMAND</code> = <code>"1"</code>, <code>env.CLAUDE_CODE_DISABLE_LAUNCHER_SIGN_IN</code> = <code>"1"</code> <span class="why">(no Claude.ai / Console login)</span></label></li>
+</ul>
+
+<h3>Web access (omit all three when web is on, except WebSearch)</h3>
+<ul class="check">
+  <li><input type="checkbox" id="cc11"><label for="cc11"><code>env.CLAUDE_CODE_DISABLE_WEB_FETCH</code> = <code>"1"</code></label></li>
+  <li><input type="checkbox" id="cc12"><label for="cc12"><code>permissions.deny</code> includes <code>"WebSearch"</code>, <code>"WebFetch"</code> &nbsp;<span class="why">web on: <code>"WebSearch"</code> only</span></label></li>
+  <li><input type="checkbox" id="cc13"><label for="cc13">Shell sandbox with no network: <code>sandbox</code> block below. <span class="why">Blocks curl, pip, git from agent commands. macOS built-in; Linux needs <code>bubblewrap</code> + <code>socat</code>; not available on Windows.</span></label></li>
+</ul>
+
+<details><summary>Show full settings.json</summary>
+<pre>{
+  "apiKeyHelper": "\"/path/to/key-helper\"",
+  "skipWebFetchPreflight": true,
+  "model": "claude-opus-5-5:itar",
+  "availableModels": ["claude-opus-5-5:itar", "claude-sonnet-4-5:itar"],
+  "env": {
+    "ANTHROPIC_BASE_URL": "https://api.consus.io",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-5-5:itar",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-5:itar",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-sonnet-4-5:itar",
+    "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "1000000",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+    "CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL": "1",
+    "DISABLE_TELEMETRY": "1",
+    "DISABLE_ERROR_REPORTING": "1",
+    "DISABLE_FEEDBACK_COMMAND": "1",
+    "DISABLE_LOGIN_COMMAND": "1",
+    "CLAUDE_CODE_DISABLE_LAUNCHER_SIGN_IN": "1",
+    "CLAUDE_CODE_DISABLE_WEB_FETCH": "1"
+  },
+  "permissions": { "deny": ["WebSearch", "WebFetch"] },
+  "sandbox": {
+    "enabled": true,
+    "failIfUnavailable": false,
+    "allowUnsandboxedCommands": false,
+    "autoAllowBashIfSandboxed": false,
+    "filesystem": { "disabled": true },
+    "network": { "allowedDomains": [], "strictAllowlist": true }
+  }
+}</pre>
+</details>
+<div class="note"><strong>Version notes:</strong> <code>strictAllowlist</code> needs Claude Code 2.1.219+ (older versions ask the user instead of refusing). <code>CLAUDE_CODE_DISABLE_WEB_FETCH</code> needs 2.1.285+ (the deny rule covers older). Update with <code>claude update</code>.</div>
+
+<!-- ============================================================ -->
+<h2 id="chatgpt">3. ChatGPT desktop (Codex mode)</h2>
+<p class="where">File: <code>~/.codex/config.toml</code>, merged key by key. Edit only while the app is closed (it rewrites the file on quit). Top-level keys must sit above the first <code>[table]</code>.</p>
+
+<h3>Gateway and key</h3>
+<ul class="check">
+  <li><input type="checkbox" id="g1"><label for="g1"><code>model_provider = "consus"</code> and a <code>[model_providers.consus]</code> block: <code>base_url = "https://api.consus.io/v1"</code>, <code>wire_api = "responses"</code></label></li>
+  <li><input type="checkbox" id="g2"><label for="g2">Key by env, not inline: <code>env_http_headers = { "x-api-key" = "CONSUS_API_KEY" }</code>, plus <code>auth = { command = "/path/to/key-helper" }</code> for when the app starts without that env.</label></li>
+  <li><input type="checkbox" id="g3"><label for="g3"><code>model</code> = a Responses-served GPT model at your level (e.g. <code>gpt-5.6-terra:itar</code>)</label></li>
+</ul>
+
+<h3>Agent behavior</h3>
+<ul class="check">
+  <li><input type="checkbox" id="g4"><label for="g4"><code>web_search = "disabled"</code></label></li>
+  <li><input type="checkbox" id="g5"><label for="g5"><code>sandbox_mode = "workspace-write"</code>, <code>approval_policy = "on-request"</code>, <code>approvals_reviewer = "user"</code></label></li>
+  <li><input type="checkbox" id="g6"><label for="g6"><code>[sandbox_workspace_write] network_access = false</code> &nbsp;<span class="why">web on: <code>true</code></span></label></li>
+  <li><input type="checkbox" id="g7"><label for="g7"><code>[shell_environment_policy]</code> excludes cloud creds and secrets from agent shells: <code>AWS_*</code>, <code>AZURE_*</code>, <code>GOOGLE_*</code>, <code>GCP_*</code>, <code>CONSUS_*</code>, <code>OPENAI_*</code>, <code>ANTHROPIC_*</code>, <code>*_KEY</code>, <code>*_TOKEN</code>, <code>*_SECRET</code>, <code>*PASSWORD*</code></label></li>
+</ul>
+
+<h3>Features off</h3>
+<ul class="check">
+  <li><input type="checkbox" id="g8"><label for="g8"><code>[features]</code> all <code>false</code>: computer use, browser use (all four), in-app browser, image generation, realtime conversation, dictation, apps, remote plugins, plugin sharing, recommended plugins, tool suggest, skill MCP auto-install, memories</label></li>
+  <li><input type="checkbox" id="g9"><label for="g9"><code>[computer_use] default_app_access = "deny"</code>; <code>[browser_use]</code> history off, origin policy all <code>"deny"</code></label></li>
+  <li><input type="checkbox" id="g10"><label for="g10"><code>[memories]</code> use and generate = <code>false</code></label></li>
+</ul>
+
+<h3>Telemetry off</h3>
+<ul class="check">
+  <li><input type="checkbox" id="g11"><label for="g11"><code>[analytics] enabled = false</code>, <code>[feedback] enabled = false</code></label></li>
+  <li><input type="checkbox" id="g12"><label for="g12"><code>[otel]</code> all exporters <code>"none"</code>, <code>log_user_prompt = false</code></label></li>
+</ul>
+<div class="note"><strong>Still leaves the machine:</strong> the ChatGPT app's own update and product-analytics calls to OpenAI. The config file doesn't reach those; control them at the network edge.</div>
+
+<details><summary>Show full config.toml</summary>
+<pre>model_provider = "consus"
+model = "gpt-5.6-terra:itar"
+model_reasoning_effort = "medium"
+model_reasoning_summary = "auto"
+web_search = "disabled"
+approval_policy = "on-request"
+approvals_reviewer = "user"
+sandbox_mode = "workspace-write"
+
+[sandbox_workspace_write]
+network_access = false
+
+[model_providers.consus]
+name = "Consus Gateway"
+base_url = "https://api.consus.io/v1"
+wire_api = "responses"
+env_http_headers = { "x-api-key" = "CONSUS_API_KEY" }
+auth = { command = "/path/to/key-helper" }
+
+[shell_environment_policy]
+inherit = "all"
+exclude = ["AWS_*", "AZURE_*", "GOOGLE_*", "GCP_*", "CONSUS_*", "OPENAI_*", "ANTHROPIC_*", "*_KEY", "*_TOKEN", "*_SECRET", "*PASSWORD*"]
+
+[features]
+computer_use = false
+browser_use = false
+browser_use_external = false
+browser_use_full_cdp_access = false
+in_app_browser = false
+image_generation = false
+realtime_conversation = false
+in_app_dictation = false
+apps = false
+remote_plugin = false
+plugin_sharing = false
+recommended_plugins = false
+tool_suggest = false
+skill_mcp_dependency_install = false
+memories = false
+
+[computer_use]
+default_app_access = "deny"
+
+[browser_use]
+allow_history_access = false
+
+[browser_use.default_origin_policy]
+access = "deny"
+uploads = "deny"
+downloads = "deny"
+full_cdp_access = "deny"
+
+[memories]
+use_memories = false
+generate_memories = false
+
+[analytics]
+enabled = false
+
+[feedback]
+enabled = false
+
+[otel]
+exporter = "none"
+trace_exporter = "none"
+metrics_exporter = "none"
+log_user_prompt = false</pre>
+</details>
+
+<!-- ============================================================ -->
+<h2 id="codex">4. Codex CLI</h2>
+<p class="where">Profile: <code>~/.codex-consus-gateway/config.toml</code>, launched with <code>CODEX_HOME</code> set to it. User's <code>~/.codex</code> is untouched.</p>
+<ul class="check">
+  <li><input type="checkbox" id="x1"><label for="x1">Apply <strong>everything in section 3</strong> (same config.toml) to this file. Skip the <code>auth = {...}</code> line; Codex gets the key from <code>CONSUS_API_KEY</code>.</label></li>
+  <li><input type="checkbox" id="x2"><label for="x2">Launch from <code>~/Consus</code> with <code>CODEX_HOME=~/.codex-consus-gateway</code>, <code>CONSUS_API_KEY</code> from the key helper, and every inherited <code>OPENAI*</code> / <code>CODEX*</code> variable unset.</label></li>
+  <li><input type="checkbox" id="x3"><label for="x3"><code>check_for_update_on_startup = false</code></label></li>
+  <li><input type="checkbox" id="x4"><label for="x4"><code>[projects."/Users/&lt;you&gt;/Consus"] trust_level = "trusted"</code> <span class="why">(skip the first-run trust prompt)</span></label></li>
+  <li><input type="checkbox" id="x5"><label for="x5">Optional: <code>model_catalog_json</code> pointing at a catalog of Consus models, so <code>/model</code> lists them with the right context window. Each entry has <code>supports_search_tool: false</code>.</label></li>
+</ul>
+
+<!-- ============================================================ -->
+<h2 id="pi">5. Pi</h2>
+<p class="where">Profile: <code>~/.pi-consus-gateway/</code>, launched with <code>PI_CODING_AGENT_DIR</code> set to it. User's <code>~/.pi</code> is untouched.</p>
+<ul class="check">
+  <li><input type="checkbox" id="p1"><label for="p1">Launch from <code>~/Consus</code> with <code>PI_CODING_AGENT_DIR=~/.pi-consus-gateway</code>, <code>PI_TELEMETRY=0</code>, <code>PI_SKIP_VERSION_CHECK=1</code>.</label></li>
+  <li><input type="checkbox" id="p2"><label for="p2">Unset other providers' credentials so Pi can't offer them: <code>CLAUDE*</code>, <code>ANTHROPIC*</code>, <code>AWS*</code>, <code>GOOGLE*</code>, <code>GCLOUD*</code>, <code>AZURE*</code>, <code>*_API_KEY</code>, <code>HF_TOKEN</code>, <code>COPILOT_GITHUB_TOKEN</code>.</label></li>
+  <li><input type="checkbox" id="p3"><label for="p3"><code>models.json</code> → <code>providers.consus</code>: <code>baseUrl</code> = gateway <code>/v1</code>, <code>api = "openai-completions"</code>, key via <code>"headers": {"x-api-key": "!/path/to/key-helper"}</code> (a command, not an env var), models at your level only.</label></li>
+  <li><input type="checkbox" id="p4"><label for="p4"><code>settings.json</code> → <code>defaultProvider = "consus"</code>, <code>defaultModel</code> = a Consus model.</label></li>
+</ul>
+<div class="note"><strong>Limits:</strong> Pi has no sandbox and no lock, so agent shell commands can always reach the network. Control it with a container or the network edge. First run downloads <code>fd</code> and <code>ripgrep</code> from GitHub (don't set <code>PI_OFFLINE</code>; search breaks without them).</div>
+
+<!-- ============================================================ -->
+<h2 id="mdm">6. Enforce it (so users can't undo it)</h2>
+<p class="sub" style="margin:0 0 8px">User-level files can be edited by the user. To lock them, push the same settings through device management. Generate these from the Consus portal's deployment page.</p>
+<ul class="check">
+  <li><input type="checkbox" id="m1"><label for="m1"><strong>Claude Desktop:</strong> configuration profile for <code>com.anthropic.claudefordesktop</code> with the keys from section 1.</label></li>
+  <li><input type="checkbox" id="m2"><label for="m2"><strong>Claude Code:</strong> <code>managed-settings.json</code> with section 2's keys, plus <code>allowedProviders</code> (refuses every claude.ai and Console sign-in; works only in managed settings) and optionally <code>allowManagedDomainsOnly</code>.</label></li>
+  <li><input type="checkbox" id="m3"><label for="m3"><strong>ChatGPT and Codex CLI:</strong> <code>requirements.toml</code> with section 3's keys.</label></li>
+  <li><input type="checkbox" id="m4"><label for="m4"><strong>Pi:</strong> no managed option. Use a container or network controls.</label></li>
+  <li><input type="checkbox" id="m5"><label for="m5"><strong>Network edge:</strong> allow <code>api.consus.io</code>; block vendor endpoints you don't want reached (<code>api.anthropic.com</code>, <code>api.openai.com</code>, <code>downloads.claude.ai</code> if using the offline installer).</label></li>
+</ul>
+
+</main>
+</body>
+</html>
