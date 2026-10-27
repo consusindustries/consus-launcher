@@ -330,19 +330,16 @@ fn scrub(cmd: &mut Command, drop: impl Fn(&str) -> bool) {
 }
 
 fn claude_var(n: &str) -> bool {
-    n.starts_with("CLAUDE") || n.starts_with("ANTHROPIC")
+    super::CLAUDE_SCRUB.matches(n)
 }
 
 fn codex_var(n: &str) -> bool {
-    n.starts_with("OPENAI") || n.starts_with("CODEX")
+    super::CODEX_SCRUB.matches(n)
 }
 
 /// Pi would otherwise offer other providers' models next to Consus.
 fn pi_var(n: &str) -> bool {
-    ["CLAUDE", "ANTHROPIC", "AWS", "GOOGLE", "GCLOUD", "AZURE"].iter().any(|p| n.starts_with(p))
-        || n.ends_with("_API_KEY")
-        || n == "HF_TOKEN"
-        || n == "COPILOT_GITHUB_TOKEN"
+    super::PI_SCRUB.matches(n)
 }
 
 /// Runs a command-line tool; npm installs it as a .cmd, which needs cmd.
@@ -442,9 +439,10 @@ pub fn launch(app: AppHandle, t: Tool, models: &Value, target: &Target) -> Resul
             pi::write_config(&home, &helper, models, target)?;
             let mut c = cli_command(&exe);
             scrub(&mut c, pi_var);
-            c.env("PI_CODING_AGENT_DIR", pi::profile_dir(&home))
-                .env("PI_TELEMETRY", "0")
-                .env("PI_SKIP_VERSION_CHECK", "1");
+            c.env("PI_CODING_AGENT_DIR", pi::profile_dir(&home));
+            for (k, v) in crate::policy::policy().pi_env() {
+                c.env(k, v);
+            }
             c
         }
     };

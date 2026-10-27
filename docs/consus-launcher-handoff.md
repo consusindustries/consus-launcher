@@ -42,7 +42,7 @@ src/                  main.ts, styles.css, assets/ (fonts, Consus logo)
 src-tauri/
   src/                main.rs, lib.rs, keychain.rs, portal.rs, models.rs, tools.rs,
                       config.rs (Claude Desktop), chatgpt.rs, claude_code.rs, codex.rs, pi.rs
-  templates/          chatgpt-desktop.toml
+  (policy/launcher-policy.json at the repo root holds every lockdown value; the writers embed it)
   assets/             pi.svg
   icons/              app icons
   capabilities/       Tauri permission set

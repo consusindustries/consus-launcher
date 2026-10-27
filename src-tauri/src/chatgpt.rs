@@ -28,8 +28,8 @@ use crate::models::{self, Target};
 // in preference order. The models endpoint does not expose this.
 const RESPONSES_MODELS: [&str; 5] = ["gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.6-luna", "gpt-5.4", "gpt-5.1"];
 
-// The guide's config, minus the inline key. Provenance is in the file.
-const TEMPLATE: &str = include_str!("../templates/chatgpt-desktop.toml");
+// The guide's config, minus the inline key, kept verbatim in the policy
+// document (policy/launcher-policy.json) with its provenance.
 
 /// The one model the app starts on: the most preferred Responses-served GPT
 /// model this key can use at the target level, as a bare id
@@ -47,7 +47,7 @@ fn config_path(home: &Path) -> PathBuf {
 }
 
 fn template() -> DocumentMut {
-    TEMPLATE.parse().expect("template is valid TOML")
+    crate::policy::policy().chatgpt_toml().parse().expect("the policy document's TOML is valid")
 }
 
 /// Replaces a key's value in place so the key keeps its position and the
@@ -156,7 +156,7 @@ pub fn write_config_at(path: &Path, models_json: &Value, extra: &Table, t: &Targ
     // stays "disabled" either way: it is OpenAI's hosted tool, which the
     // gateway strips from every request.)
     if let Some(sandbox) = doc.get_mut("sandbox_workspace_write").and_then(Item::as_table_like_mut) {
-        set_leaf(sandbox, "network_access", value(t.web_access));
+        set_leaf(sandbox, "network_access", value(crate::policy::policy().codex_network_access(t.web_access)));
     }
     // Point the provider at the org's endpoint. A hand-made config carries
     // the key inline; the environment replaces it.

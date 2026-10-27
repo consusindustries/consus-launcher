@@ -10,7 +10,8 @@
 // Parsed once, strictly: a key this code does not know is a build defect,
 // the same posture as a template that fails to parse.
 
-// Read by the writers from PR 2 on; until then only the tests use it.
+// The slot, lock and readme fields describe the document for the portal
+// and the README table; the writers read the rest.
 #![allow(dead_code)]
 
 use serde::Deserialize;
@@ -327,13 +328,6 @@ mod tests {
         assert_eq!(leaf_paths(&Value::Object(cc.lock_only.admin.clone())), ["allowManagedMcpServersOnly", "allowedMcpServers", "sandbox.network.allowManagedDomainsOnly"]);
         assert_eq!(p.tool("codex-cli").extends.as_deref(), Some("chatgpt-desktop"));
         assert!(p.tool("codex-cli").toml.is_none(), "codex-cli takes its TOML from chatgpt-desktop");
-    }
-
-    #[test]
-    fn until_the_writers_read_it_the_toml_equals_the_template() {
-        // Temporary: removed when chatgpt.rs reads the document (PR 2).
-        // The Windows checkout turns the template's line endings into CRLF.
-        assert_eq!(policy().chatgpt_toml(), include_str!("../templates/chatgpt-desktop.toml").replace("\r\n", "\n"));
     }
 
     #[test]
