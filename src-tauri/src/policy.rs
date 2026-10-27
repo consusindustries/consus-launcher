@@ -332,7 +332,8 @@ mod tests {
     #[test]
     fn until_the_writers_read_it_the_toml_equals_the_template() {
         // Temporary: removed when chatgpt.rs reads the document (PR 2).
-        assert_eq!(policy().chatgpt_toml(), include_str!("../templates/chatgpt-desktop.toml"));
+        // The Windows checkout turns the template's line endings into CRLF.
+        assert_eq!(policy().chatgpt_toml(), include_str!("../templates/chatgpt-desktop.toml").replace("\r\n", "\n"));
     }
 
     #[test]
