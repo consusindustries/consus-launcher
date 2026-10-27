@@ -2,8 +2,9 @@
 
 What changed in each release. Each release's GitHub page shows its section.
 
-## Unreleased
+## v1.2.1 (2026-10-27)
 
+- While you sign in, the launcher says when your approval has landed and the key is being prepared, instead of still asking you to approve.
 - One policy document. Every setting the launcher writes into a tool, and every setting only a device-management lock may carry, now lives in `policy/launcher-policy.json`; the launcher embeds it, the README's per-tool table is generated from it, and each release attaches it so the Consus portal renders the lock files from the same values. What the launcher writes is unchanged.
 
 ## v1.2.0 (2026-10-26)

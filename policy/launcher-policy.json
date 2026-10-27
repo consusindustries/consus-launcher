@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "launcher": "1.2.0",
+  "launcher": "1.2.1",
   "about": "What a locked-down tool looks like on a machine that uses the Consus Launcher. The launcher embeds this file and renders it into each tool's user-space settings; the Consus portal renders the same values into the device-management lock files. Values only. How a value reaches the disk (merging, helper links, model discovery) lives in code. A key an app does not know is ignored by that app version. Keys are nested objects; a renderer that needs dotted paths flattens them. A tool with `extends` takes every field it does not set from the tool it extends.",
   "slots": {
     "endpoint": {
