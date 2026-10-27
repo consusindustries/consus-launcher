@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "launcher": "1.2.0",
-  "about": "What a locked-down tool looks like on a machine that uses the Consus Launcher. The launcher embeds this file and renders it into each tool's user-space settings; the Consus portal renders the same values into the device-management lock files. Values only. How a value reaches the disk (merging, helper links, model discovery) lives in code. A key an app does not know is ignored by that app version.",
+  "about": "What a locked-down tool looks like on a machine that uses the Consus Launcher. The launcher embeds this file and renders it into each tool's user-space settings; the Consus portal renders the same values into the device-management lock files. Values only. How a value reaches the disk (merging, helper links, model discovery) lives in code. A key an app does not know is ignored by that app version. Keys are nested objects; a renderer that needs dotted paths flattens them. A tool with `extends` takes every field it does not set from the tool it extends.",
   "slots": {
     "endpoint": {
       "kind": "url",
@@ -40,6 +40,10 @@
     "context_window": {
       "kind": "int-string",
       "note": "Claude Code's context window as a decimal string; omitted when 200000 or less."
+    },
+    "endpoint_host": {
+      "kind": "host",
+      "note": "The host of endpoint, for allowlists."
     }
   },
   "tools": {
@@ -95,12 +99,11 @@
         "admin": {
           "isLocalDevMcpEnabled": true,
           "deploymentDisplayName": "",
-          "deploymentDisplaySubtitle": "",
-          "banner.text": "Runs on the Consus gateway.",
-          "banner.backgroundColor": "#E4DCBE",
-          "banner.textColor": "#231B15",
-          "banner.linkUrl": "https://consus.io"
-        }
+          "deploymentDisplaySubtitle": ""
+        },
+        "admin_overrides": [
+          "banner"
+        ]
       },
       "lock": {
         "kind": "mdm-profile",
@@ -184,7 +187,11 @@
           ]
         },
         "admin": {
-          "sandbox.network.allowManagedDomainsOnly": true,
+          "sandbox": {
+            "network": {
+              "allowManagedDomainsOnly": true
+            }
+          },
           "allowManagedMcpServersOnly": true,
           "allowedMcpServers": []
         }
@@ -217,14 +224,21 @@
       },
       "by_web_access": {
         "off": {
-          "sandbox_workspace_write.network_access": false
+          "sandbox_workspace_write": {
+            "network_access": false
+          }
         },
         "on": {
-          "sandbox_workspace_write.network_access": true
+          "sandbox_workspace_write": {
+            "network_access": true
+          }
         }
       },
       "lock_only": {
-        "requirements_toml": "allowed_approval_policies = [\"untrusted\", \"on-request\"]\nallowed_approvals_reviewers = [\"user\"]\nallowed_sandbox_modes = [\"read-only\", \"workspace-write\"]\nallowed_web_search_modes = []\nallow_appshots = false\nallow_remote_control = false\n\ndefault_permissions = \":workspace\"\n\n[allowed_permission_profiles]\n\":read-only\" = true\n\":workspace\" = true\n\n[features]\ncomputer_use = false\nbrowser_use = false\nbrowser_use_external = false\nbrowser_use_full_cdp_access = false\nin_app_browser = false\nimage_generation = false\nrealtime_conversation = false\nin_app_dictation = false\napps = false\nremote_plugin = false\nplugin_sharing = false\nmemories = false\n\n[computer_use]\ndefault_app_access = \"deny\"\nallow_persistent_approval = false\nallow_locked_computer_use = false\n\n[browser_use]\nallow_history_access = false\nallow_global_persistent_approval = false\n\n[browser_use.default_origin_policy]\naccess = \"deny\"\n\n[marketplaces]\nrestrict_to_allowed_sources = true\n\n[permissions.filesystem]\ndeny_read = [\"/**/*.env\", \"~/.ssh\", \"~/.aws\", \"~/.azure\", \"~/.config/gcloud\", \"~/.kube\"]\n\n[experimental_network]\nenabled = true\nmanaged_allowed_domains_only = true\n\n[experimental_network.domains]\n\"api.consus.io\" = \"allow\"\n"
+        "requirements_toml": "allowed_approval_policies = [\"untrusted\", \"on-request\"]\nallowed_approvals_reviewers = [\"user\"]\nallowed_sandbox_modes = [\"read-only\", \"workspace-write\"]\nallowed_web_search_modes = []\nallow_appshots = false\nallow_remote_control = false\n\ndefault_permissions = \":workspace\"\n\n[allowed_permission_profiles]\n\":read-only\" = true\n\":workspace\" = true\n\n[features]\ncomputer_use = false\nbrowser_use = false\nbrowser_use_external = false\nbrowser_use_full_cdp_access = false\nin_app_browser = false\nimage_generation = false\nrealtime_conversation = false\nin_app_dictation = false\napps = false\nremote_plugin = false\nplugin_sharing = false\nmemories = false\n\n[computer_use]\ndefault_app_access = \"deny\"\nallow_persistent_approval = false\nallow_locked_computer_use = false\n\n[browser_use]\nallow_history_access = false\nallow_global_persistent_approval = false\n\n[browser_use.default_origin_policy]\naccess = \"deny\"\n\n[marketplaces]\nrestrict_to_allowed_sources = true\n\n[permissions.filesystem]\ndeny_read = [\"/**/*.env\", \"~/.ssh\", \"~/.aws\", \"~/.azure\", \"~/.config/gcloud\", \"~/.kube\"]\n\n[experimental_network]\nenabled = true\nmanaged_allowed_domains_only = true\n\n[experimental_network.domains]\n\"{{endpoint_host}}\" = \"allow\"\n",
+        "requirements_slots": {
+          "{{endpoint_host}}": "endpoint_host"
+        }
       },
       "lock": {
         "kind": "requirements-toml",

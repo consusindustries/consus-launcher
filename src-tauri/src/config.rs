@@ -284,6 +284,34 @@ mod tests {
     }
 
     #[test]
+    fn the_entry_is_exactly_the_policy_documents_keys() {
+        let p = crate::policy::policy();
+        let cd = p.tool("claude-desktop");
+        let models = json!([{ "id": "consus/claude-sonnet-5:itar" }]);
+        for on in [false, true] {
+            let (home, lib) = library(if on { "doc-on" } else { "doc-off" }, r#"{ "appliedId": null, "entries": [] }"#);
+            write_claude_desktop(&home, Path::new("/x/helper"), &models, &Target { web_access: on, ..Target::default() }).unwrap();
+            let entry: Value = serde_json::from_str(&fs::read_to_string(lib.join(format!("{ENTRY_ID}.json"))).unwrap()).unwrap();
+            let mut written: Vec<&String> = entry.as_object().unwrap().keys().collect();
+            written.sort();
+            let variant = p.claude_desktop_variant(on);
+            let mut expected: Vec<&String> = cd.settings.keys().chain(cd.slot_keys.keys()).chain(variant.keys()).collect();
+            expected.sort();
+            assert_eq!(written, expected, "web access {on}: the entry's keys are the document's");
+            for (k, v) in &cd.settings {
+                assert_eq!(&entry[k], v, "{k}");
+            }
+            for (k, v) in &variant {
+                assert_eq!(&entry[k], v, "{k}");
+            }
+            let _ = fs::remove_dir_all(&home);
+        }
+        assert_eq!(cd.slot_keys["inferenceGatewayBaseUrl"], "endpoint");
+        assert_eq!(cd.slot_keys["inferenceCredentialHelper"], "helper");
+        assert_eq!(cd.slot_keys["inferenceModels"], "models");
+    }
+
+    #[test]
     fn web_access_is_closed_by_default_and_opened_by_the_org() {
         let models = json!([{ "id": "consus/claude-sonnet-5:itar" }]);
         let entry_for = |tag: &str, t: &Target| {
