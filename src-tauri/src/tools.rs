@@ -704,7 +704,7 @@ fn launch_app(app: AppHandle, t: Tool, s: AppSpec, rect: Rect, models: &Value, t
 /// Variables that belong to whatever Claude session the launcher itself was
 /// started from, or that could route a tool around the gateway.
 fn inherited_claude_var(name: &str) -> bool {
-    name.starts_with("CLAUDE") || name.starts_with("ANTHROPIC")
+    CLAUDE_SCRUB.matches(name)
 }
 
 /// Unsets, in shell, every variable whose name matches the pattern, for a
@@ -857,8 +857,10 @@ fn terminal_script(app: &AppHandle, t: Tool, models: &Value, target: &Target) ->
             // update check). Not PI_OFFLINE: that also stops Pi fetching fd
             // and ripgrep, and its find and grep tools fail without them.
             let bin = cli.parent().ok_or("Pi is not installed.")?;
+            // Values are quoted like the paths beside them; the document's
+            // env values carry no quote or dollar (policy.rs checks).
             let pi_env: Vec<String> =
-                crate::policy::policy().pi_env().into_iter().map(|(k, v)| format!("{k}={v}")).collect();
+                crate::policy::policy().pi_env().into_iter().map(|(k, v)| format!("{k}=\"{v}\"")).collect();
             Ok(format!(
                 "cd \"{}\" || exit 1; {} export PATH=\"{}:$PATH\" PI_CODING_AGENT_DIR=\"{}\" {}; clear; exec \"{}\"",
                 work.display(),
@@ -1109,6 +1111,16 @@ fn other_terminate(_: &[Running]) {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scrub_names_are_plain_identifiers_so_the_pattern_needs_no_escaping() {
+        for s in [&CLAUDE_SCRUB, &CODEX_SCRUB, &PI_SCRUB] {
+            for n in s.prefixes.iter().chain(s.suffixes).chain(s.exact) {
+                assert!(n.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_'), "{n}");
+            }
+        }
+        assert!(inherited_claude_var("CLAUDE_CODE_X") && !inherited_claude_var("OPENAI_API_KEY"));
+    }
 
     #[test]
     fn the_scrub_patterns_are_what_the_shell_always_ran_and_match_the_predicates() {

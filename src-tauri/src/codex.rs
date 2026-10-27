@@ -101,7 +101,11 @@ fn extra(home: &Path, with_catalog: bool) -> Table {
     // The lines only Codex's file carries, from the policy document.
     let extra: DocumentMut = crate::policy::policy().codex_extra_toml().parse().expect("the policy document's Codex TOML is valid");
     for (k, item) in extra.as_table().iter() {
-        t.insert(k, item.clone());
+        // Values only: a comment in the document must not travel into the
+        // user's file.
+        let mut v = item.as_value().expect("codex-cli toml_extra holds plain values").clone();
+        v.decor_mut().clear();
+        t.insert(k, Item::Value(v));
     }
     let mut trust = Table::new();
     trust.insert("trust_level", value("trusted"));

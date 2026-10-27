@@ -115,44 +115,28 @@ fn owned(
         .or_else(|| list.iter().find(|m| m.base != "claude-sonnet-5"))
         .unwrap_or(main);
 
-    let mut top = Map::new();
+    // The static keys and env come from the policy document: zero traffic to
+    // Anthropic (analytics, error reports, update checks, flag calls, the
+    // plugin marketplace download, the WebFetch hostname check, each
+    // measured to cover calls the others miss on Claude Code 2.1.300), and
+    // no sign-in path (/login, the launcher sign-in) that would route around
+    // the gateway. Only the slots are filled here.
+    let policy = crate::policy::policy();
+    let mut top = policy.claude_code_static();
     // apiKeyHelper runs through the shell; the path can contain a space.
     top.insert("apiKeyHelper".into(), json!(format!("\"{}\"", crate::config::command_path(helper))));
-    // Zero traffic to Anthropic takes three settings, each covering calls the
-    // others miss (measured on Claude Code 2.1.300; the Consus guide's "Keep
-    // Claude Code off Anthropic's network"). This one stops WebFetch sending
-    // each hostname to api.anthropic.com before fetching it.
-    top.insert("skipWebFetchPreflight".into(), json!(true));
     top.insert("model".into(), json!(main.id));
     top.insert("availableModels".into(), json!(list.iter().map(|m| &m.id).collect::<Vec<_>>()));
 
-    let mut env = Map::new();
+    let mut env = policy.claude_code_env_static();
     env.insert("ANTHROPIC_BASE_URL".into(), json!(t.endpoint));
     env.insert("ANTHROPIC_DEFAULT_OPUS_MODEL".into(), json!(opus.id));
     env.insert("ANTHROPIC_DEFAULT_SONNET_MODEL".into(), json!(sonnet.id));
     env.insert("ANTHROPIC_DEFAULT_HAIKU_MODEL".into(), json!(background.id));
-    // Analytics, error reports, update checks and flag calls; then the official
-    // plugin marketplace download, which the first does not cover and which
-    // falls back to a git clone from github.com over SSH when blocked. The
-    // next three are each covered by the first and set as well, so that the
-    // telemetry, error-report, and feedback switches Anthropic documents on
-    // their own are visibly off to anyone reading the file.
-    env.insert("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC".into(), json!("1"));
-    env.insert("CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL".into(), json!("1"));
-    env.insert("DISABLE_TELEMETRY".into(), json!("1"));
-    env.insert("DISABLE_ERROR_REPORTING".into(), json!("1"));
-    env.insert("DISABLE_FEEDBACK_COMMAND".into(), json!("1"));
-    // /login would sign this profile in to a Claude.ai or Console account,
-    // which sends requests straight to Anthropic instead of the gateway; so
-    // would the sign-in Claude Code offers when a desktop launcher starts it.
-    env.insert("DISABLE_LOGIN_COMMAND".into(), json!("1"));
-    env.insert("CLAUDE_CODE_DISABLE_LAUNCHER_SIGN_IN".into(), json!("1"));
-    // Web access off is three things, kept together in write_settings: this
-    // variable removes the WebFetch tool (2.1.285 and later), the deny rule
-    // covers earlier versions, and the sandbox closes the shell.
-    if !t.web_access {
-        env.insert("CLAUDE_CODE_DISABLE_WEB_FETCH".into(), json!("1"));
-    }
+    // Web access off is three things, kept together in write_settings: the
+    // variant's env removes the WebFetch tool (2.1.285 and later), the deny
+    // rule covers earlier versions, and the sandbox closes the shell.
+    env.extend(policy.claude_code_variant(t.web_access).0);
     // Claude Code does not recognize model:level ids and would assume 200K,
     // so a larger window is spelled out: the gateway's, or 1M for a 5-series
     // model from a gateway that does not report windows.
@@ -186,14 +170,7 @@ fn owned(
 /// Local binding and anything else under sandbox are left to the user.
 /// Claude Code's own API calls and the key helper run outside the sandbox.
 fn shell_sandbox() -> Value {
-    json!({
-        "enabled": true,
-        "failIfUnavailable": false,
-        "allowUnsandboxedCommands": false,
-        "autoAllowBashIfSandboxed": false,
-        "filesystem": { "disabled": true },
-        "network": { "allowedDomains": [], "strictAllowlist": true }
-    })
+    crate::policy::policy().claude_code_variant(false).2.expect("the web-off variant carries the sandbox")
 }
 
 /// Removes the launcher's paths under `sandbox`, pruning objects that are
@@ -398,8 +375,12 @@ mod tests {
         sandbox.sort();
         sandbox.dedup();
         assert_eq!(sandbox, sorted(OWNED_SANDBOX.iter().map(|p| p.join(".")).collect()));
-        // And the values the writer hard-codes are the document's.
+        // And what the writer writes is the document's.
         assert_eq!(shell_sandbox(), p.claude_code_variant(false).2.unwrap());
+        let (top_doc, _) = owned(Path::new("/h"), &models::claude_models(&serde_json::from_str(MODELS).unwrap(), &Target::default()), &serde_json::from_str(MODELS).unwrap(), &Target::default()).unwrap();
+        for (k, v) in &cc.settings {
+            assert_eq!(&top_doc[k], v, "{k}");
+        }
         let (_, env_doc) = owned(Path::new("/h"), &models::claude_models(&serde_json::from_str(MODELS).unwrap(), &Target::default()), &serde_json::from_str(MODELS).unwrap(), &Target::default()).unwrap();
         for (k, v) in p.claude_code_env_static() {
             assert_eq!(env_doc[&k], v, "{k}");

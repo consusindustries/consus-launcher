@@ -46,6 +46,7 @@ on:
       - "src-tauri/Cargo.toml"
       - "src-tauri/Cargo.lock"
       - "src-tauri/icons/**"
+      - "policy/**"
   workflow_dispatch:
 
 permissions:
@@ -190,6 +191,7 @@ jobs:
           cargo cyclonedx --manifest-path src-tauri/Cargo.toml --format json
           cp src-tauri/*.cdx.json release/consus-launcher-rust.cdx.json
           npm sbom --sbom-format cyclonedx --omit dev > release/consus-launcher-npm.cdx.json
+          cp policy/launcher-policy.json "release/consus-launcher-policy-${{ steps.version.outputs.version }}.json"
           cd release && shasum -a 256 * > SHA256SUMS.txt && cat SHA256SUMS.txt
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -341,6 +343,7 @@ jobs:
             echo
             echo "macOS: the .dmg, or the .pkg to install into /Applications. Windows: the .msi for your PC."
             echo "SHA256SUMS.txt lists the checksums; the .cdx.json files are the CycloneDX SBOMs."
+            echo "consus-launcher-policy-$VERSION.json is the policy document: every setting this version writes into a tool, which the Consus portal renders into the device-management lock files."
             echo
             if [ "$WINDOWS_SIGNED" = "true" ]; then
               echo "The Windows installers and the app are signed by Consus Industries, Inc."

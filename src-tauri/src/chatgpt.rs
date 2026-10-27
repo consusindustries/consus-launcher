@@ -1,6 +1,7 @@
 // ChatGPT desktop app (ChatGPT Work and Codex modes): ~/.codex/config.toml,
 // one per-user file shared with Codex CLI, which the app also writes to. The
-// template and its provenance live in templates/chatgpt-desktop.toml.
+// template and its provenance are the policy document's verbatim TOML
+// (policy/launcher-policy.json, tools.chatgpt-desktop.toml).
 //
 // The key is never written to the file. It reaches the app two ways: in the
 // environment of the process the launcher starts (env_http_headers, sent as
