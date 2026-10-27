@@ -1,0 +1,292 @@
+{
+  "schema": 1,
+  "launcher": "1.2.0",
+  "about": "What a locked-down tool looks like on a machine that uses the Consus Launcher. The launcher embeds this file and renders it into each tool's user-space settings; the Consus portal renders the same values into the device-management lock files. Values only. How a value reaches the disk (merging, helper links, model discovery) lives in code. A key an app does not know is ignored by that app version. Keys are nested objects; a renderer that needs dotted paths flattens them. A tool with `extends` takes every field it does not set from the tool it extends.",
+  "slots": {
+    "endpoint": {
+      "kind": "url",
+      "note": "The org's gateway root, no trailing slash; the Anthropic-compatible surface. From the EndpointURL org setting, default https://api.consus.io."
+    },
+    "endpoint_v1": {
+      "kind": "url",
+      "note": "endpoint + /v1, the OpenAI-compatible surface."
+    },
+    "helper": {
+      "kind": "path",
+      "note": "The credential helper, as a plain path: the launcher's keychain helper (default) or the Consus credential helper script."
+    },
+    "helper_shell": {
+      "kind": "shell-command",
+      "note": "The same helper as a command a shell runs; a path with a space is quoted."
+    },
+    "model": {
+      "kind": "model-id",
+      "note": "The tool's starting model at the org's compliance level, from the gateway's /v1/models."
+    },
+    "models": {
+      "kind": "model-list",
+      "note": "Every model the key may use at that level, in the tool's own list shape."
+    },
+    "opus": {
+      "kind": "model-id"
+    },
+    "sonnet": {
+      "kind": "model-id"
+    },
+    "background": {
+      "kind": "model-id",
+      "note": "Claude Code's background model; never Sonnet 5 (no structured outputs through the gateway)."
+    },
+    "context_window": {
+      "kind": "int-string",
+      "note": "Claude Code's context window as a decimal string; omitted when 200000 or less."
+    },
+    "endpoint_host": {
+      "kind": "host",
+      "note": "The host of endpoint, for allowlists."
+    }
+  },
+  "tools": {
+    "claude-desktop": {
+      "name": "Claude Desktop",
+      "file": "Claude Desktop's third-party (gateway) configuration: a config-library entry in user space, or the com.anthropic.claudefordesktop managed profile.",
+      "settings": {
+        "inferenceProvider": "gateway",
+        "inferenceGatewayAuthScheme": "x-api-key",
+        "inferenceCredentialKind": "helper-script",
+        "chatTabEnabled": true,
+        "disableEssentialTelemetry": true,
+        "disableNonessentialTelemetry": true,
+        "disableNonessentialServices": true,
+        "disableAutoUpdates": true,
+        "modelCatalogEnabled": false,
+        "skipWebFetchPreflight": true,
+        "disableDeploymentModeChooser": true,
+        "userPluginMarketplacesEnabled": false,
+        "userPluginUploadsEnabled": false,
+        "banner": {
+          "enabled": true,
+          "text": "Runs on the Consus gateway.",
+          "backgroundColor": "#E4DCBE",
+          "textColor": "#231B15",
+          "linkUrl": "https://consus.io"
+        }
+      },
+      "slot_keys": {
+        "inferenceGatewayBaseUrl": "endpoint",
+        "inferenceCredentialHelper": "helper",
+        "inferenceModels": "models"
+      },
+      "by_web_access": {
+        "off": {
+          "disabledBuiltinTools": [
+            "WebSearch",
+            "WebFetch"
+          ],
+          "coworkEgressAllowedHosts": []
+        },
+        "on": {
+          "disabledBuiltinTools": [
+            "WebSearch"
+          ],
+          "coworkEgressAllowedHosts": [
+            "*"
+          ]
+        }
+      },
+      "lock_only": {
+        "required": {},
+        "admin": {
+          "isLocalDevMcpEnabled": true,
+          "deploymentDisplayName": "",
+          "deploymentDisplaySubtitle": ""
+        },
+        "admin_overrides": [
+          "banner"
+        ]
+      },
+      "lock": {
+        "kind": "mdm-profile",
+        "domain": "com.anthropic.claudefordesktop",
+        "windows_key": "HKLM\\SOFTWARE\\Policies\\Claude",
+        "note": "Every value is a string in a profile or the registry; arrays, objects and booleans are JSON encoded as strings."
+      },
+      "readme": {
+        "telemetry": "Off: crash and error reports, analytics, model catalog, connector icons, previews, auto-update",
+        "web_search": "Never offered",
+        "web_fetch": "None / any host",
+        "shell": "None / any host (its sandbox VM)",
+        "leaves_machine": "Sandbox VM bundle from `downloads.claude.ai` at the first Cowork or Code session",
+        "lock": "`com.anthropic.claudefordesktop` profile from the portal"
+      }
+    },
+    "claude-code": {
+      "name": "Claude Code",
+      "file": "Claude Code's settings.json: the launcher's profile in user space, or the machine-wide managed-settings.json.",
+      "settings": {
+        "skipWebFetchPreflight": true
+      },
+      "slot_keys": {
+        "apiKeyHelper": "helper_shell",
+        "model": "model",
+        "availableModels": "models"
+      },
+      "env": {
+        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+        "CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL": "1",
+        "DISABLE_TELEMETRY": "1",
+        "DISABLE_ERROR_REPORTING": "1",
+        "DISABLE_FEEDBACK_COMMAND": "1",
+        "DISABLE_LOGIN_COMMAND": "1",
+        "CLAUDE_CODE_DISABLE_LAUNCHER_SIGN_IN": "1"
+      },
+      "env_slot_keys": {
+        "ANTHROPIC_BASE_URL": "endpoint",
+        "ANTHROPIC_DEFAULT_OPUS_MODEL": "opus",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL": "sonnet",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL": "background",
+        "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "context_window"
+      },
+      "by_web_access": {
+        "off": {
+          "env": {
+            "CLAUDE_CODE_DISABLE_WEB_FETCH": "1"
+          },
+          "permissions": {
+            "deny": [
+              "WebSearch",
+              "WebFetch"
+            ]
+          },
+          "sandbox": {
+            "enabled": true,
+            "failIfUnavailable": false,
+            "allowUnsandboxedCommands": false,
+            "autoAllowBashIfSandboxed": false,
+            "filesystem": {
+              "disabled": true
+            },
+            "network": {
+              "allowedDomains": [],
+              "strictAllowlist": true
+            }
+          }
+        },
+        "on": {
+          "permissions": {
+            "deny": [
+              "WebSearch"
+            ]
+          }
+        }
+      },
+      "lock_only": {
+        "required": {
+          "allowedProviders": [
+            "customEndpoint"
+          ]
+        },
+        "admin": {
+          "sandbox": {
+            "network": {
+              "allowManagedDomainsOnly": true
+            }
+          },
+          "allowManagedMcpServersOnly": true,
+          "allowedMcpServers": []
+        }
+      },
+      "lock": {
+        "kind": "managed-settings",
+        "paths": {
+          "mac": "/Library/Application Support/ClaudeCode/managed-settings.json",
+          "win": "C:\\Program Files\\ClaudeCode\\managed-settings.json"
+        },
+        "note": "Values under env must be strings."
+      },
+      "readme": {
+        "telemetry": "Off: analytics, error reports, feature flags, update checks, plugin marketplace, WebFetch domain check, sign-in paths",
+        "web_search": "Never offered",
+        "web_fetch": "None / any host",
+        "shell": "None / any host on macOS, and on Linux with `bubblewrap` and `socat` (Claude Code's sandbox); not restricted on Windows",
+        "leaves_machine": "Nothing measured (2.1.307, through a logging proxy)",
+        "lock": "`managed-settings.json` from the portal, which can also carry `allowedProviders` and `allowManagedDomainsOnly`"
+      }
+    },
+    "chatgpt-desktop": {
+      "name": "ChatGPT",
+      "file": "~/.codex/config.toml, shared with the user's own Codex CLI; the lock is Codex's requirements.toml.",
+      "toml": "# ChatGPT desktop app (and Codex CLI): ~/.codex/config.toml, merged key by key.\n# Verbatim from the Consus integration guide for ChatGPT desktop, except the\n# key: env_http_headers instead of an inline http_headers, so it never lands in\n# the file. Docs checked: that guide and the Consus portal's Codex template,\n# 2026-09-22. Verified on a real machine: macOS,\n# ChatGPT 26.915, 2026-09-22. The model line is added by chatgpt.rs.\n# Top-level keys must stay above the first [table] header.\n\nmodel_provider = \"consus\"\nmodel_reasoning_effort = \"medium\"\nmodel_reasoning_summary = \"auto\"\nweb_search = \"disabled\"\napproval_policy = \"on-request\"\napprovals_reviewer = \"user\"\nsandbox_mode = \"workspace-write\"\n\n# network_access follows the org's WebAccess setting (chatgpt.rs); this is\n# the closed value.\n[sandbox_workspace_write]\nnetwork_access = false\n\n[model_providers.consus]\nname = \"Consus Gateway\"\nbase_url = \"https://api.consus.io/v1\"\nwire_api = \"responses\"\nenv_http_headers = { \"x-api-key\" = \"CONSUS_API_KEY\" }\n\n[shell_environment_policy]\ninherit = \"all\"\nexclude = [\"AWS_*\", \"AZURE_*\", \"GOOGLE_*\", \"GCP_*\", \"CONSUS_*\", \"OPENAI_*\", \"ANTHROPIC_*\", \"*_KEY\", \"*_TOKEN\", \"*_SECRET\", \"*PASSWORD*\"]\n\n[features]\ncomputer_use = false\nbrowser_use = false\nbrowser_use_external = false\nbrowser_use_full_cdp_access = false\nin_app_browser = false\nimage_generation = false\nrealtime_conversation = false\nin_app_dictation = false\napps = false\nremote_plugin = false\nplugin_sharing = false\nrecommended_plugins = false\ntool_suggest = false\nskill_mcp_dependency_install = false\nmemories = false\n\n[computer_use]\ndefault_app_access = \"deny\"\n\n[browser_use]\nallow_history_access = false\n\n[browser_use.default_origin_policy]\naccess = \"deny\"\nuploads = \"deny\"\ndownloads = \"deny\"\nfull_cdp_access = \"deny\"\n\n[memories]\nuse_memories = false\ngenerate_memories = false\n\n[analytics]\nenabled = false\n\n[feedback]\nenabled = false\n\n[otel]\nexporter = \"none\"\ntrace_exporter = \"none\"\nmetrics_exporter = \"none\"\nlog_user_prompt = false\n",
+      "toml_slot_keys": {
+        "model": "model",
+        "model_providers.consus.base_url": "endpoint_v1",
+        "model_providers.consus.auth.command": "helper"
+      },
+      "by_web_access": {
+        "off": {
+          "sandbox_workspace_write": {
+            "network_access": false
+          }
+        },
+        "on": {
+          "sandbox_workspace_write": {
+            "network_access": true
+          }
+        }
+      },
+      "lock_only": {
+        "requirements_toml": "allowed_approval_policies = [\"untrusted\", \"on-request\"]\nallowed_approvals_reviewers = [\"user\"]\nallowed_sandbox_modes = [\"read-only\", \"workspace-write\"]\nallowed_web_search_modes = []\nallow_appshots = false\nallow_remote_control = false\n\ndefault_permissions = \":workspace\"\n\n[allowed_permission_profiles]\n\":read-only\" = true\n\":workspace\" = true\n\n[features]\ncomputer_use = false\nbrowser_use = false\nbrowser_use_external = false\nbrowser_use_full_cdp_access = false\nin_app_browser = false\nimage_generation = false\nrealtime_conversation = false\nin_app_dictation = false\napps = false\nremote_plugin = false\nplugin_sharing = false\nmemories = false\n\n[computer_use]\ndefault_app_access = \"deny\"\nallow_persistent_approval = false\nallow_locked_computer_use = false\n\n[browser_use]\nallow_history_access = false\nallow_global_persistent_approval = false\n\n[browser_use.default_origin_policy]\naccess = \"deny\"\n\n[marketplaces]\nrestrict_to_allowed_sources = true\n\n[permissions.filesystem]\ndeny_read = [\"/**/*.env\", \"~/.ssh\", \"~/.aws\", \"~/.azure\", \"~/.config/gcloud\", \"~/.kube\"]\n\n[experimental_network]\nenabled = true\nmanaged_allowed_domains_only = true\n\n[experimental_network.domains]\n\"{{endpoint_host}}\" = \"allow\"\n",
+        "requirements_slots": {
+          "{{endpoint_host}}": "endpoint_host"
+        }
+      },
+      "lock": {
+        "kind": "requirements-toml",
+        "paths": {
+          "mac": "/etc/codex/requirements.toml",
+          "win": "C:\\ProgramData\\OpenAI\\Codex\\requirements.toml"
+        },
+        "note": "Also governs the Codex CLI on the same machine. web_search stays \"disabled\" in config.toml under either web-access value: it is OpenAI's hosted tool, which the gateway strips."
+      },
+      "readme": {
+        "telemetry": "Off in the agent: analytics, feedback upload, OpenTelemetry export. The app around it keeps OpenAI's own update and product-analytics connections",
+        "web_search": "Off in the file; the gateway strips it if turned back on",
+        "web_fetch": "No such tool",
+        "shell": "None / any host (Codex's sandbox)",
+        "leaves_machine": "The app's own connections to OpenAI",
+        "lock": "`requirements.toml` from the portal"
+      }
+    },
+    "codex-cli": {
+      "name": "Codex CLI",
+      "file": "config.toml in the launcher's own Codex profile; the same lock as ChatGPT.",
+      "extends": "chatgpt-desktop",
+      "toml_extra": "check_for_update_on_startup = false\n",
+      "readme": {
+        "telemetry": "Off: analytics, feedback, OpenTelemetry export, update check",
+        "web_search": "Same as ChatGPT",
+        "web_fetch": "No such tool",
+        "shell": "None / any host (Codex's sandbox)",
+        "leaves_machine": "Nothing the launcher knows of",
+        "lock": "`requirements.toml` from the portal"
+      }
+    },
+    "pi": {
+      "name": "Pi",
+      "file": "Environment of the Pi process the launcher starts; Pi has no managed settings and no lock.",
+      "env": {
+        "PI_TELEMETRY": "0",
+        "PI_SKIP_VERSION_CHECK": "1"
+      },
+      "lock": null,
+      "readme": {
+        "telemetry": "Off: install telemetry, update check",
+        "web_search": "No such tool",
+        "web_fetch": "No such tool",
+        "shell": "Not restricted: Pi has no sandbox",
+        "leaves_machine": "`fd` and `ripgrep` from GitHub on first run",
+        "lock": "Pi offers no lock; a container or the network edge"
+      }
+    }
+  }
+}

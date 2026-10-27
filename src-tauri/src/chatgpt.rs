@@ -376,6 +376,17 @@ followUpQueueMode = "steer"
     }
 
     #[test]
+    fn the_anchors_this_writer_sets_are_the_documents_toml_slots() {
+        // The keys set_leaf touches beyond the template, as dotted paths.
+        let anchors = ["model", "model_providers.consus.auth.command", "model_providers.consus.base_url"];
+        let p = crate::policy::policy();
+        let mut doc_slots: Vec<&str> = p.base("codex-cli").toml_slot_keys.keys().map(String::as_str).collect();
+        doc_slots.sort();
+        assert_eq!(doc_slots, anchors);
+        assert_eq!(p.base("codex-cli").toml_slot_keys["model_providers.consus.base_url"], "endpoint_v1");
+    }
+
+    #[test]
     fn picks_by_preference_and_regime() {
         let m = json!([
             { "id": "consus/gpt-5.1:itar" },

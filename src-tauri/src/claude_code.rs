@@ -372,6 +372,41 @@ mod tests {
     }
 
     #[test]
+    fn the_owned_keys_are_exactly_what_the_policy_document_describes() {
+        // The document is the source; these consts are the writer's view of it.
+        let p = crate::policy::policy();
+        let cc = p.tool("claude-code");
+        let sorted = |mut v: Vec<String>| {
+            v.sort();
+            v
+        };
+        let top: Vec<String> = cc.settings.keys().chain(cc.slot_keys.keys()).cloned().collect();
+        assert_eq!(sorted(top), sorted(OWNED_TOP.iter().map(|s| s.to_string()).collect()));
+        let mut env: Vec<String> = cc.env.keys().chain(cc.env_slot_keys.keys()).cloned().collect();
+        for on in [false, true] {
+            env.extend(p.claude_code_variant(on).0.keys().cloned());
+        }
+        env.sort();
+        env.dedup();
+        assert_eq!(env, sorted(OWNED_ENV.iter().map(|s| s.to_string()).collect()));
+        let mut deny: Vec<String> = [false, true].into_iter().flat_map(|on| p.claude_code_variant(on).1).collect();
+        deny.sort();
+        deny.dedup();
+        assert_eq!(deny, sorted(OWNED_DENY.iter().map(|s| s.to_string()).collect()));
+        let mut sandbox: Vec<String> =
+            [false, true].into_iter().filter_map(|on| p.claude_code_variant(on).2).flat_map(|s| crate::policy::leaf_paths(&s)).collect();
+        sandbox.sort();
+        sandbox.dedup();
+        assert_eq!(sandbox, sorted(OWNED_SANDBOX.iter().map(|p| p.join(".")).collect()));
+        // And the values the writer hard-codes are the document's.
+        assert_eq!(shell_sandbox(), p.claude_code_variant(false).2.unwrap());
+        let (_, env_doc) = owned(Path::new("/h"), &models::claude_models(&serde_json::from_str(MODELS).unwrap(), &Target::default()), &serde_json::from_str(MODELS).unwrap(), &Target::default()).unwrap();
+        for (k, v) in p.claude_code_env_static() {
+            assert_eq!(env_doc[&k], v, "{k}");
+        }
+    }
+
+    #[test]
     fn merge_keeps_user_keys_and_picks_the_right_slots() {
         let home = temp_home("merge");
         fs::create_dir_all(profile_dir(&home)).unwrap();

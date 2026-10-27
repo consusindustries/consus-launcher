@@ -5,6 +5,7 @@ mod config;
 mod keychain;
 mod models;
 mod pi;
+mod policy;
 mod portal;
 mod settings;
 mod signin;

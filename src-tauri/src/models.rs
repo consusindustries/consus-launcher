@@ -239,6 +239,23 @@ mod tests {
     }
 
     #[test]
+    fn denied_web_tools_match_the_policy_document() {
+        let p = crate::policy::policy();
+        for on in [false, true] {
+            let t = Target { web_access: on, ..Target::default() };
+            let (_, deny, _) = p.claude_code_variant(on);
+            assert_eq!(t.denied_web_tools(), deny, "Claude Code, web access {on}");
+            let desktop: Vec<String> = p.claude_desktop_variant(on)["disabledBuiltinTools"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| v.as_str().unwrap().to_string())
+                .collect();
+            assert_eq!(t.denied_web_tools(), desktop, "Claude Desktop, web access {on}");
+        }
+    }
+
+    #[test]
     fn claude_models_follow_the_level() {
         let m = serde_json::json!([
             { "id": "consus/claude-opus-5:itar" },
