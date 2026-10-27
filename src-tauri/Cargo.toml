@@ -1,6 +1,6 @@
 [package]
 name = "consus-launcher"
-version = "1.2.0"
+version = "1.2.1"
 description = "Consus Launcher"
 authors = ["Consus Industries"]
 edition = "2021"
