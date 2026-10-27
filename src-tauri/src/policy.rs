@@ -263,9 +263,15 @@ mod tests {
         // Claude Code's managed settings reject a non-string env value.
         assert!(p.claude_code_env_static().values().all(Value::is_string));
         // Env values travel into a shell line (Pi) and a JSON file: plain text.
+        let plain = |v: &str| v.chars().all(|c| c.is_ascii_alphanumeric() || "._-/:".contains(c));
         for (id, t) in &p.tools {
             for (k, v) in &t.env {
-                assert!(v.chars().all(|c| c.is_ascii_alphanumeric() || "._-/:".contains(c)), "{id}: {k}={v}");
+                assert!(plain(v), "{id}: {k}={v}");
+            }
+            for (name, variant) in &t.by_web_access {
+                for (k, v) in variant.get("env").and_then(Value::as_object).into_iter().flatten() {
+                    assert!(v.as_str().is_some_and(plain), "{id} {name}: {k}={v}");
+                }
             }
         }
         for on in [false, true] {
@@ -328,6 +334,9 @@ mod tests {
         }
         let extra: DocumentMut = p.codex_extra_toml().parse().unwrap();
         assert_eq!(extra["check_for_update_on_startup"].as_bool(), Some(false));
+        // codex.rs copies these as plain values; a table or dotted key here
+        // would panic at launch.
+        assert!(extra.as_table().iter().all(|(_, item)| item.is_value()), "toml_extra holds plain values only");
         let lock = p.base("codex-cli").lock_only.requirements_toml.as_deref().unwrap();
         assert!(lock.contains("allowed_web_search_modes = []"));
         assert!(lock.contains("\"{{endpoint_host}}\" = \"allow\""), "the gateway host is a slot, not api.consus.io");

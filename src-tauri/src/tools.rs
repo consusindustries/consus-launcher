@@ -682,8 +682,11 @@ fn launch_app(app: AppHandle, t: Tool, s: AppSpec, rect: Rect, models: &Value, t
     // The app's own output is not the launcher's to read or keep.
     let mut cmd = Command::new(&bin);
     cmd.stdout(Stdio::null()).stderr(Stdio::null());
+    // The launcher's own Claude session must not leak into either app, and
+    // ChatGPT's embedded Codex must not read another home or endpoint.
     for (k, _) in std::env::vars_os() {
-        if inherited_claude_var(&k.to_string_lossy()) {
+        let name = k.to_string_lossy();
+        if inherited_claude_var(&name) || (t == Tool::ChatGpt && CODEX_SCRUB.matches(&name)) {
             cmd.env_remove(k);
         }
     }
@@ -735,7 +738,6 @@ impl Scrub {
         parts.join("|")
     }
 
-    #[cfg_attr(not(windows), allow(dead_code))]
     pub fn matches(&self, name: &str) -> bool {
         self.prefixes.iter().any(|p| name.starts_with(p))
             || self.suffixes.iter().any(|s| name.ends_with(s))

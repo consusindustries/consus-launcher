@@ -90,8 +90,9 @@ jobs:
           pkg=$(node -p "require('./package.json').version")
           lock=$(node -p "require('./package-lock.json').version")
           cargo=$(sed -n 's/^version = "\(.*\)"/\1/p' src-tauri/Cargo.toml | head -1)
-          if [ "$pkg" != "$v" ] || [ "$lock" != "$v" ] || [ "$cargo" != "$v" ]; then
-            echo "Versions differ: tauri.conf.json $v, package.json $pkg, package-lock.json $lock, Cargo.toml $cargo"
+          policy=$(node -p "require('./policy/launcher-policy.json').launcher")
+          if [ "$pkg" != "$v" ] || [ "$lock" != "$v" ] || [ "$cargo" != "$v" ] || [ "$policy" != "$v" ]; then
+            echo "Versions differ: tauri.conf.json $v, package.json $pkg, package-lock.json $lock, Cargo.toml $cargo, policy/launcher-policy.json $policy"
             exit 1
           fi
           if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "v$v" ]; then

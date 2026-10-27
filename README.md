@@ -169,14 +169,14 @@ Release builds are made only in GitHub Actions ([`release.yml`](.github/workflow
 
 - `Consus-Launcher-<version>-universal.dmg` and `.pkg` (macOS), and `Consus-Launcher-<version>-x64.msi` and `-arm64.msi` (Windows, not yet code-signed)
 - `consus-launcher-rust.cdx.json` and `consus-launcher-npm.cdx.json`: CycloneDX SBOMs for the Rust crates and the npm packages in the app
-- `consus-launcher-policy-<version>.json`: the policy document, every setting this version writes (see "One policy document" below)
+- `consus-launcher-policy-<version>.json`: the policy document, every setting this version writes (see "One policy document" under "For IT admins" above)
 - `SHA256SUMS.txt`
 
 Signing and notarization run in that same workflow once the Apple secrets are set; the secret names are listed at the top of `release.yml`. Run the workflow by hand (Actions, Release, Run workflow) to try signing before tagging.
 
 To cut a release:
 
-1. Set the new version with `npm version --no-git-tag-version <version>` (updates `package.json` and `package-lock.json`), then in `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, and `launcher` in `policy/launcher-policy.json`. Commit it with the updated `Cargo.lock`. The workflow refuses to build if the first four differ, and `cargo test` fails if the policy document's version does.
+1. Set the new version with `npm version --no-git-tag-version <version>` (updates `package.json` and `package-lock.json`), then in `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, and `launcher` in `policy/launcher-policy.json`. Commit it with the updated `Cargo.lock`. The workflow refuses to build if any of the five differ.
 2. Tag the commit `v<version>` and push the tag.
 3. The workflow drafts a GitHub Release with the files above. Review it, then publish.
 
