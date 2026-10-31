@@ -32,7 +32,7 @@ toml_edit = "=0.25.15"
 base64 = "=0.23.1"
 # Both already in the tree via reqwest's TLS stack; the sign-in's PKCE
 # challenge (sha256) and one-time secret (32 random bytes).
-sha2 = "=0.10.9"
+sha2 = "=0.11.1"
 getrandom = "=0.3.4"
 
 
