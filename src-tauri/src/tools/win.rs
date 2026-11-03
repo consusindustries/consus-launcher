@@ -18,12 +18,12 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use base64::Engine as _;
-use serde_json::Value;
-use tauri::{AppHandle, Manager};
+use serde_json::{json, Value};
+use tauri::{AppHandle, Emitter, Manager};
 
 use super::{
-    chatgpt_catalog, claude_code_policy, helper_path, name, ours, output_within, track, Running, Tool,
-    CODEX_HELPER_NAME, CODE_HELPER_NAME, HELPER_NAME, PI_HELPER_NAME, PI_ICON,
+    chatgpt_catalog, claude_code_policy, helper_path, key, name, ours, output_within, track, Running, Tool,
+    CHATGPT_NO_CATALOG, CODEX_HELPER_NAME, CODE_HELPER_NAME, HELPER_NAME, PI_HELPER_NAME, PI_ICON,
 };
 use crate::models::Target;
 use crate::{chatgpt, claude_code, codex, config, keychain, pi};
@@ -379,6 +379,9 @@ pub fn launch(app: AppHandle, t: Tool, models: &Value, target: &Target) -> Resul
             let helper = helper_path(&helper_dir, CODEX_HELPER_NAME);
             config::write_helper(&helper)?;
             let catalog = chatgpt_codex().and_then(|engine| chatgpt_catalog(&app, &engine, models, target));
+            if catalog.is_none() {
+                let _ = app.emit("tool-notice", json!({ "tool": key(t), "message": CHATGPT_NO_CATALOG }));
+            }
             chatgpt::write_config(&home, models, target, catalog.as_deref(), &helper)?;
             // ChatGPT runs only when Windows starts it through its package
             // (since 26.924, started directly it stops with "The process has

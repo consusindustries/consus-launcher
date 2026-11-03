@@ -506,11 +506,12 @@ async function launchTool(b: HTMLButtonElement, key: Tool): Promise<void> {
   const sb = b.querySelector<HTMLElement>("[data-sb]")!;
   b.disabled = true;
   go.textContent = "OPENING…";
+  // Cleared before the launch, not after: a notice sent during it must stay.
+  sb.textContent = sb.dataset.d ?? "";
   try {
     await invoke("launch_tool", { tool: key, rect: await glassRect(), models: currentModels ?? [] });
     running.add(key);
     activateTile(b, key);
-    sb.textContent = sb.dataset.d ?? "";
   } catch (err) {
     go.textContent = "OPEN";
     sb.textContent = String(err);
