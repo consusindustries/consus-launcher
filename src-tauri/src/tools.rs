@@ -219,9 +219,9 @@ fn chatgpt_catalog(app: &AppHandle, engine: &Path, models: &Value, target: &Targ
 }
 
 const CHATGPT_CATALOG: &str = "chatgpt-models.json";
-/// Without a catalog the app lists OpenAI's own models, which the gateway
-/// refuses, so the user has to hear about it.
-const CHATGPT_NO_CATALOG: &str = "ChatGPT could not list the Consus models this time. Its model picker shows OpenAI's models, and those will not work here. Keep the model it opened on.";
+/// Without a new catalog the app keeps the last one, or with none lists
+/// OpenAI's own models, which the gateway refuses, so the user has to hear.
+const CHATGPT_NO_CATALOG: &str = "ChatGPT could not update its list of Consus models this time. Some models in its picker may not work. Keep the model it opened on.";
 
 /// Asks the user's login shell where a program is, for at most three
 /// seconds, so an rc file that hangs cannot hang the app.

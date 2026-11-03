@@ -223,6 +223,12 @@ mod tests {
         assert_eq!(slugs, ["gpt-5.4:itar", "gpt-5.1:itar"], "stock models stay out");
         assert_eq!(list[0]["base_instructions"], "5.5");
         assert_eq!(list[0]["display_name"], "GPT-5.4 (ITAR)");
+
+        // A Codex that still bundles the first choice uses it.
+        let mut both = stock.clone();
+        both["models"].as_array_mut().unwrap().push(json!({ "slug": "gpt-5.4", "base_instructions": "5.4",
+            "supported_reasoning_levels": [level("low"), level("medium"), level("high")] }));
+        assert_eq!(catalog(&both, &models, &Target::default())[0]["base_instructions"], "5.4");
     }
 
     #[test]
