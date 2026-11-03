@@ -219,6 +219,9 @@ fn chatgpt_catalog(app: &AppHandle, engine: &Path, models: &Value, target: &Targ
 }
 
 const CHATGPT_CATALOG: &str = "chatgpt-models.json";
+/// Without a catalog the app lists OpenAI's own models, which the gateway
+/// refuses, so the user has to hear about it.
+const CHATGPT_NO_CATALOG: &str = "ChatGPT could not list the Consus models this time. Its model picker shows OpenAI's models, and those will not work here. Keep the model it opened on.";
 
 /// Asks the user's login shell where a program is, for at most three
 /// seconds, so an rc file that hangs cannot hang the app.
@@ -232,12 +235,18 @@ fn shell_lookup(program: &str) -> Option<PathBuf> {
     (p.is_absolute() && p.exists()).then_some(p)
 }
 
+/// The Codex engine inside a ChatGPT app bundle, wherever this version keeps
+/// it: codex-cli/bin since ChatGPT 26.930, Resources itself before that.
+fn bundled_codex(bundle_dir: &Path) -> Option<PathBuf> {
+    ["Contents/Resources/codex-cli/bin/codex", "Contents/Resources/codex"]
+        .iter()
+        .map(|p| bundle_dir.join(p))
+        .find(|p| p.is_file())
+}
+
 /// The Codex CLI: the user's own, else the one inside the ChatGPT app.
 fn codex_cli(app: &AppHandle) -> Option<PathBuf> {
-    cli(app, "codex").or_else(|| {
-        let bundled = app_path(app, &app_spec(Tool::ChatGpt)?)?.join("Contents/Resources/codex");
-        bundled.exists().then_some(bundled)
-    })
+    cli(app, "codex").or_else(|| bundled_codex(&app_path(app, &app_spec(Tool::ChatGpt)?)?))
 }
 
 /// The program a terminal tool runs, found the way the user's terminal
@@ -672,7 +681,10 @@ fn launch_app(app: AppHandle, t: Tool, s: AppSpec, rect: Rect, models: &Value, t
             let k = keychain::get_key().ok_or("No key in the keychain. Connect first.")?;
             let helper = helper_path(&app.path().app_config_dir().map_err(|e| e.to_string())?, CODEX_HELPER_NAME);
             config::write_helper(&helper)?;
-            let catalog = chatgpt_catalog(&app, &bundle_dir.join("Contents/Resources/codex"), models, target);
+            let catalog = bundled_codex(&bundle_dir).and_then(|engine| chatgpt_catalog(&app, &engine, models, target));
+            if catalog.is_none() {
+                let _ = app.emit("tool-notice", json!({ "tool": key(t), "message": CHATGPT_NO_CATALOG }));
+            }
             chatgpt::write_config(&home, models, target, catalog.as_deref(), &helper)?;
             env = Some(("CONSUS_API_KEY", k));
         }
@@ -1113,6 +1125,22 @@ fn other_terminate(_: &[Running]) {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_codex_engine_is_found_in_either_app_layout() {
+        let app = std::env::temp_dir().join(format!("consus-launcher-engine-{}.app", std::process::id()));
+        let _ = fs::remove_dir_all(&app);
+        assert_eq!(bundled_codex(&app), None);
+        let old = app.join("Contents/Resources/codex");
+        fs::create_dir_all(old.parent().unwrap()).unwrap();
+        fs::write(&old, "").unwrap();
+        assert_eq!(bundled_codex(&app), Some(old));
+        let new = app.join("Contents/Resources/codex-cli/bin/codex");
+        fs::create_dir_all(new.parent().unwrap()).unwrap();
+        fs::write(&new, "").unwrap();
+        assert_eq!(bundled_codex(&app), Some(new), "the current layout wins");
+        let _ = fs::remove_dir_all(&app);
+    }
 
     #[test]
     fn scrub_names_are_plain_identifiers_so_the_pattern_needs_no_escaping() {

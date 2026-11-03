@@ -28,15 +28,17 @@ use crate::{chatgpt, claude_code};
 pub const PROFILE_DIR: &str = ".codex-consus-gateway";
 
 // The GPT models the gateway serves over the Responses API that Codex speaks
-// (the models endpoint does not say which), each with the bundled Codex entry
-// it is cloned from. From the guide's MODELS table. Name, context window,
-// and reasoning efforts come from the gateway.
-const CATALOG: [(&str, &str); 5] = [
-    ("gpt-5.6-sol", "gpt-5.6-sol"),
-    ("gpt-5.6-terra", "gpt-5.6-terra"),
-    ("gpt-5.6-luna", "gpt-5.6-luna"),
-    ("gpt-5.4", "gpt-5.4"),
-    ("gpt-5.1", "gpt-5.4"),
+// (the models endpoint does not say which), each with the bundled Codex entries
+// it can be cloned from, first choice first: Codex drops older models from its
+// bundled list (ChatGPT 26.930 has no gpt-5.4), and the gateway keeps serving
+// them. From the guide's MODELS table. Name, context window, and reasoning
+// efforts come from the gateway.
+const CATALOG: [(&str, &[&str]); 5] = [
+    ("gpt-5.6-sol", &["gpt-5.6-sol"]),
+    ("gpt-5.6-terra", &["gpt-5.6-terra"]),
+    ("gpt-5.6-luna", &["gpt-5.6-luna"]),
+    ("gpt-5.4", &["gpt-5.4", "gpt-5.5"]),
+    ("gpt-5.1", &["gpt-5.4", "gpt-5.5"]),
 ];
 
 pub fn profile_dir(home: &Path) -> PathBuf {
@@ -60,7 +62,7 @@ pub fn catalog(bundled: &Value, models_json: &Value, t: &Target) -> Vec<Value> {
         .filter_map(|(base, from)| {
             let id = format!("{base}:{}", t.level);
             let d = models::detail(models::row(models_json, &id)?);
-            let mut m = stock.iter().find(|m| m["slug"] == *from)?.clone();
+            let mut m = from.iter().find_map(|f| stock.iter().find(|m| m["slug"] == *f))?.clone();
             let levels: Vec<Value> = m["supported_reasoning_levels"]
                 .as_array()?
                 .iter()
@@ -198,6 +200,29 @@ mod tests {
             list[1]["supported_reasoning_levels"].as_array().unwrap().iter().map(|l| l["effort"].as_str().unwrap()).collect();
         assert_eq!(efforts, ["low", "medium", "high"]);
         assert_eq!(list[0]["display_name"], "GPT-5.6 Terra (ITAR)");
+    }
+
+    #[test]
+    fn a_model_codex_no_longer_bundles_is_cloned_from_the_next_choice() {
+        // ChatGPT 26.930: no gpt-5.4 in the bundled list, and a key whose only
+        // Responses models at ITAR are 5.4 and 5.1.
+        let level = |e: &str| json!({ "effort": e, "description": e });
+        let stock = json!({ "models": [
+            { "slug": "gpt-6-luna", "base_instructions": "6" },
+            { "slug": "gpt-5.5", "base_instructions": "5.5", "visibility": "list",
+              "supported_reasoning_levels": [level("low"), level("medium"), level("high"), level("xhigh")] }
+        ]});
+        let models = json!([
+            { "id": "consus/gpt-5.4:itar", "display_name": "GPT-5.4", "context_window": 272000,
+              "reasoning_efforts": ["low", "medium", "high", "xhigh"] },
+            { "id": "consus/gpt-5.1:itar", "display_name": "GPT-5.1", "context_window": 272000,
+              "reasoning_efforts": ["low", "medium", "high"] }
+        ]);
+        let list = catalog(&stock, &models, &Target::default());
+        let slugs: Vec<&str> = list.iter().map(|m| m["slug"].as_str().unwrap()).collect();
+        assert_eq!(slugs, ["gpt-5.4:itar", "gpt-5.1:itar"], "stock models stay out");
+        assert_eq!(list[0]["base_instructions"], "5.5");
+        assert_eq!(list[0]["display_name"], "GPT-5.4 (ITAR)");
     }
 
     #[test]
