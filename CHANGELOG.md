@@ -2,6 +2,12 @@
 
 What changed in each release. Each release's GitHub page shows its section.
 
+## v1.2.2 (2026-11-02)
+
+- ChatGPT lists the Consus models again. ChatGPT 26.930 moved a program the launcher uses to build that list, and dropped a model it was built from, so the picker showed OpenAI's models and the gateway refused them.
+- If the launcher cannot update ChatGPT's model list, it now says so on the ChatGPT tile. Notices sent while a tool opens stay on the tile instead of being cleared.
+- Dependency updates: rustls, sha2, getrandom, Vite, the Tauri CLI, and the rust-cache build action.
+
 ## v1.2.1 (2026-10-27)
 
 - While you sign in, the launcher says when your approval has landed and the key is being prepared, instead of still asking you to approve.
