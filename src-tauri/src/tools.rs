@@ -614,16 +614,17 @@ fn ours(app: &AppHandle, t: Tool) -> Vec<Running> {
 
 /// Records a started tool and watches it: once `wait` returns, the entry is
 /// dropped, the backdrop lifts if nothing else is running, and the UI hears.
-fn track(app: &AppHandle, entry: Running, wait: impl FnOnce() + Send + 'static) {
+/// `wait` returns the pid the entry ended with (see follow_handoffs).
+fn track(app: &AppHandle, entry: Running, wait: impl FnOnce() -> u32 + Send + 'static) {
     app.state::<Children>().0.lock().unwrap().push(entry.clone());
     set_backdrop(app, true);
     let handle = app.clone();
     thread::spawn(move || {
-        wait();
+        let last = wait();
         let remaining = {
             let children = handle.state::<Children>();
             let mut c = children.0.lock().unwrap();
-            c.retain(|r| !(r.pid == entry.pid && r.terminal == entry.terminal));
+            c.retain(|r| !(r.pid == last && r.terminal == entry.terminal));
             c.len()
         };
         if remaining == 0 {
@@ -705,15 +706,56 @@ fn launch_app(app: AppHandle, t: Tool, s: AppSpec, rect: Rect, models: &Value, t
     if let Some((k, v)) = env {
         cmd.env(k, v);
     }
+    let before = running_pids(s.process);
     let mut child = cmd.spawn().map_err(|e| format!("{}: {e}", bin.display()))?;
+    let pid = child.id();
     let handle = app.clone();
-    track(&app, Running { tool: t, pid: child.id(), terminal: None }, move || {
+    track(&app, Running { tool: t, pid, terminal: None }, move || {
         if let Err(e) = place_window(t, &s, &rect) {
             notice(&handle, t, &e);
         }
         let _ = child.wait();
+        follow_handoffs(&handle, t, s.process, before, pid)
     });
     Ok(())
+}
+
+/// How long a started app's successor may take to show up.
+const HANDOFF_WAIT: Duration = Duration::from_secs(4);
+
+/// ChatGPT (26.930) hands off on every start: the process the launcher
+/// started exits within seconds and a second one carries on. When the
+/// tracked process exits, a process of the same name that was not running
+/// before takes its place in Children, and this returns once the last one
+/// has exited, with its pid. Safe because the launcher quit every instance
+/// before starting this one, and these apps run one instance at a time.
+fn follow_handoffs(app: &AppHandle, t: Tool, process: &str, mut seen: Vec<u32>, mut pid: u32) -> u32 {
+    loop {
+        seen.push(pid);
+        let start = Instant::now();
+        let next = loop {
+            if let Some(n) = successor(&seen, &running_pids(process)) {
+                break Some(n);
+            }
+            if start.elapsed() >= HANDOFF_WAIT {
+                break None;
+            }
+            thread::sleep(Duration::from_millis(250));
+        };
+        let Some(next) = next else { return pid };
+        if let Some(r) = app.state::<Children>().0.lock().unwrap().iter_mut().find(|r| r.tool == t && r.pid == pid) {
+            r.pid = next;
+        }
+        pid = next;
+        while alive(pid) {
+            thread::sleep(Duration::from_secs(1));
+        }
+    }
+}
+
+/// The first running pid that is none of those seen so far.
+fn successor(seen: &[u32], now: &[u32]) -> Option<u32> {
+    now.iter().copied().find(|p| !seen.contains(p))
 }
 
 /// Variables that belong to whatever Claude session the launcher itself was
@@ -945,6 +987,7 @@ fn launch_terminal(app: AppHandle, t: Tool, rect: Rect, models: &Value, target: 
             thread::sleep(Duration::from_secs(2));
         }
         close_terminal_window(window);
+        0
     });
     Ok(())
 }
@@ -1125,6 +1168,16 @@ fn other_terminate(_: &[Running]) {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_successor_is_a_new_process_not_one_already_seen() {
+        // Before the launch: nothing. Started 100, which exited; 140 carried on.
+        assert_eq!(successor(&[100], &[140]), Some(140));
+        assert_eq!(successor(&[100], &[]), None, "it really closed");
+        assert_eq!(successor(&[90, 100], &[90]), None, "one that ran before the launch is not ours");
+        // A second handoff from 140 to 170, while 140 is still winding down.
+        assert_eq!(successor(&[100, 140], &[140, 170]), Some(170));
+    }
 
     #[test]
     fn the_codex_engine_is_found_in_either_app_layout() {
