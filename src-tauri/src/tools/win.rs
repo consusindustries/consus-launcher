@@ -392,6 +392,7 @@ pub fn launch(app: AppHandle, t: Tool, models: &Value, target: &Target) -> Resul
                 while alive(pid) {
                     thread::sleep(Duration::from_secs(2));
                 }
+                pid
             });
             return Ok(());
         }
@@ -443,8 +444,10 @@ pub fn launch(app: AppHandle, t: Tool, models: &Value, target: &Target) -> Resul
         cmd.stdout(Stdio::null()).stderr(Stdio::null());
     }
     let mut child = cmd.spawn().map_err(|e| format!("{}: {e}", name(t)))?;
-    track(&app, Running { tool: t, pid: child.id(), terminal: None }, move || {
+    let pid = child.id();
+    track(&app, Running { tool: t, pid, terminal: None }, move || {
         let _ = child.wait();
+        pid
     });
     Ok(())
 }
