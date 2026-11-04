@@ -2,6 +2,10 @@
 
 What changed in each release. Each release's GitHub page shows its section.
 
+## v1.2.3 (2026-11-04)
+
+- The ChatGPT tile shows RUNNING while ChatGPT is open. ChatGPT 26.930 restarts itself in a new process a few seconds after it opens; the launcher took that for the app closing, so the tile went back to OPEN, quitting the launcher left ChatGPT open, and clicking the tile again restarted it. The launcher now follows ChatGPT to the new process.
+
 ## v1.2.2 (2026-11-02)
 
 - ChatGPT lists the Consus models again. ChatGPT 26.930 moved a program the launcher uses to build that list, and dropped a model it was built from, so the picker showed OpenAI's models and the gateway refused them.
