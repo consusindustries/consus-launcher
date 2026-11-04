@@ -614,7 +614,7 @@ fn ours(app: &AppHandle, t: Tool) -> Vec<Running> {
 
 /// Records a started tool and watches it: once `wait` returns, the entry is
 /// dropped, the backdrop lifts if nothing else is running, and the UI hears.
-/// `wait` returns the pid the entry ended with (see follow_handoffs).
+/// `wait` returns the pid the entry ended with (see follow_handoff).
 fn track(app: &AppHandle, entry: Running, wait: impl FnOnce() -> u32 + Send + 'static) {
     app.state::<Children>().0.lock().unwrap().push(entry.clone());
     set_backdrop(app, true);
@@ -708,49 +708,53 @@ fn launch_app(app: AppHandle, t: Tool, s: AppSpec, rect: Rect, models: &Value, t
     }
     let before = running_pids(s.process);
     let mut child = cmd.spawn().map_err(|e| format!("{}: {e}", bin.display()))?;
-    let pid = child.id();
+    let (pid, started) = (child.id(), Instant::now());
     let handle = app.clone();
     track(&app, Running { tool: t, pid, terminal: None }, move || {
         if let Err(e) = place_window(t, &s, &rect) {
             notice(&handle, t, &e);
         }
         let _ = child.wait();
-        follow_handoffs(&handle, t, s.process, before, pid)
+        follow_handoff(&handle, t, s.process, before, pid, started)
     });
     Ok(())
 }
 
-/// How long a started app's successor may take to show up.
+/// Only an exit this soon after the start can be a handoff; a later one is
+/// the user quitting.
+const HANDOFF_WINDOW: Duration = Duration::from_secs(30);
+/// How long the successor may take to show up after the exit.
 const HANDOFF_WAIT: Duration = Duration::from_secs(4);
 
 /// ChatGPT (26.930) hands off on every start: the process the launcher
-/// started exits within seconds and a second one carries on. When the
-/// tracked process exits, a process of the same name that was not running
-/// before takes its place in Children, and this returns once the last one
-/// has exited, with its pid. Safe because the launcher quit every instance
-/// before starting this one, and these apps run one instance at a time.
-fn follow_handoffs(app: &AppHandle, t: Tool, process: &str, mut seen: Vec<u32>, mut pid: u32) -> u32 {
-    loop {
-        seen.push(pid);
-        let start = Instant::now();
-        let next = loop {
-            if let Some(n) = successor(&seen, &running_pids(process)) {
-                break Some(n);
-            }
-            if start.elapsed() >= HANDOFF_WAIT {
-                break None;
-            }
-            thread::sleep(Duration::from_millis(250));
-        };
-        let Some(next) = next else { return pid };
-        if let Some(r) = app.state::<Children>().0.lock().unwrap().iter_mut().find(|r| r.tool == t && r.pid == pid) {
-            r.pid = next;
-        }
-        pid = next;
-        while alive(pid) {
-            thread::sleep(Duration::from_secs(1));
-        }
+/// started exits after a few seconds and a second one carries on. When the
+/// started process exits that early, a process of the same name that was
+/// not running before takes its place in Children and is watched until it
+/// exits; this returns the pid the entry ended with. Safe because the
+/// launcher quit every instance before starting this one, and these apps
+/// run one instance at a time.
+fn follow_handoff(app: &AppHandle, t: Tool, process: &str, mut seen: Vec<u32>, pid: u32, started: Instant) -> u32 {
+    if started.elapsed() > HANDOFF_WINDOW {
+        return pid;
     }
+    seen.push(pid);
+    let exited = Instant::now();
+    let next = loop {
+        if let Some(n) = successor(&seen, &running_pids(process)) {
+            break n;
+        }
+        if exited.elapsed() >= HANDOFF_WAIT {
+            return pid;
+        }
+        thread::sleep(Duration::from_millis(250));
+    };
+    if let Some(r) = app.state::<Children>().0.lock().unwrap().iter_mut().find(|r| r.tool == t && r.pid == pid) {
+        r.pid = next;
+    }
+    while alive(next) {
+        thread::sleep(Duration::from_secs(2));
+    }
+    next
 }
 
 /// The first running pid that is none of those seen so far.
@@ -1175,8 +1179,7 @@ mod tests {
         assert_eq!(successor(&[100], &[140]), Some(140));
         assert_eq!(successor(&[100], &[]), None, "it really closed");
         assert_eq!(successor(&[90, 100], &[90]), None, "one that ran before the launch is not ours");
-        // A second handoff from 140 to 170, while 140 is still winding down.
-        assert_eq!(successor(&[100, 140], &[140, 170]), Some(170));
+        assert_eq!(successor(&[90, 100], &[90, 140]), Some(140));
     }
 
     #[test]
