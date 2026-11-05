@@ -2,6 +2,10 @@
 
 What changed in each release. Each release's GitHub page shows its section.
 
+## Unreleased
+
+- The Windows installers are named `-windows-x64.msi` and `-windows-arm64.msi`, so the x64 one that most PCs need is listed first on the release page, and the release notes and README say which to pick. The ARM64 installer was listed first, and on an Intel PC it stops with "not supported by this processor type".
+
 ## v1.2.3 (2026-11-04)
 
 - The ChatGPT tile shows RUNNING while ChatGPT is open. ChatGPT 26.930 restarts itself in a new process a few seconds after it opens; the launcher took that for the app closing, so the tile went back to OPEN, quitting the launcher left ChatGPT open, and clicking the tile again restarted it. The launcher now follows ChatGPT to the new process.

@@ -22,7 +22,8 @@ name: Release
 #   APPLE_API_KEY_P8            contents of that key's AuthKey_<id>.p8
 # The first four go together, and so do the last three.
 #
-# Windows gets an .msi for x64 and ARM64. The app and the .msi are signed
+# Windows gets an .msi for x64 and one for ARM64, named so x64 sorts first
+# on the release page. The app and the .msi are signed
 # with Microsoft Artifact Signing (account consus-signing, certificate profile
 # consus-launcher, identity Consus Industries, Inc.) when these secrets exist,
 # and are unsigned otherwise:
@@ -292,7 +293,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p release
-          cp src-tauri/target/${{ matrix.target }}/release/bundle/msi/*.msi "release/Consus-Launcher-$VERSION-${{ matrix.arch }}.msi"
+          cp src-tauri/target/${{ matrix.target }}/release/bundle/msi/*.msi "release/Consus-Launcher-$VERSION-windows-${{ matrix.arch }}.msi"
           ls -la release
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -342,7 +343,8 @@ jobs:
             fi
             echo "Consus Launcher $VERSION for macOS (Apple silicon and Intel) and Windows (x64 and ARM64)."
             echo
-            echo "macOS: the .dmg, or the .pkg to install into /Applications. Windows: the .msi for your PC."
+            echo "macOS: the .dmg, or the .pkg to install into /Applications."
+            echo "Windows: the -windows-x64.msi for most PCs (Intel and AMD). The -windows-arm64.msi is only for ARM PCs such as Snapdragon and Surface Pro X; on another PC it stops with \"not supported by this processor type\"."
             echo "SHA256SUMS.txt lists the checksums; the .cdx.json files are the CycloneDX SBOMs."
             echo "consus-launcher-policy-$VERSION.json is the policy document: every setting this version writes into a tool, which the Consus portal renders into the device-management lock files."
             echo
