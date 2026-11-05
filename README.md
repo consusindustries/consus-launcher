@@ -119,7 +119,7 @@ curl -fsSL https://raw.githubusercontent.com/consusindustries/consus-launcher/ma
 
 The checksum catches a corrupted or mismatched download. Who built it is proven by the signature: from v0.2.3, releases are signed by Consus Industries, Inc. (Apple Developer ID, team K4P2D65BQD) and notarized by Apple.
 
-**On Windows:** download the `.msi` for your PC (x64 or ARM64) from [Releases](https://github.com/consusindustries/consus-launcher/releases) and run it. From v1.0.0, the installer and the app are signed by Consus Industries, Inc. (Microsoft Artifact Signing). Earlier versions were unsigned, and SmartScreen warned on first run.
+**On Windows:** download the `.msi` from [Releases](https://github.com/consusindustries/consus-launcher/releases) and run it. Most PCs (Intel and AMD) take `Consus-Launcher-<version>-windows-x64.msi`; `-windows-arm64.msi` is only for ARM PCs such as Snapdragon and Surface Pro X, and on any other PC it stops with "not supported by this processor type". From v1.0.0, the installer and the app are signed by Consus Industries, Inc. (Microsoft Artifact Signing). Earlier versions were unsigned, and SmartScreen warned on first run.
 
 **From the download (macOS):**
 
@@ -167,7 +167,7 @@ Dependencies are pinned to exact versions and `Cargo.lock` is committed. The UI 
 
 Release builds are made only in GitHub Actions ([`release.yml`](.github/workflows/release.yml)), never on a laptop, so the public workflow log is the provenance record for every installer. Each release carries:
 
-- `Consus-Launcher-<version>-universal.dmg` and `.pkg` (macOS), and `Consus-Launcher-<version>-x64.msi` and `-arm64.msi` (Windows, not yet code-signed)
+- `Consus-Launcher-<version>-universal.dmg` and `.pkg` (macOS), and `Consus-Launcher-<version>-windows-x64.msi` and `-windows-arm64.msi` (Windows), signed as described under "Install"
 - `consus-launcher-rust.cdx.json` and `consus-launcher-npm.cdx.json`: CycloneDX SBOMs for the Rust crates and the npm packages in the app
 - `consus-launcher-policy-<version>.json`: the policy document, every setting this version writes (see "One policy document" under "For IT admins" above)
 - `SHA256SUMS.txt`
