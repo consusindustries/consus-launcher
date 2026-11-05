@@ -296,6 +296,31 @@ jobs:
           cp src-tauri/target/${{ matrix.target }}/release/bundle/msi/*.msi "release/Consus-Launcher-$VERSION-windows-${{ matrix.arch }}.msi"
           ls -la release
 
+      # The runner is an x64 Windows machine, so the x64 installer is installed,
+      # checked, and removed on it. The ARM64 one cannot be installed here.
+      - name: Install, check, and remove the .msi
+        if: matrix.arch == 'x64'
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $msi = (Resolve-Path "release\Consus-Launcher-$env:VERSION-windows-x64.msi").Path
+          $p = Start-Process msiexec -ArgumentList "/i `"$msi`" /qn /norestart /l*v install.log" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { "msiexec /i exited $($p.ExitCode)"; Get-Content install.log -Tail 80; exit 1 }
+          $dir = "$env:ProgramFiles\Consus Launcher"
+          $exe = Get-ChildItem $dir -Filter *.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $exe) { "No .exe under $dir"; Get-Content install.log -Tail 80; exit 1 }
+          "Installed $($exe.FullName)"
+          if ($env:SIGN -eq 'true') {
+            $s = Get-AuthenticodeSignature $exe.FullName
+            "Signature: $($s.Status), $($s.SignerCertificate.Subject)"
+            if ($s.Status -ne 'Valid') { exit 1 }
+          }
+          $p = Start-Process msiexec -ArgumentList "/x `"$msi`" /qn /norestart /l*v uninstall.log" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { "msiexec /x exited $($p.ExitCode)"; Get-Content uninstall.log -Tail 80; exit 1 }
+          if (Test-Path $exe.FullName) { "Still present after uninstall: $($exe.FullName)"; exit 1 }
+          "Removed"
+
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: consus-launcher-${{ steps.version.outputs.version }}-windows-${{ matrix.arch }}
