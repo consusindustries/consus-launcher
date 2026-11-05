@@ -4,6 +4,7 @@ What changed in each release. Each release's GitHub page shows its section.
 
 ## Unreleased
 
+- The app the Windows installer installs now passes signature verification. Since v1.0.0 the bundler rewrote the signed app to stamp the bundle type into it before packaging, so the installed `consus-launcher.exe` reported a hash mismatch while the `.msi` itself verified. Every release build now installs the x64 `.msi` on the build machine and checks the installed app's signature.
 - The Windows installers are named `-windows-x64.msi` and `-windows-arm64.msi`, so the x64 one that most PCs need is listed first on the release page, and the release notes and README say which to pick. The ARM64 installer was listed first, and on an Intel PC it stops with "not supported by this processor type".
 
 ## v1.2.3 (2026-11-04)

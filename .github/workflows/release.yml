@@ -240,6 +240,10 @@ jobs:
         run: npm ci
 
       # Built, signed, then packaged, so the app inside the .msi is signed too.
+      # --no-binary-patching: otherwise the bundler rewrites the signed .exe in
+      # place to stamp the bundle type into it (for its updater, which this app
+      # does not have), packs that copy, and restores the original; the
+      # installed app then fails signature verification (HashMismatch).
       - name: Build the app
         run: npm run tauri -- build --target ${{ matrix.target }} --no-bundle
 
@@ -258,7 +262,7 @@ jobs:
           description-url: https://github.com/consusindustries/consus-launcher
 
       - name: Build the .msi
-        run: npm run tauri -- bundle --target ${{ matrix.target }} --bundles msi
+        run: npm run tauri -- bundle --target ${{ matrix.target }} --bundles msi --no-binary-patching
 
       - name: Sign the .msi
         if: env.SIGN == 'true'
@@ -311,12 +315,10 @@ jobs:
           $exe = Get-ChildItem $dir -Filter *.exe -ErrorAction SilentlyContinue | Select-Object -First 1
           if (-not $exe) { "No .exe under $dir"; Get-Content install.log -Tail 80; exit 1 }
           "Installed $($exe.FullName)"
-          # Reported, not enforced: the installed app has shown HashMismatch
-          # while the .exe in target/ and the .msi are Valid (seen on v1.2.3).
-          # Make this fatal once that is understood.
           if ($env:SIGN -eq 'true') {
             $s = Get-AuthenticodeSignature $exe.FullName
             "Installed app signature: $($s.Status), $($s.SignerCertificate.Subject)"
+            if ($s.Status -ne 'Valid') { exit 1 }
           }
           $p = Start-Process msiexec -ArgumentList "/x `"$msi`" /qn /norestart /l*v uninstall.log" -Wait -PassThru
           if ($p.ExitCode -ne 0) { "msiexec /x exited $($p.ExitCode)"; Get-Content uninstall.log -Tail 80; exit 1 }
