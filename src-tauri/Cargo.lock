@@ -525,7 +525,7 @@ checksum = "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c"
 
 [[package]]
 name = "consus-launcher"
-version = "1.2.3"
+version = "1.2.4"
 dependencies = [
  "base64 0.23.1",
  "getrandom 0.4.3",
