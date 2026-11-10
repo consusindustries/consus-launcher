@@ -10,6 +10,7 @@ mod portal;
 mod settings;
 mod signin;
 mod tools;
+mod tray;
 
 use std::sync::Mutex;
 
@@ -32,10 +33,17 @@ pub fn run() {
         std::process::exit(keychain::print_helper(json));
     }
     tauri::Builder::default()
+        // First, so a second start hands over before anything else runs.
+        .plugin(tauri_plugin_single_instance::init(|app, _, _| tray::show(app)))
         .plugin(tauri_plugin_opener::init())
         .manage(tools::Children(Mutex::new(Vec::new())))
         .manage(signin::Pending(Mutex::new(None)))
         .setup(|app| {
+            // A menu bar app: no Dock icon, no app menu.
+            #[cfg(target_os = "macos")]
+            app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            tray::build(app.handle())?;
+            tray::show(app.handle());
             let handle = app.handle().clone();
             std::thread::spawn(move || tools::remove_turned_off(&handle));
             Ok(())
@@ -58,12 +66,19 @@ pub fn run() {
             tools::detect_tools,
             tools::launch_tool,
             tools::remove_tool_configs,
+            tray::set_tray_state,
+            tray::set_tray_menu,
+            tray::show_panel,
+            tray::hide_panel,
+            tray::fit_panel,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|app, event| {
-            if let tauri::RunEvent::Exit = event {
-                tools::terminate_children(app);
-            }
+        .run(|app, event| match event {
+            tauri::RunEvent::Exit => tools::terminate_children(app),
+            // Opened again from Finder while already running.
+            #[cfg(target_os = "macos")]
+            tauri::RunEvent::Reopen { .. } => tray::show(app),
+            _ => {}
         });
 }

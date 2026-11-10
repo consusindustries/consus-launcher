@@ -7,20 +7,17 @@ const PORTAL_URL = "https://portal.consus.io";
 // Tools the launcher detects, configures, and launches.
 type Tool = "desktop" | "chatgpt" | "code" | "codex" | "pi";
 const TOOLS: Tool[] = ["desktop", "chatgpt", "code", "codex", "pi"];
-const DOWNLOAD: Record<Tool, string> = {
-  desktop: "https://claude.ai/download",
-  chatgpt: "https://openai.com/chatgpt/download/",
-  code: "https://claude.com/claude-code",
-  codex: "https://developers.openai.com/codex",
-  pi: "https://pi.dev",
+// One entry per tool: the panel's tiles and the icon's menu are drawn from
+// this list. `from` is where the vendor's download lives, as shown.
+const TOOL_INFO: Record<Tool, { name: string; sub: string; glyph: string; download: string; from: string }> = {
+  desktop: { name: "Claude Desktop", sub: "Chat, docs, analysis", glyph: "C", download: "https://claude.ai/download", from: "claude.ai/download" },
+  chatgpt: { name: "ChatGPT", sub: "Chat, docs, analysis", glyph: "G", download: "https://openai.com/chatgpt/download/", from: "openai.com" },
+  code: { name: "Claude Code", sub: "Terminal agent", glyph: ">_", download: "https://claude.com/claude-code", from: "claude.com/claude-code" },
+  codex: { name: "Codex", sub: "Terminal agent", glyph: ">_", download: "https://developers.openai.com/codex", from: "developers.openai.com/codex" },
+  pi: { name: "Pi", sub: "Terminal agent", glyph: "π", download: "https://pi.dev", from: "pi.dev" },
 };
-const NOT_INSTALLED: Record<Tool, string> = {
-  desktop: "Not installed · get it from claude.ai/download",
-  chatgpt: "Not installed · get it from openai.com",
-  code: "Not installed · get it from claude.com/claude-code",
-  codex: "Not installed · get it from developers.openai.com/codex",
-  pi: "Not installed · get it from pi.dev",
-};
+const notInstalled = (t: Tool) => "Not installed · get it from " + TOOL_INFO[t].from;
+const IS_WINDOWS = navigator.userAgent.includes("Windows");
 const isTool = (k: string): k is Tool => (TOOLS as string[]).includes(k);
 // Tools the launcher has running right now; more than one can be up.
 const running = new Set<Tool>();
@@ -120,16 +117,16 @@ interface SettingsView {
   org_name: string | null;
   managed: boolean;
   error: string | null;
+  web_access: boolean;
 }
+
+let webAccess = false;
 
 async function loadSettings(): Promise<void> {
   const s = await invoke<SettingsView>("get_settings");
   $("orgName").textContent = s.org_name ?? "Consus";
   settingsError = s.error ? s.error + (s.managed ? " Contact your IT admin." : "") : null;
-  if (settingsError) {
-    $("empty").querySelector("b")!.textContent = "Launcher settings need attention.";
-    $("empty").querySelector("span")!.textContent = settingsError;
-  }
+  webAccess = s.web_access;
 }
 
 function applyConnectResult(rawKey: string, result: ConnectResult): KeyInfo {
@@ -161,16 +158,24 @@ async function validateWithPatience(key: string): Promise<ConnectResult> {
 function setConnected(on: boolean): void {
   $("connect").style.display = on ? "none" : "block";
   $("main").style.display = on ? "flex" : "none";
-  $("status").classList.toggle("off", !on);
-  $("statusT").textContent = on ? "CONNECTED" : "NOT CONNECTED";
+  $<HTMLButtonElement>("org").disabled = !on;
+  showAccount(false);
+  keyWarn = false;
+  renderStatus();
   if (on && K.def) {
-    $("empty").querySelector("b")!.textContent = "Pick a tool.";
-    $("empty").querySelector("span")!.textContent = "It opens here, set up for Consus.";
-    $("whoNote").textContent =
-      "Signed in as " + K.def.user + ". Every tool here uses Consus. Anything not installed links to the vendor; Consus never installs software.";
+    showHint();
+    $("orgUser").textContent = K.def.user;
+    $("whoNote").textContent = "";
+    $("acctNote").textContent =
+      "Signed in as " + K.def.user + ". Every tool here goes through Consus. Anything not installed links to the vendor; Consus never installs software.";
+    $("webNote").textContent = webAccess
+      ? "Web access is on: tools may fetch web pages from this computer. Your organization sets this."
+      : "Web access is off: tools can't fetch web pages from this computer. Your organization sets this.";
     renderKeys();
     void refreshTools();
   } else {
+    void invoke("set_tray_menu", { tools: [], update: updateVersion });
+    $("orgUser").textContent = "";
     ($("keyIn") as HTMLInputElement).value = "";
     $("keyErr").textContent = "";
     (["c1", "c2", "c3"] as const).forEach((c) => ($(c).className = "cn"));
@@ -178,6 +183,105 @@ function setConnected(on: boolean): void {
     $("c2").textContent = "2";
     $("c3").textContent = "3";
   }
+  syncTray();
+}
+
+// Signed in, and the last check of the key could not reach Consus.
+let keyWarn = false;
+// A tool sent a notice, or a newer launcher turned up, since the panel was last open.
+let unseen = false;
+let updateVersion: string | null = null;
+
+function renderStatus(): void {
+  const on = !!K.def;
+  const st = $("status");
+  st.classList.toggle("off", !on);
+  st.classList.toggle("warn", on && keyWarn);
+  $("statusT").textContent = !on ? "NOT CONNECTED" : keyWarn ? "CAN'T REACH CONSUS" : "CONNECTED";
+  st.title = keyWarn ? "The last check of your key could not reach Consus. Tools may not work until it can." : "";
+}
+
+// The icon follows the panel: orange when signed in, grey when not, and a
+// dot when something here wants a look.
+function syncTray(): void {
+  const connected = !!K.def && $("main").style.display !== "none";
+  void invoke("set_tray_state", { connected, attention: keyWarn || unseen || !!settingsError });
+}
+
+function showAccount(open: boolean): void {
+  $("p-open").classList.toggle("on", !open);
+  $("p-account").classList.toggle("on", open);
+  $("org").setAttribute("aria-expanded", open ? "true" : "false");
+}
+
+const HINT_SEEN = "consus.trayHintSeen";
+
+// Once, after the first sign-in: where the launcher went.
+function showHint(): void {
+  if (localStorage.getItem(HINT_SEEN)) return;
+  $("hintT").textContent = IS_WINDOWS
+    ? "Consus lives in the taskbar's notification area. If you don't see the orange square, click ^ next to the clock and drag it onto the taskbar."
+    : "Consus lives in your menu bar: the orange square. Click it any time to open a tool.";
+  $("hint").style.display = "";
+}
+
+// A key revoked or expired since it was last checked, or Consus out of
+// reach. Checked when the panel opens (at most every five minutes) and every
+// three hours, so the orange square stays true.
+let lastKeyCheck = 0;
+
+async function recheckKey(force = false): Promise<void> {
+  if (!K.def || (!force && Date.now() - lastKeyCheck < 5 * 60 * 1000)) return;
+  lastKeyCheck = Date.now();
+  const key = K.def.key;
+  try {
+    const result = await invoke<ConnectResult>("validate_key", { key });
+    if (K.def?.key !== key) return;
+    currentModels = result.models;
+    keyWarn = false;
+  } catch (err) {
+    if (K.def?.key !== key) return;
+    if ((err as ConnectError).kind === "Revoked") {
+      await invoke("discard_dead_key").catch(() => undefined);
+      signinMeta = null;
+      K = { def: null };
+      setConnected(false);
+      $("signinErr").textContent = REVOKED_MESSAGE;
+      return;
+    }
+    keyWarn = (err as ConnectError).kind === "Network";
+  }
+  renderStatus();
+  syncTray();
+}
+
+// Sizes the window to what the panel shows, so a short view has no empty
+// space; long lists still scroll. The visible scroll area is measured at its
+// natural height, then put back; the observer forgets that change.
+let fitTimer = 0;
+let lastFit = 0;
+let fitObserver: MutationObserver | null = null;
+
+function fitPanel(): void {
+  if (fitTimer) return;
+  // A timer, not an animation frame: frames do not run while the panel is hidden.
+  fitTimer = window.setTimeout(() => {
+    fitTimer = 0;
+    const panel = $("panel");
+    const scroller = [$("connect"), $("p-open"), $("p-account")].find((el) => el.offsetParent !== null);
+    if (!scroller) return;
+    const [total, shown] = [panel.offsetHeight, scroller.offsetHeight];
+    const prev = scroller.style.cssText;
+    scroller.style.flex = "none";
+    scroller.style.height = "auto";
+    const natural = scroller.offsetHeight;
+    scroller.style.cssText = prev;
+    fitObserver?.takeRecords();
+    const height = Math.ceil(total - shown + natural);
+    if (Math.abs(height - lastFit) < 2) return;
+    lastFit = height;
+    void invoke("fit_panel", { height });
+  }, 16);
 }
 
 function renderKeys(): void {
@@ -229,13 +333,11 @@ async function resetAll(): Promise<void> {
   K = { def: null };
   $("signinErr").textContent = r.message;
   cur = null;
-  $("empty").style.display = "";
+  keyWarn = false;
   document.querySelectorAll<HTMLElement>(".tool").forEach((x) => {
     x.classList.remove("on");
     x.querySelector(".go")!.textContent = "OPEN";
   });
-  $("empty").querySelector("b")!.textContent = "Sign in, then pick a tool.";
-  $("empty").querySelector("span")!.textContent = "One time, with your company account.";
   setConnected(false);
 }
 
@@ -284,7 +386,10 @@ async function signIn(): Promise<void> {
     const key = (await invoke<string | null>("keychain_get_key")) ?? "";
     const result = await validateWithPatience(key);
     K.def = applyConnectResult(key, result);
+    lastKeyCheck = Date.now();
     setConnected(true);
+    // The browser has the front by now; the panel takes it back.
+    void invoke("show_panel");
   } catch (err) {
     if (mine()) $("signinErr").textContent = signinErrorMessage(err) || connectErrorMessage(err);
   } finally {
@@ -302,19 +407,10 @@ function cancelSignIn(): void {
   $<HTMLButtonElement>("signinBtn").disabled = false;
 }
 
-function wireWindowControls(): void {
-  const win = getCurrentWindow();
-  document.querySelectorAll<HTMLElement>(".chrome .lights i[data-action]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const action = btn.dataset.action;
-      if (action === "close") void win.close();
-      else if (action === "minimize") void win.minimize();
-      else if (action === "maximize") void win.toggleMaximize();
-    });
-  });
-  $("chrome").addEventListener("dblclick", (e) => {
-    if ((e.target as HTMLElement).closest(".lights")) return;
-    void win.toggleMaximize();
+// Escape puts the panel away, as with any menu bar panel.
+function wireEscape(): void {
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") void invoke("hide_panel");
   });
 }
 
@@ -364,7 +460,7 @@ function wireConnect(): void {
 }
 
 function wireKeysTab(): void {
-  $("p-keys").addEventListener("click", (e) => {
+  $("p-account").addEventListener("click", (e) => {
     const t = e.target as HTMLElement;
     if (t.dataset.change) {
       editor(t.dataset.change);
@@ -405,8 +501,9 @@ function wireKeysTab(): void {
       return;
     }
     if (t.id === "signOut") void resetAll();
+    if (t.id === "backBtn") showAccount(false);
   });
-  $("p-keys").addEventListener("input", (e) => {
+  $("p-account").addEventListener("input", (e) => {
     const id = (e.target as HTMLElement).id || "";
     if (id.indexOf("in-") === 0) $("err-" + id.slice(3)).textContent = "";
   });
@@ -468,23 +565,30 @@ async function refreshTools(): Promise<void> {
       b.dataset.missing = "1";
       b.classList.add("missing");
       go.textContent = "GET IT ↗";
-      sb.textContent = NOT_INSTALLED[key];
+      sb.textContent = notInstalled(key);
     }
   }
+  const ready = TOOLS.filter((k) => status[k]?.allowed && status[k]?.installed);
+  void invoke("set_tray_menu", {
+    tools: ready.map((k) => ({ key: k, name: TOOL_INFO[k].name })),
+    update: updateVersion,
+  });
 }
 
-// The glass rect in screen points, where a launched app's window goes.
-async function glassRect(): Promise<{ x: number; y: number; w: number; h: number }> {
-  const win = getCurrentWindow();
-  const [pos, scale] = await Promise.all([win.outerPosition(), win.scaleFactor()]);
-  const r = $("glass").getBoundingClientRect();
-  const inset = 16;
-  return {
-    x: pos.x / scale + r.left + inset,
-    y: pos.y / scale + r.top + inset,
-    w: r.width - 2 * inset,
-    h: r.height - 2 * inset,
-  };
+function renderTiles(): void {
+  $("toolList").replaceChildren(
+    ...TOOLS.map((key) => {
+      const t = TOOL_INFO[key];
+      const b = document.createElement("button");
+      b.className = "tool";
+      b.dataset.app = key;
+      b.innerHTML =
+        '<span class="ic">' + esc(t.glyph) + "</span>" +
+        '<span><div class="nm">' + esc(t.name) + '</div><div class="sb" data-sb="' + key + '">' + esc(t.sub) + "</div></span>" +
+        '<span class="go">OPEN</span>';
+      return b;
+    }),
+  );
 }
 
 function activateTile(b: HTMLButtonElement, key: Tool): void {
@@ -497,7 +601,6 @@ function activateTile(b: HTMLButtonElement, key: Tool): void {
   b.classList.add("on");
   b.querySelector(".go")!.textContent = "RUNNING";
   cur = key;
-  $("empty").style.display = "none";
 }
 
 async function launchTool(b: HTMLButtonElement, key: Tool): Promise<void> {
@@ -509,9 +612,10 @@ async function launchTool(b: HTMLButtonElement, key: Tool): Promise<void> {
   // Cleared before the launch, not after: a notice sent during it must stay.
   sb.textContent = sb.dataset.d ?? "";
   try {
-    await invoke("launch_tool", { tool: key, rect: await glassRect(), models: currentModels ?? [] });
+    await invoke("launch_tool", { tool: key, models: currentModels ?? [] });
     running.add(key);
     activateTile(b, key);
+    void invoke("hide_panel");
   } catch (err) {
     go.textContent = "OPEN";
     sb.textContent = String(err);
@@ -526,7 +630,7 @@ function wireTools(): void {
       const a = b.dataset.app ?? "";
       if (!isTool(a)) return;
       if (b.dataset.missing) {
-        void openUrl(DOWNLOAD[a]);
+        void openUrl(TOOL_INFO[a].download);
         b.querySelector("[data-sb]")!.textContent = "Download opened in your browser. Install it, then come back.";
         return;
       }
@@ -535,15 +639,11 @@ function wireTools(): void {
   });
 }
 
-function wireTabs(): void {
-  document.querySelectorAll<HTMLButtonElement>(".tabs button").forEach((b) => {
-    b.addEventListener("click", () => {
-      document.querySelectorAll<HTMLButtonElement>(".tabs button").forEach((x) => {
-        x.classList.toggle("on", x === b);
-        x.setAttribute("aria-selected", x === b ? "true" : "false");
-      });
-      (["open", "keys"] as const).forEach((n) => $("p-" + n).classList.toggle("on", b.dataset.tab === n));
-    });
+function wireAccount(): void {
+  $("org").addEventListener("click", () => showAccount(!$("p-account").classList.contains("on")));
+  $("hintOk").addEventListener("click", () => {
+    localStorage.setItem(HINT_SEEN, "1");
+    $("hint").style.display = "none";
   });
 }
 
@@ -576,6 +676,7 @@ async function restoreSession(): Promise<void> {
   }
   if (userConnected) return;
   K.def = applyConnectResult(storedKey, result);
+  lastKeyCheck = Date.now();
   setConnected(true);
 }
 
@@ -591,25 +692,46 @@ async function checkUpdate(): Promise<void> {
   const b = $("update");
   if (!u) {
     b.style.display = "none";
+    updateVersion = null;
     return;
   }
+  if (u.version !== updateVersion) unseen = true;
+  updateVersion = u.version;
+  updateUrl = u.url;
   b.textContent = `Consus Launcher ${u.version} is available. Download ↗`;
   b.onclick = () => void openUrl(u.url);
   b.style.display = "";
+  syncTray();
+  // The icon's menu carries the download too.
+  if (K.def) void refreshTools();
+  else void invoke("set_tray_menu", { tools: [], update: updateVersion });
 }
 
+let updateUrl: string | null = null;
+
 function init(): void {
+  renderTiles();
   document.querySelectorAll<HTMLElement>(".tool [data-sb]").forEach((el) => {
     el.dataset.d = el.textContent ?? "";
   });
   document.querySelectorAll<HTMLElement>(".tool .ic").forEach((ic) => {
     ic.dataset.glyph = ic.textContent ?? "";
   });
-  wireWindowControls();
+  wireEscape();
   wireConnect();
   wireKeysTab();
   wireTools();
-  wireTabs();
+  wireAccount();
+  fitObserver = new MutationObserver(fitPanel);
+  fitObserver.observe($("panel"), { subtree: true, childList: true, characterData: true, attributes: true });
+  fitPanel();
+  void listen<string>("tray-tool", (e) => {
+    if (isTool(e.payload) && K.def) void launchTool(toolTile(e.payload), e.payload);
+  });
+  void listen("tray-update", () => {
+    if (updateUrl) void openUrl(updateUrl);
+  });
+  setInterval(() => void recheckKey(true), 3 * 60 * 60 * 1000);
   void listen<string>("tool-exited", (e) => {
     if (!isTool(e.payload)) return;
     running.delete(e.payload);
@@ -621,16 +743,27 @@ function init(): void {
       cur = next;
       if (next) toolTile(next).classList.add("on");
     }
-    if (running.size === 0) $("empty").style.display = "";
     void refreshTools();
   });
   void listen<{ tool: string; message: string }>("tool-notice", (e) => {
     if (!isTool(e.payload.tool)) return;
     const sb = toolTile(e.payload.tool).querySelector<HTMLElement>("[data-sb]")!;
     sb.textContent = e.payload.message;
+    if (!document.hasFocus()) {
+      unseen = true;
+      syncTray();
+    }
   });
   void getCurrentWindow().onFocusChanged(({ payload: focused }) => {
-    if (focused && K.def) void refreshTools();
+    if (!focused) return;
+    if (unseen) {
+      unseen = false;
+      syncTray();
+    }
+    if (K.def) {
+      void refreshTools();
+      void recheckKey();
+    }
   });
   void checkUpdate();
   setInterval(() => void checkUpdate(), 12 * 60 * 60 * 1000);

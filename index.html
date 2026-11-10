@@ -8,69 +8,54 @@
 <script type="module" src="/src/main.ts" defer></script>
 </head>
 <body>
-  <div class="win">
-    <div class="chrome" id="chrome" data-tauri-drag-region>
-      <div class="lights">
-        <i data-action="close"></i>
-        <i data-action="minimize"></i>
-        <i data-action="maximize"></i>
-      </div>
+  <aside class="panel" id="panel">
+    <div class="chrome">
       <img class="logo" src="/src/assets/logo/logo-wordmark-ink.svg" alt="Consus" height="15">
       <span style="margin-left:auto">LAUNCHER</span>
     </div>
-    <div class="body">
-      <div class="glass" id="glass">
-        <div class="empty" id="empty"><b>Connect, then pick a tool.</b><span>It opens here, configured for Consus. No setup.</span></div>
-      </div>
+    <button class="org" id="org" disabled aria-expanded="false" aria-controls="p-account" title="Your account and sign out"><span class="who"><b id="orgName">Consus</b><small id="orgUser"></small></span><span class="status off" id="status"><i></i><span id="statusT">NOT CONNECTED</span></span><span class="chev" aria-hidden="true">&#8250;</span></button>
 
-      <aside class="panel">
-        <div class="org"><b id="orgName">Consus</b><span class="status off" id="status"><i></i><span id="statusT">NOT CONNECTED</span></span></div>
-
-        <div class="connect" id="connect">
-          <h2>Sign in to Consus</h2>
-          <p>With your company account, in your browser. One time; after this, every tool is one click.</p>
-          <button class="cta" id="signinBtn">SIGN IN WITH CONSUS &#8599;</button>
-          <div class="signin-wait" id="signinWait" style="display:none"><span>Waiting for you to approve in the browser&hellip;</span><button class="mini" id="signinCancel">CANCEL</button></div>
-          <div class="err" id="signinErr" role="alert"></div>
-          <details class="alt" id="pasteAlt">
-            <summary>Have an API key instead?</summary>
-            <div class="cs"><div class="cn" id="c1">1</div><div><b>Open the portal</b><span>Sign in the way you normally do.</span><br><button class="link" id="openPortal">Open portal.consus.io &#8599;</button></div></div>
-            <div class="cs"><div class="cn" id="c2">2</div><div><b>Create a key</b><span>Key management, Create key. Name it after this machine. Copy it.</span></div></div>
-            <div class="cs"><div class="cn" id="c3">3</div><div><b>Paste it here</b><span>Goes in your system keychain. Never shown again.</span>
-              <input class="keyin" id="keyIn" type="password" placeholder="Paste your Consus API key&hellip;" autocomplete="off" spellcheck="false" aria-label="Consus API key">
-              <button class="cta" id="connectBtn">CONNECT</button>
-              <div class="err" id="keyErr" role="alert"></div></div></div>
-          </details>
-        </div>
-
-        <div id="main" style="display:none;flex:1;min-height:0;flex-direction:column">
-        <div class="tabs" role="tablist"><button class="on" data-tab="open" role="tab" aria-selected="true">Open</button><button data-tab="keys" role="tab" aria-selected="false">Keys</button></div>
-
-        <div class="tabpane on pending" id="p-open">
-          <p class="h">Open with the right setup</p>
-          <p class="wait">Checking your tools&hellip;</p>
-          <button class="tool" data-app="desktop"><span class="ic">C</span><span><div class="nm">Claude Desktop</div><div class="sb" data-sb="desktop">Chat, docs, analysis</div></span><span class="go">OPEN</span></button>
-          <button class="tool" data-app="chatgpt"><span class="ic">G</span><span><div class="nm">ChatGPT</div><div class="sb" data-sb="chatgpt">Chat, docs, analysis</div></span><span class="go">OPEN</span></button>
-          <button class="tool" data-app="code"><span class="ic">&gt;_</span><span><div class="nm">Claude Code</div><div class="sb" data-sb="code">Terminal agent</div></span><span class="go">OPEN</span></button>
-          <button class="tool" data-app="codex"><span class="ic">&gt;_</span><span><div class="nm">Codex</div><div class="sb" data-sb="codex">Terminal agent</div></span><span class="go">OPEN</span></button>
-          <button class="tool" data-app="pi"><span class="ic">π</span><span><div class="nm">Pi</div><div class="sb" data-sb="pi">Terminal agent</div></span><span class="go">OPEN</span></button>
-          <p class="note" id="whoNote"></p>
-        </div>
-
-        <div class="tabpane" id="p-keys">
-          <p class="h">Your key</p>
-          <div class="krow" id="defRow"></div>
-          <p class="note" id="keyNote">Every tool uses this key. It lives in your system keychain.</p>
-          <button class="mini" id="signOut" style="margin-top:18px;opacity:.7">SIGN OUT</button>
-          <p class="note" id="signOutNote">Revokes this computer's key in Consus and removes the launcher's settings from every tool.</p>
-        </div>
-
-        </div>
-
-        <button class="update" id="update" style="display:none"></button>
-        <div class="foot">Tools talk to the Consus gateway directly. Nothing you send passes through this app.</div>
-      </aside>
+    <div class="connect scroll" id="connect">
+      <h2>Sign in to Consus</h2>
+      <p>With your company account, in your browser. One time; after this, every tool is one click.</p>
+      <button class="cta" id="signinBtn">SIGN IN WITH CONSUS &#8599;</button>
+      <div class="signin-wait" id="signinWait" style="display:none"><span>Waiting for you to approve in the browser&hellip;</span><button class="mini" id="signinCancel">CANCEL</button></div>
+      <div class="err" id="signinErr" role="alert"></div>
+      <details class="alt" id="pasteAlt">
+        <summary>Have an API key instead?</summary>
+        <div class="cs"><div class="cn" id="c1">1</div><div><b>Open the portal</b><span>Sign in the way you normally do.</span><br><button class="link" id="openPortal">Open portal.consus.io &#8599;</button></div></div>
+        <div class="cs"><div class="cn" id="c2">2</div><div><b>Create a key</b><span>Key management, Create key. Name it after this machine. Copy it.</span></div></div>
+        <div class="cs"><div class="cn" id="c3">3</div><div><b>Paste it here</b><span>Goes in your system keychain. Never shown again.</span>
+          <input class="keyin" id="keyIn" type="password" placeholder="Paste your Consus API key&hellip;" autocomplete="off" spellcheck="false" aria-label="Consus API key">
+          <button class="cta" id="connectBtn">CONNECT</button>
+          <div class="err" id="keyErr" role="alert"></div></div></div>
+      </details>
     </div>
-  </div>
+
+    <div id="main" style="display:none;flex:1;min-height:0;flex-direction:column">
+    <div class="tabpane scroll on pending" id="p-open">
+      <div class="hint" id="hint" style="display:none"><span id="hintT"></span><button class="mini" id="hintOk">GOT IT</button></div>
+      <p class="h">Open with the right setup</p>
+      <p class="wait">Checking your tools&hellip;</p>
+      <div id="toolList"></div>
+      <p class="note" id="whoNote"></p>
+    </div>
+
+    <div class="tabpane scroll" id="p-account">
+      <button class="mini back" id="backBtn">&#8249; TOOLS</button>
+      <p class="h">Your account</p>
+      <p class="acct" id="acctNote"></p>
+      <p class="acct sub" id="webNote"></p>
+      <p class="h">Your key</p>
+      <div class="krow" id="defRow"></div>
+      <p class="note" id="keyNote">Every tool uses this key. It lives in your system keychain.</p>
+      <button class="mini" id="signOut" style="margin-top:18px;opacity:.7">SIGN OUT</button>
+      <p class="note" id="signOutNote">Revokes this computer's key in Consus and removes the launcher's settings from every tool.</p>
+    </div>
+    </div>
+
+    <button class="update" id="update" style="display:none"></button>
+    <div class="foot">Tools talk to the Consus gateway directly. Nothing you send passes through this app.</div>
+  </aside>
 </body>
 </html>

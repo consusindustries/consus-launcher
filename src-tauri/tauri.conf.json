@@ -11,19 +11,19 @@
   },
   "app": {
     "withGlobalTauri": true,
-    "macOSPrivateApi": true,
     "windows": [
       {
         "title": "Consus Launcher",
-        "width": 1180,
-        "height": 760,
-        "minWidth": 860,
-        "minHeight": 560,
+        "width": 320,
+        "height": 580,
         "decorations": false,
-        "transparent": true,
         "shadow": true,
-        "resizable": true,
-        "maximizable": true
+        "resizable": false,
+        "maximizable": false,
+        "minimizable": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visible": false
       }
     ],
     "security": {
