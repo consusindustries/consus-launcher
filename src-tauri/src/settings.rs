@@ -378,6 +378,8 @@ pub struct SettingsView {
     pub org_name: Option<String>,
     pub managed: bool,
     pub error: Option<String>,
+    /// Whether tools may fetch web pages, explained in the account view.
+    pub web_access: bool,
 }
 
 /// Async so the first read (a few plutil runs) happens off the UI thread.
@@ -385,8 +387,13 @@ pub struct SettingsView {
 pub async fn get_settings() -> SettingsView {
     let (result, managed) = load();
     match result {
-        Ok(s) => SettingsView { org_name: s.org_name.clone(), managed: *managed, error: None },
-        Err(e) => SettingsView { org_name: None, managed: *managed, error: Some(e.clone()) },
+        Ok(s) => SettingsView {
+            org_name: s.org_name.clone(),
+            managed: *managed,
+            error: None,
+            web_access: s.target.web_access,
+        },
+        Err(e) => SettingsView { org_name: None, managed: *managed, error: Some(e.clone()), web_access: false },
     }
 }
 

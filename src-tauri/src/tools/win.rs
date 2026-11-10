@@ -6,7 +6,7 @@
 // from its executable directly, which is also how its environment gets the
 // key. Command-line tools open in a console window of their own, with the
 // environment set on the process itself, no shell script in between.
-// Windows are not placed in the glass yet.
+// Each opens in a window of its own.
 
 use std::collections::HashMap;
 use std::ffi::OsStr;

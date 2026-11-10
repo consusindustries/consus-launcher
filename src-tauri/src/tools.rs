@@ -2,7 +2,7 @@
 // and report nothing installed.
 
 use base64::Engine as _;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::fs;
@@ -115,14 +115,6 @@ pub struct Running {
 }
 
 pub struct Children(pub Mutex<Vec<Running>>);
-
-#[derive(Deserialize)]
-pub struct Rect {
-    pub x: f64,
-    pub y: f64,
-    pub w: f64,
-    pub h: f64,
-}
 
 /// The app bundle, system-wide or per-user, whichever exists.
 fn app_path(app: &AppHandle, s: &AppSpec) -> Option<PathBuf> {
@@ -531,49 +523,20 @@ fn quit_and_wait(t: Tool, s: &AppSpec) -> Result<(), String> {
     Err(format!("{} is still running. Close it and try again.", name(t)))
 }
 
-fn place_window(t: Tool, s: &AppSpec, rect: &Rect) -> Result<(), String> {
-    let (x, y, w, h) = (rect.x.round(), rect.y.round(), rect.w.round(), rect.h.round());
-    let probe = format!(
-        "tell application \"System Events\" to (exists window 1 of process \"{}\")",
-        s.process
-    );
-    let mut seen = false;
-    for _ in 0..60 {
-        match osascript(&probe) {
-            Ok(v) if v == "true" => {
-                seen = true;
-                break;
-            }
-            Err(e) if e.contains("assistive access") => return Err(e),
-            _ => thread::sleep(Duration::from_millis(250)),
-        }
-    }
-    if !seen {
-        return Err(format!("{} did not open a window in time.", name(t)));
-    }
-    osascript(&format!(
-        "tell application \"System Events\" to tell process \"{}\"\n\
-           set position of window 1 to {{{x}, {y}}}\n\
-           set size of window 1 to {{{w}, {h}}}\n\
-         end tell",
-        s.process
-    ))?;
+/// Brings an app to the front. Where its window goes is the user's call.
+fn bring_forward(s: &AppSpec) {
     let _ = osascript(&format!("tell application id \"{}\" to activate", s.bundle));
-    Ok(())
 }
 
-/// Terminal is scriptable directly, so placing its window needs no
-/// Accessibility grant.
-fn place_terminal(window: i64, rect: &Rect) -> Result<(), String> {
-    let (x1, y1) = (rect.x.round(), rect.y.round());
-    let (x2, y2) = ((rect.x + rect.w).round(), (rect.y + rect.h).round());
-    osascript(&format!(
+/// Brings the launcher's Terminal window to the front. Terminal is
+/// scriptable directly, so this needs no Accessibility grant.
+fn bring_terminal_forward(window: i64) {
+    let _ = osascript(&format!(
         "tell application \"Terminal\"\n\
-           set bounds of window id {window} to {{{x1}, {y1}, {x2}, {y2}}}\n\
+           set index of window id {window} to 1\n\
            activate\n\
          end tell"
-    ))
-    .map(|_| ())
+    ));
 }
 
 /// Closes the launcher's Terminal window, but only while it still has just
@@ -586,26 +549,6 @@ fn close_terminal_window(window: i64) {
     ));
 }
 
-fn notice(app: &AppHandle, t: Tool, err: &str) {
-    let message = if err.contains("assistive access") {
-        format!(
-            "{} opened but could not be placed in the launcher. Allow Consus Launcher under System Settings, Privacy and Security, Accessibility.",
-            name(t)
-        )
-    } else {
-        format!("{} opened but could not be placed: {err}", name(t))
-    };
-    let _ = app.emit("tool-notice", json!({ "tool": key(t), "message": message }));
-}
-
-/// While a tool is running the launcher is a backdrop: the tool's window
-/// stays above it and takes clicks, and the launcher panel still works.
-fn set_backdrop(app: &AppHandle, on: bool) {
-    if let Some(w) = app.get_webview_window("main") {
-        let _ = w.set_always_on_bottom(on);
-    }
-}
-
 fn ours(app: &AppHandle, t: Tool) -> Vec<Running> {
     let children = app.state::<Children>();
     let guard = children.0.lock().unwrap();
@@ -613,54 +556,40 @@ fn ours(app: &AppHandle, t: Tool) -> Vec<Running> {
 }
 
 /// Records a started tool and watches it: once `wait` returns, the entry is
-/// dropped, the backdrop lifts if nothing else is running, and the UI hears.
+/// dropped and the UI hears.
 /// `wait` returns the pid the entry ended with (see follow_handoff).
 fn track(app: &AppHandle, entry: Running, wait: impl FnOnce() -> u32 + Send + 'static) {
     app.state::<Children>().0.lock().unwrap().push(entry.clone());
-    set_backdrop(app, true);
     let handle = app.clone();
     thread::spawn(move || {
         let last = wait();
-        let remaining = {
-            let children = handle.state::<Children>();
-            let mut c = children.0.lock().unwrap();
-            c.retain(|r| !(r.pid == last && r.terminal == entry.terminal));
-            c.len()
-        };
-        if remaining == 0 {
-            set_backdrop(&handle, false);
-        }
+        handle
+            .state::<Children>()
+            .0
+            .lock()
+            .unwrap()
+            .retain(|r| !(r.pid == last && r.terminal == entry.terminal));
         let _ = handle.emit("tool-exited", key(entry.tool));
     });
 }
 
-fn launch_app(app: AppHandle, t: Tool, s: AppSpec, rect: Rect, models: &Value, target: &Target) -> Result<(), String> {
+fn launch_app(app: AppHandle, t: Tool, s: AppSpec, models: &Value, target: &Target) -> Result<(), String> {
     let bundle_dir = app_path(&app, &s).ok_or_else(|| format!("{} is not installed.", name(t)))?;
     let bin = bundle_dir.join("Contents/MacOS").join(s.exec);
     let home = app.path().home_dir().map_err(|e| e.to_string())?;
 
-    // Already ours: bring it back into the glass, touch nothing else.
+    // Already ours: bring it forward, touch nothing else.
     let mine: Vec<u32> = ours(&app, t).iter().map(|r| r.pid).collect();
     let running = running_pids(s.process);
     if running.iter().any(|p| mine.contains(p)) {
-        let handle = app.clone();
-        thread::spawn(move || {
-            if let Err(e) = place_window(t, &s, &rect) {
-                notice(&handle, t, &e);
-            }
-        });
+        bring_forward(&s);
         return Ok(());
     }
     // Set up by the organization's policy: open it as it is. An instance
-    // the user already has open is simply brought forward and placed.
+    // the user already has open is simply brought forward.
     let policy = org_policy(t);
     if policy && !running.is_empty() {
-        let handle = app.clone();
-        thread::spawn(move || {
-            if let Err(e) = place_window(t, &s, &rect) {
-                notice(&handle, t, &e);
-            }
-        });
+        bring_forward(&s);
         return Ok(());
     }
     if !running.is_empty() {
@@ -711,9 +640,9 @@ fn launch_app(app: AppHandle, t: Tool, s: AppSpec, rect: Rect, models: &Value, t
     let (pid, started) = (child.id(), Instant::now());
     let handle = app.clone();
     track(&app, Running { tool: t, pid, terminal: None }, move || {
-        if let Err(e) = place_window(t, &s, &rect) {
-            notice(&handle, t, &e);
-        }
+        // Started from its binary, the app may come up behind other windows.
+        thread::sleep(Duration::from_millis(800));
+        bring_forward(&s);
         let _ = child.wait();
         follow_handoff(&handle, t, s.process, before, pid, started)
     });
@@ -935,19 +864,14 @@ fn terminal_script(app: &AppHandle, t: Tool, models: &Value, target: &Target) ->
     }
 }
 
-/// Opens a terminal tool in a Terminal window placed in the glass. The
+/// Opens a terminal tool in a Terminal window of its own. The
 /// script always runs under /bin/sh whatever the user's login shell is
 /// (fish and nushell do not parse POSIX), single-quoted, so it must not
 /// contain a single quote; macOS account names cannot.
-fn launch_terminal(app: AppHandle, t: Tool, rect: Rect, models: &Value, target: &Target) -> Result<(), String> {
-    // Already ours: bring the terminal back into the glass.
+fn launch_terminal(app: AppHandle, t: Tool, models: &Value, target: &Target) -> Result<(), String> {
+    // Already ours: bring the terminal forward.
     if let Some((window, _)) = ours(&app, t).into_iter().filter_map(|r| r.terminal).find(|(_, tty)| tty_busy(tty)) {
-        let handle = app.clone();
-        thread::spawn(move || {
-            if let Err(e) = place_terminal(window, &rect) {
-                notice(&handle, t, &e);
-            }
-        });
+        bring_terminal_forward(window);
         return Ok(());
     }
 
@@ -979,9 +903,7 @@ fn launch_terminal(app: AppHandle, t: Tool, rect: Rect, models: &Value, target: 
         Some((w, parts.next()?.trim_start_matches("/dev/").to_string()))
     })()
     .ok_or_else(|| format!("Terminal gave an unexpected answer: {out}"))?;
-    if let Err(e) = place_terminal(window, &rect) {
-        notice(&app, t, &e);
-    }
+    bring_terminal_forward(window);
 
     let watched = tty.clone();
     track(&app, Running { tool: t, pid: 0, terminal: Some((window, tty)) }, move || {
@@ -997,19 +919,18 @@ fn launch_terminal(app: AppHandle, t: Tool, rect: Rect, models: &Value, target: 
 }
 
 #[tauri::command]
-pub async fn launch_tool(app: AppHandle, tool: String, rect: Rect, models: Value) -> Result<(), String> {
+pub async fn launch_tool(app: AppHandle, tool: String, models: Value) -> Result<(), String> {
     let t = tool_from_key(&tool).ok_or_else(|| format!("unknown tool {tool}"))?;
     let settings = settings::current()?;
     if !settings.allows(key(t)) {
         return Err(format!("Your organization has not enabled {} in the launcher.", name(t)));
     }
     if !cfg!(target_os = "macos") {
-        let _ = rect;
         return other_launch(app, t, &models, &settings.target);
     }
     match app_spec(t) {
-        Some(s) => launch_app(app, t, s, rect, &models, &settings.target),
-        None => launch_terminal(app, t, rect, &models, &settings.target),
+        Some(s) => launch_app(app, t, s, &models, &settings.target),
+        None => launch_terminal(app, t, &models, &settings.target),
     }
 }
 
