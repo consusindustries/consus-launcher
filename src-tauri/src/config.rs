@@ -112,12 +112,21 @@ pub fn command_path(p: &Path) -> String {
     }
 }
 
+fn no_models_message(t: &Target) -> String {
+    format!("No Claude {} models are available to this key.", t.tag())
+}
+
+/// Why Claude Desktop cannot be set up with this key, if it cannot.
+pub fn no_models(models: &Value, t: &Target) -> Option<String> {
+    select_models(models, t).is_empty().then(|| no_models_message(t))
+}
+
 /// Adds (or refreshes) the launcher's own entry in the config library and
 /// makes it the applied one. Never edits or removes anyone else's entries.
 pub fn write_claude_desktop(home: &Path, helper: &Path, models: &Value, t: &Target) -> Result<(), String> {
     let picked = select_models(models, t);
     if picked.is_empty() {
-        return Err(format!("No Claude {} models are available to this key.", t.tag()));
+        return Err(no_models_message(t));
     }
 
     let profile = profile_dir(home);

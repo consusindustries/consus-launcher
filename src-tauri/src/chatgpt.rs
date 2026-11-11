@@ -43,6 +43,15 @@ pub fn select_model(models_json: &Value, t: &Target) -> Option<String> {
     })
 }
 
+fn no_models_message(t: &Target) -> String {
+    format!("No GPT {} models are available to this key.", t.tag())
+}
+
+/// Why ChatGPT or Codex cannot be set up with this key, if it cannot.
+pub fn no_models(models_json: &Value, t: &Target) -> Option<String> {
+    select_model(models_json, t).is_none().then(|| no_models_message(t))
+}
+
 fn config_path(home: &Path) -> PathBuf {
     home.join(".codex/config.toml")
 }
@@ -138,8 +147,7 @@ pub fn write_config(home: &Path, models_json: &Value, t: &Target, catalog: Optio
 /// the config.toml at `path`; with `helper`, the provider also runs it for
 /// the key.
 pub fn write_config_at(path: &Path, models_json: &Value, extra: &Table, t: &Target, helper: Option<&Path>) -> Result<(), String> {
-    let model = select_model(models_json, t)
-        .ok_or_else(|| format!("No GPT {} models are available to this key.", t.tag()))?;
+    let model = select_model(models_json, t).ok_or_else(|| no_models_message(t))?;
 
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir).map_err(|e| e.to_string())?;

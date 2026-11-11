@@ -12,6 +12,7 @@ mod signin;
 mod tools;
 
 use std::sync::Mutex;
+use tauri::Manager;
 
 // Tools run this binary through a link to get the key; which name they use
 // decides the output shape. In that case there is no window, just stdout.
@@ -36,6 +37,11 @@ pub fn run() {
         .manage(tools::Children(Mutex::new(Vec::new())))
         .manage(signin::Pending(Mutex::new(None)))
         .setup(|app| {
+            // Before anything reads the settings, so the startup removal
+            // below already sees the org's last document.
+            if let Ok(dir) = app.path().app_config_dir() {
+                settings::init(dir);
+            }
             let handle = app.handle().clone();
             std::thread::spawn(move || tools::remove_turned_off(&handle));
             Ok(())
@@ -46,6 +52,7 @@ pub fn run() {
             keychain::keychain_delete_key,
             portal::validate_key,
             portal::check_update,
+            portal::sync_device_policy,
             settings::get_settings,
             signin::start_signin,
             signin::cancel_signin,
