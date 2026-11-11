@@ -415,26 +415,46 @@ pub struct ToolStatus {
     pub managed: bool,
     pub installed: bool,
     pub icon: Option<String>,
+    /// Why the key cannot use this tool, when it has no model for it: the
+    /// tile is greyed out with this, instead of opening to it. Not turned
+    /// off: its settings stay.
+    pub no_models: Option<String>,
+}
+
+/// Why the key cannot use `t`, from the model list the UI holds; the same
+/// check, and message, as the tool's writer. Without a list, none: the
+/// writer's error stands if someone opens the tool.
+fn no_models(t: Tool, models: &Value, target: &Target) -> Option<String> {
+    if !models.is_array() {
+        return None;
+    }
+    match t {
+        Tool::Desktop => config::no_models(models, target),
+        Tool::Code => claude_code::no_models(models, target),
+        Tool::ChatGpt | Tool::Codex => chatgpt::no_models(models, target),
+        Tool::Pi => pi::no_models(models, target),
+    }
 }
 
 #[tauri::command]
-pub async fn detect_tools(app: AppHandle) -> HashMap<String, ToolStatus> {
+pub async fn detect_tools(app: AppHandle, models: Option<Value>) -> HashMap<String, ToolStatus> {
     // Invalid settings hide every tool; the UI shows why.
     let settings = settings::current().ok();
+    let models = models.unwrap_or_default();
     TOOLS
         .into_iter()
         .map(|t| {
             let allowed = settings.as_ref().is_some_and(|s| s.allows(key(t)));
-            let status = if !allowed {
-                ToolStatus { allowed, managed: false, installed: false, icon: None }
+            let mut status = if !allowed {
+                ToolStatus { allowed, managed: false, installed: false, icon: None, no_models: None }
             } else if !cfg!(target_os = "macos") {
                 let (installed, icon) = other_status(t);
-                ToolStatus { allowed, managed: installed && org_policy(t), installed, icon }
+                ToolStatus { allowed, managed: installed && org_policy(t), installed, icon, no_models: None }
             } else if let Some(s) = app_spec(t) {
                 let dir = app_path(&app, &s);
                 let icon = dir.as_deref().and_then(|d| app_icon(&app, t, d));
                 let installed = dir.is_some();
-                ToolStatus { allowed, managed: installed && org_policy(t), installed, icon }
+                ToolStatus { allowed, managed: installed && org_policy(t), installed, icon, no_models: None }
             } else {
                 let installed = terminal_cli(&app, t).is_some();
                 // Pi has a logo of its own and the ChatGPT app carries
@@ -452,8 +472,13 @@ pub async fn detect_tools(app: AppHandle) -> HashMap<String, ToolStatus> {
                     (Tool::Codex, Some(png)) => cached_icon(t, &png).or_else(|| image_icon(&app, t, &png)),
                     _ => app_icon(&app, t, Path::new(TERMINAL_APP)),
                 };
-                ToolStatus { allowed, managed: installed && org_policy(t), installed, icon }
+                ToolStatus { allowed, managed: installed && org_policy(t), installed, icon, no_models: None }
             };
+            // Only an installed tool the launcher sets up uses the key's
+            // models; one the org's own policy sets up does not.
+            if let Some(s) = settings.as_ref().filter(|_| status.installed && !status.managed) {
+                status.no_models = no_models(t, &models, &s.target);
+            }
             (key(t).to_string(), status)
         })
         .collect()
@@ -1246,8 +1271,28 @@ mod tests {
             target: Target::default(),
             tools: tools.map(|t| t.into_iter().map(String::from).collect()),
             org_name: None,
-            managed: true,
             update_notice: false,
+        }
+    }
+
+    #[test]
+    fn a_tool_with_no_models_is_greyed_not_turned_off() {
+        let t = Target::default();
+        let none = json!([]);
+        for tool in TOOLS {
+            assert!(no_models(tool, &none, &t).is_some_and(|m| m.contains("ITAR")), "{}", key(tool));
+        }
+        assert_eq!(no_models(Tool::Pi, &none, &t).as_deref(), Some("No ITAR models for Pi are available to this key."));
+        assert!(turned_off(&allowing(None)).is_empty(), "greyed tools keep their settings");
+        let claude = json!([{ "id": "consus/claude-opus-5:itar" }]);
+        assert_eq!(no_models(Tool::Desktop, &claude, &t), None);
+        assert!(no_models(Tool::ChatGpt, &claude, &t).is_some(), "a Claude model is no use to ChatGPT");
+    }
+
+    #[test]
+    fn no_model_list_greys_nothing() {
+        for tool in TOOLS {
+            assert_eq!(no_models(tool, &Value::Null, &Target::default()), None, "{}", key(tool));
         }
     }
 

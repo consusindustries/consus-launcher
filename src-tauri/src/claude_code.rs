@@ -209,10 +209,18 @@ fn set_sandbox(doc: &mut Map<String, Value>, ours: Option<Value>) -> Result<(), 
     Ok(())
 }
 
+fn no_models_message(t: &Target) -> String {
+    format!("No Claude {} models are available to this key.", t.tag())
+}
+
+/// Why Claude Code cannot be set up with this key, if it cannot.
+pub fn no_models(models_json: &Value, t: &Target) -> Option<String> {
+    models::claude_models(models_json, t).is_empty().then(|| no_models_message(t))
+}
+
 pub fn write_settings(home: &Path, helper: &Path, models_json: &Value, t: &Target) -> Result<(), String> {
     let list = models::claude_models(models_json, t);
-    let (top, env) =
-        owned(helper, &list, models_json, t).ok_or_else(|| format!("No Claude {} models are available to this key.", t.tag()))?;
+    let (top, env) = owned(helper, &list, models_json, t).ok_or_else(|| no_models_message(t))?;
 
     let path = settings_path(home);
     fs::create_dir_all(profile_dir(home)).map_err(|e| e.to_string())?;

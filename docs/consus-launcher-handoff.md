@@ -33,6 +33,7 @@ Decided since (Eric's calls):
 - **One key.** The per-tool key override and the Log tab placeholder were removed (2026-09-24); org settings and the portal's usage view cover those needs.
 - **No auto-update, drafted releases** (2026-09-24). Releases were Mac-only until Windows support landed; they now include a Windows `.msi` (2026-09-25; signed from v1.0.0). See section 9.
 - **Line count** (2026-09-24): about 1,500 lines of app code is a guideline, not a limit.
+- **Org settings from the portal** (2026-11-11): the launcher reads the org's settings document with the person's key, device management winning field by field; a value it does not know fails closed. Design: [`docs/device-policy.md`](device-policy.md).
 
 ## 3. Repo
 
@@ -55,7 +56,7 @@ README.md  SECURITY.md  CONTRIBUTING.md  NOTICE  LICENSE
 ```
 
 ### Supply chain and network rules (customers review this)
-- **Network:** the launcher talks to `api.consus.io` (`GET /v1/models`), or the org's endpoint when org settings set one, and opens `portal.consus.io` in the browser. No other host. Fonts are bundled.
+- **Network:** the launcher talks to `api.consus.io` (`GET /v1/models`, `GET /v1/me/device-policy`, `DELETE /v1/me/key`), or the org's endpoint when org settings set one, and to `portal.consus.io` (sign-in exchange, the public `latest.json`), and opens `portal.consus.io` in the browser. No other host. Fonts are bundled.
 - **Dependencies:** exact versions pinned, `Cargo.lock` committed, short list a security team can read in a minute. The UI has no runtime packages beyond Tauri's own. Ask before adding one.
 - **Actions:** third-party GitHub Actions pinned to commit SHAs.
 - **SBOM:** CycloneDX for the Rust crates and the npm packages, attached to every release.
@@ -66,7 +67,7 @@ README.md  SECURITY.md  CONTRIBUTING.md  NOTICE  LICENSE
 - **Tauri 2** (Rust core, system webview), frameless transparent window (`macOSPrivateApi`).
 - **Frontend:** plain HTML, CSS, TypeScript.
 - **Crates:** `tauri`, `tauri-plugin-opener` (opens links in the browser), `serde`, `serde_json`, `keyring` (keychain), `reqwest` (the one API call), `toml_edit` (merging TOML configs), `base64`.
-- **No settings file and no updater.** The launcher keeps its key-helper links in `~/Library/Application Support/io.consus.launcher/` and an icon cache in `~/Library/Caches/io.consus.launcher/`; SECURITY.md lists every file it writes.
+- **No settings file of its own and no updater.** The launcher keeps its key-helper links, `signin.json`, and the last org settings from the portal (`device-policy.json`) in `~/Library/Application Support/io.consus.launcher/`, and an icon cache in `~/Library/Caches/io.consus.launcher/`; SECURITY.md lists every file it writes.
 - **Bundle identifier:** `io.consus.launcher` (Tauri config, keychain service, config directory). Do not change it after the first signed release.
 
 ## 5. Screens and behavior
@@ -81,9 +82,10 @@ README.md  SECURITY.md  CONTRIBUTING.md  NOTICE  LICENSE
 
 - `GET /v1/models` with `x-api-key`: validates the key and lists the models it can use.
 - `DELETE /v1/me/key` with `x-api-key`: sign out revokes a sign-in key (origin `cli-login`); a pasted key gets 403 and the portal is the place.
+- `GET /v1/me/device-policy` with `x-api-key` and `If-None-Match`: the org's settings from the portal, at start, on connect, and on window focus (at most once a minute). Contract: `gov_open_router/specs/device-policy.md`; the launcher's half: `docs/device-policy.md`.
 - Portal: `GET /cli/login?v=1&challenge=…&device=…&tool=launcher` (browser) and `POST /api/cli/exchange {verifier}` (polled). Contract: `gov_open_router/specs/cli-login/README.md`. The portal must list `launcher` in `CLI_TOOLS` (both copies) before a launcher with sign-in is published.
 
-Org settings (built 2026-09-24): read from the `io.consus.launcher` managed preferences a device-management profile sets (keys in the README): allowed tools, compliance level, endpoint, org name. Next (section 10): the same settings from the portal, fetched with the user's key.
+Org settings (built 2026-09-24): read from the `io.consus.launcher` managed preferences a device-management profile sets (keys in the README): allowed tools, compliance level, endpoint, org name, web access. Since 2026-11-11 also from the portal, fetched with the user's key, device management winning field by field.
 
 ## 7. Per-tool behavior
 
@@ -113,9 +115,10 @@ Each template, or the module that embeds it, records the doc it was checked agai
 ## 10. Status and what's next
 Done: connect flow, five tools on macOS, glass placement, quit together, sign out, CI with tests, release pipeline, README, Terminal installer, org settings from device management, removing a turned-off tool's settings, model names and limits from the gateway's `/v1/models` (Pi's list, the Codex and ChatGPT catalog, Claude Code's context window), signed and notarized macOS releases (v0.2.3), ChatGPT's key from the helper (v0.2.4), Windows at parity with signed releases and an update notice fed by the portal (v1.0.0), Claude Code and Claude Desktop kept off Anthropic's network (v1.1.0), the model catalog and plugin downloads off too, web access as an org setting with Claude Code's shell sandboxed, and sign-in with the company account through the portal with revoking sign-out (v1.2.0, 2026-10-26).
 
-Next, in order:
-1. Org settings from the portal, fetched with the user's key, once the portal serves them (later; device management covers it until then). The design is kept with the Consus services.
-2. Device-management kit: the portal's Launcher page already builds the settings profile; next is its privacy (PPPC) payload, so employees get no Automation or Accessibility prompts, which the signed app now makes possible.
+Org settings from the portal, fetched with the user's key (2026-11-11, `docs/device-policy.md`).
+
+Next:
+1. Device-management kit: the portal's Launcher page already builds the settings profile; next is its privacy (PPPC) payload, so employees get no Automation or Accessibility prompts, which the signed app now makes possible.
 
 ## 11. Working style
 Plan before building. One PR at a time, reviewed, with CI green before merge. Ask before a decision that changes scope; if something is not in these notes, the default answer is no. Short commit messages. No em dashes anywhere in copy or comments.

@@ -226,9 +226,9 @@ pub fn classify(status: u16, body: &Value, retry_after: Option<&str>) -> Exchang
 /// Ok(false) when only the portal may revoke it; Err when the gateway
 /// could not be asked.
 async fn self_revoke(key: &str) -> Result<bool, String> {
-    let target = crate::settings::current().map(|s| s.target).unwrap_or_default();
+    let endpoint = crate::settings::endpoint().unwrap_or_else(|_| crate::models::DEFAULT_ENDPOINT.to_string());
     let resp = client()
-        .delete(format!("{}/me/key", target.v1()))
+        .delete(format!("{endpoint}/v1/me/key"))
         .header("x-api-key", key)
         .timeout(std::time::Duration::from_secs(10))
         .send()
@@ -262,6 +262,8 @@ async fn store_key(app: &AppHandle, key: &str, meta: &Meta) -> Result<(), String
             let _ = self_revoke(&old).await;
         }
     }
+    // After the old key's revoke, which goes where its document says.
+    crate::settings::forget_other_key(key);
     Ok(())
 }
 
@@ -347,12 +349,13 @@ pub async fn store_pasted_key(app: AppHandle, key: String, owner: Option<String>
 }
 
 /// Forgets a key the gateway no longer accepts: the keychain entry, the
-/// record, and, when it came from the helper script, the helper's files,
-/// so it is not adopted again at the next start.
+/// record, the org's document it read, and, when it came from the helper
+/// script, the helper's files, so it is not adopted again at the next start.
 #[tauri::command]
 pub fn discard_dead_key(app: AppHandle) -> Result<(), String> {
     let from_helper = meta_path(&app).ok().and_then(|p| read_meta_at(&p)).is_some_and(|m| m.source == "helper");
     remove_meta(&app);
+    crate::settings::forget();
     if from_helper {
         if let Ok(home) = app.path().home_dir() {
             for f in helper_files(&home) {
@@ -410,6 +413,7 @@ pub async fn revoke_key(app: AppHandle) -> Revoked {
     let meta = meta_path(&app).ok().and_then(|p| read_meta_at(&p)).unwrap_or_default();
     let Some(key) = crate::keychain::get_key() else {
         remove_meta(&app);
+        crate::settings::forget();
         return Revoked { revoked: true, message: "Signed out.".into() };
     };
     let which = if meta.label.is_empty() { String::new() } else { format!(" ({})", meta.label) };

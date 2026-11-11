@@ -74,13 +74,22 @@ fn maker_rank(maker: &str) -> usize {
     ["anthropic", "openai", "google", "xai"].iter().position(|m| *m == maker).unwrap_or(4)
 }
 
+fn no_models_message(t: &Target) -> String {
+    format!("No {} models for Pi are available to this key.", t.tag())
+}
+
+/// Why Pi cannot be set up with this key, if it cannot.
+pub fn no_models(models_json: &Value, t: &Target) -> Option<String> {
+    models::at_level(models_json, t).is_empty().then(|| no_models_message(t))
+}
+
 /// The guide's provider block, with one row per model this key has at the
 /// target level.
 fn provider(helper: &Path, models_json: &Value, t: &Target) -> Result<Value, String> {
     let tag = t.tag();
     let mut list = models::at_level(models_json, t);
     if list.is_empty() {
-        return Err(format!("No {tag} models for Pi are available to this key."));
+        return Err(no_models_message(t));
     }
     list.sort_by(|(_, a), (_, b)| maker_rank(&a.maker).cmp(&maker_rank(&b.maker)).then(a.name.cmp(&b.name)));
     let rows: Vec<Value> = list
