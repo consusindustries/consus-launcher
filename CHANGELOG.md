@@ -2,6 +2,15 @@
 
 What changed in each release. Each release's GitHub page shows its section.
 
+## v1.3.0 (2026-11-11)
+
+- The launcher reads your organization's settings from the Consus portal. An admin chooses the tools, compliance level, web access, and organization name on the portal's Launcher page, and every signed-in launcher picks them up when it starts or its window comes forward, with no file to push. Device management still wins wherever it sets a value. The launcher keeps the last settings it read, so it works offline, and removes them when you sign out.
+- If you pushed the Consus Launcher settings profile, remove it to get settings from the portal.
+- If your organization's endpoint is a logging proxy, it must forward `GET /v1/me/device-policy` and pass the `If-None-Match` and `ETag` headers through (README, "For IT admins").
+- A setting this launcher version does not know, such as a newer compliance level or tool, hides the tools and asks you to update the launcher, instead of falling back to a default.
+- A tool your key has no models for shows greyed out with the reason, instead of failing when you open it.
+- The Keys tab lists each setting and where it came from: your IT, the Consus portal, this computer, or the default.
+
 ## v1.2.4 (2026-11-05)
 
 - The app the Windows installer installs now passes signature verification. Since v1.0.0 the bundler rewrote the signed app to stamp the bundle type into it before packaging, so the installed `consus-launcher.exe` reported a hash mismatch while the `.msi` itself verified. Every release build now installs the x64 `.msi` on the build machine and checks the installed app's signature.
