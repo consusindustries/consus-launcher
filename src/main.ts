@@ -112,24 +112,85 @@ function connectErrorMessage(err: unknown): string {
 
 let userConnected = false;
 let currentModels: unknown = null;
-// Set when the org's launcher settings (from device management) are invalid:
-// the launcher then shows why instead of configuring anything.
+// Set when the org's launcher settings are invalid, or carry a value this
+// launcher cannot use: the launcher then shows why instead of configuring
+// anything.
 let settingsError: string | null = null;
+
+type Source = "mdm" | "portal" | "local" | "default";
+type Field = "endpoint" | "level" | "tools" | "org_name" | "web_access";
 
 interface SettingsView {
   org_name: string | null;
-  managed: boolean;
+  // Complete, including who can fix it.
   error: string | null;
+  header: string | null;
+  sources: Record<Field, Source>;
+  values: { endpoint: string; level: string; tools: string[] | null; web_access: boolean } | null;
+  portal_updated_at: string | null;
+}
+
+const SOURCE_LABEL: Record<Source, string> = {
+  mdm: "Set by your IT",
+  portal: "From the Consus portal",
+  local: "Set on this computer",
+  default: "Default",
+};
+
+function toolName(key: string): string {
+  return isTool(key) ? (toolTile(key).querySelector(".nm")?.textContent ?? key) : key;
+}
+
+// The Keys tab's Settings block: each value and where it came from.
+function renderSettings(s: SettingsView): void {
+  const v = s.values;
+  const rows: [Field, string, string][] = v
+    ? [
+        ["tools", "Tools", v.tools ? v.tools.map(toolName).join(", ") || "None" : "All"],
+        ["level", "Compliance", v.level],
+        ["web_access", "Web access", v.web_access ? "On" : "Off"],
+        ["endpoint", "Endpoint", v.endpoint],
+        ["org_name", "Organization", s.org_name ?? "Not set"],
+      ]
+    : [];
+  $("settingsRow").innerHTML = rows
+    .map(([f, name, value]) => '<div class="m">' + esc(name) + ": " + esc(value) + " · " + SOURCE_LABEL[s.sources[f]] + "</div>")
+    .join("");
+  $("settingsRow").style.display = rows.length ? "" : "none";
+  const updated = s.portal_updated_at ? new Date(s.portal_updated_at) : null;
+  $("settingsNote").textContent =
+    updated && !isNaN(updated.getTime()) ? "The Consus portal's settings were last changed " + updated.toLocaleString() + "." : "";
 }
 
 async function loadSettings(): Promise<void> {
   const s = await invoke<SettingsView>("get_settings");
   $("orgName").textContent = s.org_name ?? "Consus";
-  settingsError = s.error ? s.error + (s.managed ? " Contact your IT admin." : "") : null;
+  $("settingsFrom").textContent = s.header ?? "";
+  settingsError = s.error;
   if (settingsError) {
     $("empty").querySelector("b")!.textContent = "Launcher settings need attention.";
     $("empty").querySelector("span")!.textContent = settingsError;
+  } else if (K.def) {
+    // Settings can change while the launcher runs: a fixed error clears.
+    showPickATool();
   }
+  renderSettings(s);
+}
+
+// When the org's settings in the Consus portal were last asked for.
+let lastSync = 0;
+
+// Asks the gateway for the org's settings from the portal, with the key in
+// use; at most once a minute unless `now`. When they changed, the header,
+// the Keys tab, and the tiles follow.
+async function syncPolicy(now: boolean): Promise<void> {
+  const key = K.def?.key;
+  if (!key || (!now && Date.now() - lastSync < 60_000)) return;
+  lastSync = Date.now();
+  const changed = await invoke<boolean>("sync_device_policy", { key }).catch(() => false);
+  if (!changed || K.def?.key !== key) return;
+  await loadSettings().catch(() => undefined);
+  await refreshTools();
 }
 
 function applyConnectResult(rawKey: string, result: ConnectResult): KeyInfo {
@@ -158,18 +219,29 @@ async function validateWithPatience(key: string): Promise<ConnectResult> {
   }
 }
 
+// What the empty glass says once connected.
+function showPickATool(): void {
+  $("empty").querySelector("b")!.textContent = "Pick a tool.";
+  $("empty").querySelector("span")!.textContent = "It opens here, set up for Consus.";
+}
+
+function signedInNote(): string {
+  return K.def
+    ? "Signed in as " + K.def.user + ". Every tool here uses Consus. Anything not installed links to the vendor; Consus never installs software."
+    : "";
+}
+
 function setConnected(on: boolean): void {
   $("connect").style.display = on ? "none" : "block";
   $("main").style.display = on ? "flex" : "none";
   $("status").classList.toggle("off", !on);
   $("statusT").textContent = on ? "CONNECTED" : "NOT CONNECTED";
   if (on && K.def) {
-    $("empty").querySelector("b")!.textContent = "Pick a tool.";
-    $("empty").querySelector("span")!.textContent = "It opens here, set up for Consus.";
-    $("whoNote").textContent =
-      "Signed in as " + K.def.user + ". Every tool here uses Consus. Anything not installed links to the vendor; Consus never installs software.";
+    showPickATool();
+    $("whoNote").textContent = signedInNote();
     renderKeys();
     void refreshTools();
+    void syncPolicy(true);
   } else {
     ($("keyIn") as HTMLInputElement).value = "";
     $("keyErr").textContent = "";
@@ -227,6 +299,8 @@ async function resetAll(): Promise<void> {
   }
   signinMeta = null;
   K = { def: null };
+  // Sign out also dropped the org's settings from the portal.
+  await loadSettings().catch(() => undefined);
   $("signinErr").textContent = r.message;
   cur = null;
   $("empty").style.display = "";
@@ -421,20 +495,22 @@ interface ToolStatus {
   managed: boolean;
   installed: boolean;
   icon: string | null;
+  // Why the key cannot use this tool: the tile is greyed out with it.
+  no_models: string | null;
 }
 
 async function refreshTools(): Promise<void> {
-  const status = await invoke<Record<string, ToolStatus>>("detect_tools");
+  const status = await invoke<Record<string, ToolStatus>>("detect_tools", { models: currentModels });
   // Until the first answer, the list stays hidden: the org's settings and
   // what is installed decide which tiles show and how they look.
   $("p-open").classList.remove("pending");
-  if (settingsError) {
-    $("whoNote").textContent = settingsError;
-  } else if (!TOOLS.some((k) => status[k]?.allowed)) {
-    $("whoNote").textContent = "Your organization has not enabled any tools in the launcher.";
-  }
+  // Set every time: the settings, and so this note, can change while the
+  // launcher runs.
+  $("whoNote").textContent =
+    settingsError ??
+    (TOOLS.some((k) => status[k]?.allowed) ? signedInNote() : "Your organization has not enabled any tools in the launcher.");
   for (const key of TOOLS) {
-    const st = status[key] ?? { allowed: false, managed: false, installed: false, icon: null };
+    const st = status[key] ?? { allowed: false, managed: false, installed: false, icon: null, no_models: null };
     const b = toolTile(key);
     // Tools the org's settings leave out are not shown at all.
     b.style.display = st.allowed ? "" : "none";
@@ -462,10 +538,15 @@ async function refreshTools(): Promise<void> {
       delete b.dataset.missing;
       b.classList.remove("missing");
       if (go.textContent !== "RUNNING") go.textContent = "OPEN";
+      // Greyed, not hidden: the reason is what a person, or IT on a call,
+      // can act on. A tool already running stays usable until it exits.
+      const greyed = running.has(key) ? null : st.no_models;
+      b.classList.toggle("nomodels", greyed !== null);
       // A machine-wide policy sets this tool up; the launcher just opens it.
-      sb.textContent = st.managed ? "Managed by your organization" : (sb.dataset.d ?? "");
+      sb.textContent = greyed ?? (st.managed ? "Managed by your organization" : (sb.dataset.d ?? ""));
     } else {
       b.dataset.missing = "1";
+      b.classList.remove("nomodels");
       b.classList.add("missing");
       go.textContent = "GET IT ↗";
       sb.textContent = NOT_INSTALLED[key];
@@ -501,7 +582,7 @@ function activateTile(b: HTMLButtonElement, key: Tool): void {
 }
 
 async function launchTool(b: HTMLButtonElement, key: Tool): Promise<void> {
-  if (b.disabled) return;
+  if (b.disabled || b.classList.contains("nomodels")) return;
   const go = b.querySelector<HTMLElement>(".go")!;
   const sb = b.querySelector<HTMLElement>("[data-sb]")!;
   b.disabled = true;
@@ -565,6 +646,7 @@ async function restoreSession(): Promise<void> {
       // Forgotten for good, the helper script's copy included, so it is
       // not adopted again at the next start.
       await invoke("discard_dead_key").catch(() => undefined);
+      await loadSettings().catch(() => undefined);
       signinMeta = null;
       $("signinErr").textContent = REVOKED_MESSAGE;
     } else if (settingsError) {
@@ -630,7 +712,9 @@ function init(): void {
     sb.textContent = e.payload.message;
   });
   void getCurrentWindow().onFocusChanged(({ payload: focused }) => {
-    if (focused && K.def) void refreshTools();
+    if (!focused || !K.def) return;
+    void refreshTools();
+    void syncPolicy(false);
   });
   void checkUpdate();
   setInterval(() => void checkUpdate(), 12 * 60 * 60 * 1000);

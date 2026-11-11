@@ -24,7 +24,7 @@
       </div>
 
       <aside class="panel">
-        <div class="org"><b id="orgName">Consus</b><span class="status off" id="status"><i></i><span id="statusT">NOT CONNECTED</span></span></div>
+        <div class="org"><div class="who"><b id="orgName">Consus</b><span class="from" id="settingsFrom"></span></div><span class="status off" id="status"><i></i><span id="statusT">NOT CONNECTED</span></span></div>
 
         <div class="connect" id="connect">
           <h2>Sign in to Consus</h2>
@@ -61,6 +61,9 @@
           <p class="h">Your key</p>
           <div class="krow" id="defRow"></div>
           <p class="note" id="keyNote">Every tool uses this key. It lives in your system keychain.</p>
+          <p class="h" style="margin-top:18px">Settings</p>
+          <div class="krow" id="settingsRow" style="display:none"></div>
+          <p class="note" id="settingsNote"></p>
           <button class="mini" id="signOut" style="margin-top:18px;opacity:.7">SIGN OUT</button>
           <p class="note" id="signOutNote">Revokes this computer's key in Consus and removes the launcher's settings from every tool.</p>
         </div>
