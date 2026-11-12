@@ -318,6 +318,8 @@ Tests that pin five tools and must become six: `policy.rs` (`ids`, the per-tool 
 
 ## Release
 
+**Shipped in 1.5.0 (2026-11-12):** PRs #72 (the move of the terminal scripts) and #73 (Factory). The portal's part (vendor `consus-launcher-policy-1.5.0.json`, render the lock with `allowedBaseUrls` `[endpoint, endpoint/v1]` and the sandbox, offer `factory` on the Launcher page, fix the Bearer comment in `pi.ts`) is its own spec's.
+
 Build order: checks 0 and 0a are done; the policy entry, then the release. The release after
 the one carrying Slack connectors (1.4.0, PR 70): 1.5.0. The policy asset
 `consus-launcher-policy-1.5.0.json` is what the portal vendors; its spec lists the rest.

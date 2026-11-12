@@ -2,7 +2,7 @@
 
 What changed in each release. Each release's GitHub page shows its section.
 
-## Unreleased
+## v1.5.0 (2026-11-12)
 
 - Factory: Factory's `droid` agent is a sixth tool, on macOS, for organizations that turn it on (it is not in the default set: `factory` in `Tools`, or on in the Consus portal). The launcher opens `droid` in Terminal with its own home and an organization settings file that removes web search and image generation, refuses Factory's own models, and admits models only at your endpoint; prompts and responses go only to Consus. If a `droid` version stops reading that file, the tile refuses to open. Factory still receives your sign-in, its feature flags, and token counts for each turn, and its Automations and `/bug` upload content with no setting to stop them (README, "Tools"). The first launch asks you to sign in to Factory.
 - With no `Tools` set, every tool shows but Factory; the Keys tab says "All but Factory".
