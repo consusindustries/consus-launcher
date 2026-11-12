@@ -298,6 +298,13 @@ end.
    - Claude Code lock installed (with the portal's allowlist entry) on a machine that ran
      unlocked first: Slack comes from the lock, the launcher removes its own and adds
      none, `/mcp` shows one Slack.
+   - **Done 2026-11-11, macOS, against the deployed gateway and portal (PR 70's build):** the
+     Keys tab showed "Connectors: Slack · From the Consus portal"; Claude Desktop's applied
+     entry held one Slack (port 53280, 13 blocked tools), Claude read the latest Slack
+     message, and a send was refused ("my Slack tools here only let me read and search");
+     Claude Code 2.1.322 read Slack through the launcher's `slack` server with the 13
+     `mcp__slack__` deny rules in its settings. Removal, the lock path and Windows rest on the
+     tests, the real-`claude` test and CI.
 3. Tag and publish 1.4.0 (minor), then the portal's vendor-bump PR, which turns on the lock
    files' half and flips the Launcher page's note.
 
