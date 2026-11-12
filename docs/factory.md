@@ -298,10 +298,13 @@ Tests that pin five tools and must become six: `policy.rs` (`ids`, the per-tool 
      key helper and the model worked; web access on: the same `curl` left the sandbox;
    - the version check (`cargo test -- --ignored with_the_real_droid`) passes with the
      launcher's org-level file and refuses without it.
-2. Interactive `droid` in a profile with no Factory login: whether it opens to a sign-in
-   screen or to a session on the Consus default. If a session, the guide's "sign in to
-   Factory" step becomes optional. Also the version check's `droid exec --list-tools`
-   there: it either answers or times out into "couldn't tell", and never hangs the tile.
+2. **Done 2026-11-12.** Interactive `droid` in the launcher's profile with no Factory
+   login opens to Factory's sign-in screen ("Please login with your Factory account to
+   continue": Login, Sign in to a Factory Private deployment, Exit), not to a session: the
+   profile does not inherit a login from `~/.factory`, so each person signs in to Factory
+   once, at the first launch, and the guide keeps its sign-in step. The version check
+   needs no login: `droid exec --list-tools` answered in under a second in that same
+   signed-out profile.
 
 ## Release
 
