@@ -20,7 +20,7 @@ mod terminal;
 #[cfg(windows)]
 mod win;
 use terminal::{terminal_script, CLAUDE_SCRUB, CODEX_SCRUB};
-use crate::{chatgpt, claude_code, codex, config, keychain, pi, settings};
+use crate::{chatgpt, claude_code, codex, config, factory, keychain, pi, settings};
 
 /// Claude Desktop runs the launcher binary under this name to fetch the key.
 pub const HELPER_NAME: &str = "claude-key-helper";
@@ -30,6 +30,8 @@ pub const CODE_HELPER_NAME: &str = "claude-code-key-helper";
 pub const PI_HELPER_NAME: &str = "pi-key-helper";
 /// Codex's Terminal script runs it under this name, also for the bare key.
 pub const CODEX_HELPER_NAME: &str = "codex-key-helper";
+/// Factory's apiKeyHelper runs it under this name, also for the bare key.
+pub const FACTORY_HELPER_NAME: &str = "factory-key-helper";
 const TERMINAL_APP: &str = "/System/Applications/Utilities/Terminal.app";
 
 /// Where a key helper lives: a link to this binary, named for its caller.
@@ -51,9 +53,10 @@ pub enum Tool {
     Code,
     Codex,
     Pi,
+    Factory,
 }
 
-const TOOLS: [Tool; 5] = [Tool::Desktop, Tool::ChatGpt, Tool::Code, Tool::Codex, Tool::Pi];
+const TOOLS: [Tool; 6] = [Tool::Desktop, Tool::ChatGpt, Tool::Code, Tool::Codex, Tool::Pi, Tool::Factory];
 
 fn key(t: Tool) -> &'static str {
     match t {
@@ -62,6 +65,7 @@ fn key(t: Tool) -> &'static str {
         Tool::Code => "code",
         Tool::Codex => "codex",
         Tool::Pi => "pi",
+        Tool::Factory => "factory",
     }
 }
 
@@ -72,11 +76,18 @@ fn name(t: Tool) -> &'static str {
         Tool::Code => "Claude Code",
         Tool::Codex => "Codex",
         Tool::Pi => "Pi",
+        Tool::Factory => "Factory",
     }
 }
 
 fn tool_from_key(k: &str) -> Option<Tool> {
     TOOLS.into_iter().find(|t| key(*t) == k)
+}
+
+/// Whether this platform has the tool at all: Factory is macOS only until
+/// its Windows release (docs/factory.md).
+fn offered(t: Tool) -> bool {
+    !(cfg!(windows) && t == Tool::Factory)
 }
 
 /// A GUI app in a bundle. A tool without one runs in Terminal.
@@ -102,7 +113,7 @@ fn app_spec(t: Tool) -> Option<AppSpec> {
             bundle: "com.openai.codex",
             process: "ChatGPT",
         }),
-        Tool::Code | Tool::Codex | Tool::Pi => None,
+        Tool::Code | Tool::Codex | Tool::Pi | Tool::Factory => None,
     }
 }
 
@@ -398,6 +409,13 @@ fn claude_desktop_policy() -> bool {
     false
 }
 
+/// Whether Factory's machine-wide settings file exists. droid reads one org
+/// source, the first that exists, and this is first, so then the launcher's
+/// org-level file would be ignored anyway.
+fn factory_policy() -> bool {
+    Path::new(crate::policy::policy().factory_lock_path()).exists()
+}
+
 /// Whether the organization already sets this tool up through a machine-wide
 /// policy. Then the launcher writes nothing for it and just opens it: the
 /// admin's policy is the authority, and the tile says so.
@@ -405,6 +423,7 @@ fn org_policy(t: Tool) -> bool {
     match t {
         Tool::Code => claude_code_policy(),
         Tool::Desktop => claude_desktop_policy(),
+        Tool::Factory => factory_policy(),
         Tool::ChatGpt | Tool::Codex | Tool::Pi => false,
     }
 }
@@ -435,6 +454,7 @@ fn no_models(t: Tool, models: &Value, target: &Target) -> Option<String> {
         Tool::Code => claude_code::no_models(models, target),
         Tool::ChatGpt | Tool::Codex => chatgpt::no_models(models, target),
         Tool::Pi => pi::no_models(models, target),
+        Tool::Factory => factory::no_models(models, target),
     }
 }
 
@@ -446,7 +466,7 @@ pub async fn detect_tools(app: AppHandle, models: Option<Value>) -> HashMap<Stri
     TOOLS
         .into_iter()
         .map(|t| {
-            let allowed = settings.as_ref().is_some_and(|s| s.allows(key(t)));
+            let allowed = offered(t) && settings.as_ref().is_some_and(|s| s.allows(key(t)));
             let mut status = if !allowed {
                 ToolStatus { allowed, managed: false, installed: false, icon: None, no_models: None }
             } else if !cfg!(target_os = "macos") {
@@ -460,8 +480,9 @@ pub async fn detect_tools(app: AppHandle, models: Option<Value>) -> HashMap<Stri
             } else {
                 let installed = terminal_cli(&app, t).is_some();
                 // Pi has a logo of its own and the ChatGPT app carries
-                // Codex's; Claude Code, or Codex without that app, opens in
-                // Terminal, so it wears Terminal's icon.
+                // Codex's; Claude Code, Factory (until its mark is added), or
+                // Codex without that app, opens in Terminal, so it wears
+                // Terminal's icon.
                 let codex_png = app_spec(Tool::ChatGpt)
                     .and_then(|s| app_path(&app, &s))
                     .map(|d| d.join("Contents/Resources/icon-codex-dark-color.png"))
@@ -716,7 +737,7 @@ fn launch_app(app: AppHandle, t: Tool, s: AppSpec, rect: Rect, models: &Value, t
             chatgpt::write_config(&home, models, target, catalog.as_deref(), &helper)?;
             env = Some(("CONSUS_API_KEY", k));
         }
-        Tool::Code | Tool::Codex | Tool::Pi => return Err(format!("{} is not a desktop app.", name(t))),
+        Tool::Code | Tool::Codex | Tool::Pi | Tool::Factory => return Err(format!("{} is not a desktop app.", name(t))),
     }
 
     // The app's own output is not the launcher's to read or keep.
@@ -876,6 +897,7 @@ fn terminal_process(t: Tool) -> Option<&'static str> {
         Tool::Code => Some("claude"),
         Tool::Codex => Some("codex"),
         Tool::Pi => Some("pi"),
+        Tool::Factory => Some("droid"),
         Tool::Desktop | Tool::ChatGpt => None,
     }
 }
@@ -945,6 +967,9 @@ fn launch_terminal(app: AppHandle, t: Tool, rect: Rect, models: &Value, target: 
 pub async fn launch_tool(app: AppHandle, tool: String, rect: Rect, models: Value) -> Result<(), String> {
     let t = tool_from_key(&tool).ok_or_else(|| format!("unknown tool {tool}"))?;
     let settings = settings::current()?;
+    if !offered(t) {
+        return Err(format!("{} is not available on this platform yet.", name(t)));
+    }
     if !settings.allows(key(t)) {
         return Err(format!("Your organization has not enabled {} in the launcher.", name(t)));
     }
@@ -972,6 +997,7 @@ fn remove_config(home: &Path, catalog: &Path, t: Tool) -> Result<(), String> {
         Tool::Code => claude_code::remove_settings(home),
         Tool::Codex => codex::remove_config(home),
         Tool::Pi => pi::remove_config(home),
+        Tool::Factory => factory::remove_config(home),
     }
 }
 
@@ -1208,7 +1234,7 @@ mod tests {
             assert!(no_models(tool, &none, &t).is_some_and(|m| m.contains("ITAR")), "{}", key(tool));
         }
         assert_eq!(no_models(Tool::Pi, &none, &t).as_deref(), Some("No ITAR models for Pi are available to this key."));
-        assert!(turned_off(&allowing(None)).is_empty(), "greyed tools keep their settings");
+        assert!(turned_off(&allowing(None)) == [Tool::Factory], "greyed tools keep their settings; Factory is opt-in");
         let claude = json!([{ "id": "consus/claude-opus-5:itar" }]);
         assert_eq!(no_models(Tool::Desktop, &claude, &t), None);
         assert!(no_models(Tool::ChatGpt, &claude, &t).is_some(), "a Claude model is no use to ChatGPT");
@@ -1223,9 +1249,10 @@ mod tests {
 
     #[test]
     fn only_the_tools_left_out_are_turned_off() {
-        assert!(turned_off(&allowing(None)).is_empty());
+        assert!(turned_off(&allowing(None)) == [Tool::Factory], "with no list, every tool but the opt-in one");
+        assert!(turned_off(&allowing(Some(TOOLS.map(key).to_vec()))).is_empty());
         let off: Vec<&str> = turned_off(&allowing(Some(vec!["code", "codex"]))).into_iter().map(key).collect();
-        assert_eq!(off, ["desktop", "chatgpt", "pi"]);
+        assert_eq!(off, ["desktop", "chatgpt", "pi", "factory"]);
     }
 
     #[test]
@@ -1248,6 +1275,7 @@ mod tests {
         claude_code::write_settings(&home, &helper, &models, &t).unwrap();
         codex::write_config(&home, &models, None, &t).unwrap();
         pi::write_config(&home, &helper, &models, &t).unwrap();
+        factory::write_config(&home, &helper, &models, &t).unwrap();
         let entries = || fs::read_dir(&desktop_entry).map_or(0, |d| d.filter(|e| e.as_ref().unwrap().file_name() != "_meta.json").count());
         let pi_models = || fs::read_to_string(home.join(".pi-consus-gateway/models.json")).unwrap();
         if desktop {
@@ -1264,6 +1292,9 @@ mod tests {
         assert!(!home.join(".codex/config.toml").exists(), "ChatGPT's config held only the launcher's keys");
         assert!(!catalog.exists());
         assert!(!pi_models().contains("consus"));
+        let droid = fs::read_to_string(home.join(".factory-consus-gateway/.factory/settings.json")).unwrap();
+        assert!(!droid.contains("custom:consus-"), "Factory's models are gone: {droid}");
+        assert!(!home.join(".factory-consus-gateway/.factory/consus-org-settings.json").exists());
         assert!(fs::read_to_string(home.join(".claude-consus-gateway/settings.json")).unwrap().contains("apiKeyHelper"));
         assert!(fs::read_to_string(home.join(".codex-consus-gateway/config.toml")).unwrap().contains("consus"));
         let _ = fs::remove_dir_all(&home);

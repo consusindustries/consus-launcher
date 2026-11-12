@@ -127,7 +127,7 @@ fn terminal_cli(t: Tool) -> Option<PathBuf> {
         Tool::Code => cli("claude"),
         Tool::Codex => cli("codex").or_else(chatgpt_codex),
         Tool::Pi => cli("pi"),
-        Tool::Desktop | Tool::ChatGpt => None,
+        Tool::Desktop | Tool::ChatGpt | Tool::Factory => None,
     }
 }
 
@@ -178,6 +178,7 @@ fn icon(t: Tool) -> Option<String> {
         Tool::Code | Tool::Codex => png("Microsoft.WindowsTerminal", "Square44x44Logo.targetsize-256.png")
             .map(|b| format!("data:image/png;base64,{}", b64(&b))),
         Tool::Pi => Some(format!("data:image/svg+xml;base64,{}", b64(PI_ICON.as_bytes()))),
+        Tool::Factory => None,
     };
     ICONS.lock().unwrap().insert(k, made.clone());
     made
@@ -198,6 +199,8 @@ pub fn status(t: Tool) -> (bool, Option<String>) {
         Tool::Desktop => claude_desktop_exe().is_some(),
         Tool::ChatGpt => chatgpt_exe().is_some(),
         Tool::Code | Tool::Codex | Tool::Pi => terminal_cli(t).is_some(),
+        // macOS only until its Windows release; tools.rs never offers it here.
+        Tool::Factory => false,
     };
     (installed, icon(t))
 }
@@ -358,6 +361,7 @@ pub fn launch(app: AppHandle, t: Tool, models: &Value, target: &Target) -> Resul
     let work = claude_code::work_dir(&home);
     let console = matches!(t, Tool::Code | Tool::Codex | Tool::Pi);
     let mut cmd = match t {
+        Tool::Factory => return Err("Factory is not available on Windows yet.".into()),
         Tool::Desktop => {
             let exe = claude_desktop_exe().ok_or("Claude is not installed.")?;
             if claude_desktop_policy() {

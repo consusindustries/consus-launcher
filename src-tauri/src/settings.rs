@@ -18,7 +18,8 @@
 //                    fedramp-high+itar
 //   Tools            [tools] the tools shown, as an array or a
 //                    comma-separated string of: claude-desktop,
-//                    chatgpt-desktop, claude-code, codex-cli, pi
+//                    chatgpt-desktop, claude-code, codex-cli, pi, factory;
+//                    absent, every tool but Factory, which is opt-in
 //   OrgName          [org_name] shown in the launcher's header
 //   WebAccess        [web_access] whether a tool's agent may fetch web pages
 //                    from the machine: off (default) or on
@@ -46,18 +47,25 @@ use crate::models::{valid_level, Target, DEFAULT_ENDPOINT, DEFAULT_LEVEL};
 pub const DOMAIN: &str = "io.consus.launcher";
 
 /// The portal's tool ids, and the launcher's key for each.
-const TOOL_IDS: [(&str, &str); 5] = [
+const TOOL_IDS: [(&str, &str); 6] = [
     ("claude-desktop", "desktop"),
     ("chatgpt-desktop", "chatgpt"),
     ("claude-code", "code"),
     ("codex-cli", "codex"),
     ("pi", "pi"),
+    ("factory", "factory"),
 ];
+
+/// Tools an org must name to have: every Factory user signs in to Factory
+/// with their own identity, which an admin should choose to allow. The
+/// portal's default (`fromDocument(null)`) leaves out the same tools.
+const DEFAULT_OFF: [&str; 1] = ["factory"];
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Settings {
     pub target: Target,
-    /// Launcher keys of the tools the org allows; None allows every tool.
+    /// Launcher keys of the tools the org allows; None allows every tool but
+    /// those in DEFAULT_OFF.
     pub tools: Option<Vec<String>>,
     pub org_name: Option<String>,
     /// Whether to tell the user a newer launcher exists. Off by default on a
@@ -67,7 +75,10 @@ pub struct Settings {
 
 impl Settings {
     pub fn allows(&self, tool_key: &str) -> bool {
-        self.tools.as_ref().is_none_or(|t| t.iter().any(|k| k == tool_key))
+        match &self.tools {
+            None => !DEFAULT_OFF.contains(&tool_key),
+            Some(t) => t.iter().any(|k| k == tool_key),
+        }
     }
 }
 
@@ -792,7 +803,7 @@ pub struct Values {
     pub endpoint: String,
     /// As people name it: "ITAR", "FedRAMP High + ITAR".
     pub level: String,
-    /// Launcher keys of the tools shown; None is every tool.
+    /// Launcher keys of the tools shown; None is every tool but Factory.
     pub tools: Option<Vec<String>>,
     pub web_access: bool,
     /// The connectors turned on, by name ("Slack").
@@ -1012,6 +1023,16 @@ mod tests {
         assert_eq!(tools(json!(["future-tool"])), Err(UPDATE_LAUNCHER.to_string()), "not every tool, and not none");
         assert_eq!(tools(json!(42)), Err(UPDATE_LAUNCHER.to_string()));
         assert_eq!(tools(json!([])).unwrap().tools, Some(vec![]), "empty is no tools, not an outdated launcher");
+    }
+
+    #[test]
+    fn factory_is_opt_in() {
+        let absent = loaded(Raw::default(), Raw::default(), None, DEFAULT_ENDPOINT).settings.unwrap();
+        assert_eq!(absent.tools, None);
+        assert!(["desktop", "chatgpt", "code", "codex", "pi"].iter().all(|k| absent.allows(k)));
+        assert!(!absent.allows("factory"), "not in the default set");
+        let named = loaded(Raw::default(), Raw::default(), Some(json!({ "tools": ["claude-code", "factory"] })), DEFAULT_ENDPOINT).settings.unwrap();
+        assert!(named.allows("factory") && named.allows("code") && !named.allows("pi"));
     }
 
     #[test]

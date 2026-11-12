@@ -5,14 +5,15 @@ import { listen } from "@tauri-apps/api/event";
 
 const PORTAL_URL = "https://portal.consus.io";
 // Tools the launcher detects, configures, and launches.
-type Tool = "desktop" | "chatgpt" | "code" | "codex" | "pi";
-const TOOLS: Tool[] = ["desktop", "chatgpt", "code", "codex", "pi"];
+type Tool = "desktop" | "chatgpt" | "code" | "codex" | "pi" | "factory";
+const TOOLS: Tool[] = ["desktop", "chatgpt", "code", "codex", "pi", "factory"];
 const DOWNLOAD: Record<Tool, string> = {
   desktop: "https://claude.ai/download",
   chatgpt: "https://openai.com/chatgpt/download/",
   code: "https://claude.com/claude-code",
   codex: "https://developers.openai.com/codex",
   pi: "https://pi.dev",
+  factory: "https://factory.ai",
 };
 const NOT_INSTALLED: Record<Tool, string> = {
   desktop: "Not installed · get it from claude.ai/download",
@@ -20,6 +21,7 @@ const NOT_INSTALLED: Record<Tool, string> = {
   code: "Not installed · get it from claude.com/claude-code",
   codex: "Not installed · get it from developers.openai.com/codex",
   pi: "Not installed · get it from pi.dev",
+  factory: "Not installed · get it from factory.ai",
 };
 const isTool = (k: string): k is Tool => (TOOLS as string[]).includes(k);
 // Tools the launcher has running right now; more than one can be up.
@@ -153,7 +155,7 @@ function renderSettings(s: SettingsView): void {
   const v = s.values;
   const rows: [Field, string, string][] = v
     ? [
-        ["tools", "Tools", v.tools ? v.tools.map(toolName).join(", ") || "None" : "All"],
+        ["tools", "Tools", v.tools ? v.tools.map(toolName).join(", ") || "None" : "All but Factory"],
         ["level", "Compliance", v.level],
         ["web_access", "Web access", v.web_access ? "On" : "Off"],
         ["connectors", "Connectors", v.connectors.join(", ") || "None"],
