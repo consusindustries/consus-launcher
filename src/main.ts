@@ -118,7 +118,7 @@ let currentModels: unknown = null;
 let settingsError: string | null = null;
 
 type Source = "mdm" | "portal" | "local" | "default";
-type Field = "endpoint" | "level" | "tools" | "org_name" | "web_access";
+type Field = "endpoint" | "level" | "tools" | "org_name" | "web_access" | "connectors";
 
 interface SettingsView {
   org_name: string | null;
@@ -126,7 +126,14 @@ interface SettingsView {
   error: string | null;
   header: string | null;
   sources: Record<Field, Source>;
-  values: { endpoint: string; level: string; tools: string[] | null; web_access: boolean } | null;
+  values: {
+    endpoint: string;
+    level: string;
+    tools: string[] | null;
+    web_access: boolean;
+    // Connector names ("Slack").
+    connectors: string[];
+  } | null;
   portal_updated_at: string | null;
 }
 
@@ -149,6 +156,7 @@ function renderSettings(s: SettingsView): void {
         ["tools", "Tools", v.tools ? v.tools.map(toolName).join(", ") || "None" : "All"],
         ["level", "Compliance", v.level],
         ["web_access", "Web access", v.web_access ? "On" : "Off"],
+        ["connectors", "Connectors", v.connectors.join(", ") || "None"],
         ["endpoint", "Endpoint", v.endpoint],
         ["org_name", "Organization", s.org_name ?? "Not set"],
       ]

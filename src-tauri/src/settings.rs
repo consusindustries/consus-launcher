@@ -23,6 +23,9 @@
 //   WebAccess        [web_access] whether a tool's agent may fetch web pages
 //                    from the machine: off (default) or on
 //   UpdateNotice     (device management and this computer only)
+//   (none)           [connectors] the MCP servers the org turned on, e.g.
+//                    [{ "kind": "slack", "client_id": "…" }]; the document
+//                    only (device management's path is the lock files)
 //
 // A value that is present but invalid is an error, never a silent default:
 // falling back to api.consus.io would quietly bypass an org's proxy. The
@@ -77,6 +80,8 @@ struct Raw {
     org_name: Option<Value>,
     update_notice: Option<Value>,
     web_access: Option<Value>,
+    /// The document's only: the checked entries, as a list.
+    connectors: Option<Value>,
     managed: bool,
 }
 
@@ -215,7 +220,12 @@ fn parse(raw: Raw) -> Result<Settings, String> {
         }
     };
     Ok(Settings {
-        target: Target { endpoint, level, web_access: flag(raw.web_access, "WebAccess")?.unwrap_or(false) },
+        target: Target {
+            endpoint,
+            level,
+            web_access: flag(raw.web_access, "WebAccess")?.unwrap_or(false),
+            connectors: connectors(raw.connectors.as_ref()),
+        },
         tools,
         org_name: string(raw.org_name, "OrgName", true)?,
         update_notice: flag(raw.update_notice, "UpdateNotice")?.unwrap_or(!raw.managed),
@@ -381,7 +391,7 @@ pub enum Source {
     Default,
 }
 
-/// Where each of the five values came from.
+/// Where each value came from.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct Sources {
     pub endpoint: Source,
@@ -389,12 +399,13 @@ pub struct Sources {
     pub tools: Source,
     pub org_name: Source,
     pub web_access: Source,
+    pub connectors: Source,
 }
 
 impl Sources {
-    /// Whether any of the five came from `s`.
+    /// Whether any value came from `s`.
     fn any(&self, s: Source) -> bool {
-        [self.endpoint, self.level, self.tools, self.org_name, self.web_access].contains(&s)
+        [self.endpoint, self.level, self.tools, self.org_name, self.web_access, self.connectors].contains(&s)
     }
 }
 
@@ -413,23 +424,31 @@ fn merge(mdm: &Raw, doc: &Raw, local: &Raw) -> (Raw, Sources) {
     let (tools, s_tools) = pick(|r| &r.tools);
     let (org_name, s_org_name) = pick(|r| &r.org_name);
     let (web_access, s_web_access) = pick(|r| &r.web_access);
+    let (connectors, s_connectors) = pick(|r| &r.connectors);
     let raw = Raw {
         endpoint,
         level,
         tools,
         org_name,
         web_access,
+        connectors,
         update_notice: mdm.update_notice.clone().or_else(|| local.update_notice.clone()),
         managed: mdm.managed,
     };
-    let sources =
-        Sources { endpoint: s_endpoint, level: s_level, tools: s_tools, org_name: s_org_name, web_access: s_web_access };
+    let sources = Sources {
+        endpoint: s_endpoint,
+        level: s_level,
+        tools: s_tools,
+        org_name: s_org_name,
+        web_access: s_web_access,
+        connectors: s_connectors,
+    };
     (raw, sources)
 }
 
 const UPDATE_LAUNCHER: &str = "Update the Consus Launcher to use your organization's settings.";
 
-/// The org's document as the gateway serves it (its member view): the five
+/// The org's document as the gateway serves it (its member view): the
 /// values the merge uses. The cache keeps the whole body as received, so a
 /// newer launcher reads whatever this one skips. Null and absent both mean
 /// "not set here".
@@ -440,6 +459,7 @@ struct Document {
     level: Option<Value>,
     org_name: Option<Value>,
     endpoint: Option<Value>,
+    connectors: Option<Value>,
 }
 
 /// The document's values this launcher can use, ready for the merge, and
@@ -489,7 +509,46 @@ fn check_document(doc: &Document, fetched_from: &str, mdm: &Raw) -> (Raw, bool) 
             Err(e) => eprintln!("device policy: web_access not used ({e})"),
         }
     }
+    if let Some(v) = &doc.connectors {
+        raw.connectors = checked_connectors(v);
+    }
     (raw, outdated)
+}
+
+/// The document's connector entries this launcher can use. An entry it
+/// cannot (a kind a newer portal offers, a bad client ID) is skipped with a
+/// line that names the kind, never the value; the rest applies. A later
+/// entry of a kind already taken is skipped too (the gateway refuses those).
+fn checked_connectors(v: &Value) -> Option<Value> {
+    let Some(entries) = v.as_array() else {
+        eprintln!("device policy: connectors not used (not a list)");
+        return None;
+    };
+    let policy = crate::policy::policy();
+    let mut kept: Vec<Value> = Vec::new();
+    for entry in entries {
+        match policy.connector_from(entry) {
+            Ok(c) if kept.iter().any(|k| k["kind"] == c.kind.as_str()) => {
+                eprintln!("device policy: connector {} not used (listed twice)", c.kind);
+            }
+            Ok(c) => {
+                let mut o = serde_json::Map::new();
+                o.insert("kind".into(), Value::String(c.kind));
+                o.extend(c.fields.into_iter().map(|(k, v)| (k, Value::String(v))));
+                kept.push(Value::Object(o));
+            }
+            Err(e) => eprintln!("device policy: connector not used ({e})"),
+        }
+    }
+    Some(Value::Array(kept))
+}
+
+/// The connectors in a checked list.
+fn connectors(v: Option<&Value>) -> Vec<crate::models::Connector> {
+    let policy = crate::policy::policy();
+    v.and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(|e| policy.connector_from(e).ok()).collect())
+        .unwrap_or_default()
 }
 
 /// The last document read, as the cache file holds it.
@@ -725,7 +784,7 @@ pub fn forget_other_key(key: &str) -> bool {
     cached().is_some_and(|c| c.key_hash != key_hash(key)) && forget()
 }
 
-/// The five values as the Keys tab lists them.
+/// The values as the Keys tab lists them.
 #[derive(Serialize)]
 pub struct Values {
     pub endpoint: String,
@@ -734,6 +793,8 @@ pub struct Values {
     /// Launcher keys of the tools shown; None is every tool.
     pub tools: Option<Vec<String>>,
     pub web_access: bool,
+    /// The connectors turned on, by name ("Slack").
+    pub connectors: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -773,6 +834,12 @@ impl Loaded {
                 level: s.target.tag(),
                 tools: s.tools.clone(),
                 web_access: s.target.web_access,
+                connectors: s
+                    .target
+                    .connectors
+                    .iter()
+                    .map(|c| crate::policy::policy().connector_name(&c.kind).to_string())
+                    .collect(),
             }),
             portal_updated_at: self.doc.as_ref().and_then(|c| c.document.get("updated_at")?.as_str().map(String::from)),
         }
@@ -791,7 +858,7 @@ mod tests {
     use serde_json::json;
 
     fn raw(endpoint: Option<Value>, level: Option<Value>, tools: Option<Value>) -> Raw {
-        Raw { endpoint, level, tools, org_name: None, update_notice: None, web_access: None, managed: true }
+        Raw { endpoint, level, tools, org_name: None, update_notice: None, web_access: None, connectors: None, managed: true }
     }
 
     /// The launcher as it would load with these sources and this document,
@@ -806,6 +873,37 @@ mod tests {
         let mut r = Raw { managed: true, ..Raw::default() };
         f(&mut r);
         r
+    }
+
+    #[test]
+    fn connectors_come_from_the_document_entry_by_entry() {
+        let with = |connectors: Value| {
+            let l = loaded(Raw::default(), Raw::default(), Some(json!({ "connectors": connectors })), DEFAULT_ENDPOINT);
+            (l.settings.clone().unwrap().target.connectors, l.sources.connectors, l.view().values.unwrap().connectors)
+        };
+        let slack = crate::models::slack("1234567.7654321");
+        let (c, source, names) = with(json!([{ "kind": "slack", "client_id": "1234567.7654321" }]));
+        assert_eq!((c, source, names), (vec![slack.clone()], Source::Portal, vec!["Slack".to_string()]));
+
+        // A kind from a newer portal, or a bad client ID, is skipped; the rest applies.
+        let (c, _, _) = with(json!([{ "kind": "github", "host": "x" }, { "kind": "slack", "client_id": "1234567.7654321" }]));
+        assert_eq!(c, vec![slack.clone()]);
+        let (c, source, names) = with(json!([{ "kind": "slack", "client_id": "A0123" }]));
+        assert_eq!((c.len(), source, names.len()), (0, Source::Portal, 0));
+        let (c, _, _) = with(json!([
+            { "kind": "slack", "client_id": "1234567.7654321" },
+            { "kind": "slack", "client_id": "7654321.1234567" }
+        ]));
+        assert_eq!(c, vec![slack], "one per kind: the first");
+
+        assert!(with(json!([])).0.is_empty());
+        let (c, source, _) = with(json!("slack"));
+        assert_eq!((c.len(), source), (0, Source::Default), "not a list: not used");
+        let l = loaded(Raw::default(), Raw::default(), Some(json!({ "tools": ["pi"] })), DEFAULT_ENDPOINT);
+        assert!(l.settings.unwrap().target.connectors.is_empty());
+        assert_eq!(l.sources.connectors, Source::Default);
+        let none = loaded(Raw::default(), Raw::default(), None, DEFAULT_ENDPOINT);
+        assert!(none.settings.unwrap().target.connectors.is_empty(), "signed out: none");
     }
 
     #[test]
@@ -837,7 +935,8 @@ mod tests {
                 level: Source::Portal,
                 tools: Source::Portal,
                 org_name: Source::Portal,
-                web_access: Source::Portal
+                web_access: Source::Portal,
+                connectors: Source::Default
             }
         );
         let v = l.view();

@@ -2,6 +2,7 @@
 // level they use, and how model ids are read.
 
 use serde_json::Value;
+use std::collections::BTreeMap;
 
 pub const DEFAULT_ENDPOINT: &str = "https://api.consus.io";
 /// ITAR unless the org's settings say otherwise (decided 2026-09-22).
@@ -22,11 +23,28 @@ pub struct Target {
     /// boundary. Web search is never on: it is a server tool the gateway
     /// refuses, so each tool is told not to offer it.
     pub web_access: bool,
+    /// The connectors the org turned on (its device policy's `connectors`),
+    /// each already checked against the policy document.
+    pub connectors: Vec<Connector>,
+}
+
+/// One connector the org turned on: its kind and the fields its slots take
+/// (Slack: `client_id`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Connector {
+    pub kind: String,
+    pub fields: BTreeMap<String, String>,
+}
+
+/// Slack turned on with this client ID, for tests.
+#[cfg(test)]
+pub fn slack(client_id: &str) -> Connector {
+    Connector { kind: "slack".into(), fields: BTreeMap::from([("client_id".to_string(), client_id.to_string())]) }
 }
 
 impl Default for Target {
     fn default() -> Self {
-        Target { endpoint: DEFAULT_ENDPOINT.into(), level: DEFAULT_LEVEL.into(), web_access: false }
+        Target { endpoint: DEFAULT_ENDPOINT.into(), level: DEFAULT_LEVEL.into(), web_access: false, connectors: Vec::new() }
     }
 }
 

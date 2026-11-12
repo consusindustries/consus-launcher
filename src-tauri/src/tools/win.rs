@@ -22,7 +22,7 @@ use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager};
 
 use super::{
-    chatgpt_catalog, claude_code_policy, helper_path, key, name, ours, output_within, track, Running, Tool,
+    chatgpt_catalog, claude_code_policy, helper_path, key, launch_claude_connectors, name, ours, output_within, track, Running, Tool,
     CHATGPT_NO_CATALOG, CODEX_HELPER_NAME, CODE_HELPER_NAME, HELPER_NAME, PI_HELPER_NAME, PI_ICON,
 };
 use crate::models::Target;
@@ -329,6 +329,13 @@ fn scrub(cmd: &mut Command, drop: impl Fn(&str) -> bool) {
     }
 }
 
+/// The `claude` the launcher runs for `claude mcp`, with no console window.
+pub(super) fn claude_command() -> Option<Command> {
+    let mut c = cli_command(&terminal_cli(Tool::Code)?);
+    c.creation_flags(CREATE_NO_WINDOW);
+    Some(c)
+}
+
 /// Runs a command-line tool; npm installs it as a .cmd, which needs cmd.
 fn cli_command(exe: &Path) -> Command {
     let script = exe.extension().is_some_and(|e| e.eq_ignore_ascii_case("cmd") || e.eq_ignore_ascii_case("bat"));
@@ -398,12 +405,15 @@ pub fn launch(app: AppHandle, t: Tool, models: &Value, target: &Target) -> Resul
         }
         Tool::Code => {
             let exe = terminal_cli(t).ok_or("Claude Code is not installed.")?;
-            // Under the organization's policy the launcher writes nothing.
-            if !claude_code_policy() {
+            // Under the organization's policy the launcher writes nothing,
+            // and removes the connectors it added before the lock came.
+            let locked = claude_code_policy();
+            if !locked {
                 let helper = helper_path(&helper_dir, CODE_HELPER_NAME);
                 config::write_helper(&helper)?;
                 claude_code::write_settings(&home, &helper, models, target)?;
             }
+            launch_claude_connectors(&app, &home, target, locked);
             let mut c = cli_command(&exe);
             scrub(&mut c, |n| super::CLAUDE_SCRUB.matches(n));
             c.env("CLAUDE_CONFIG_DIR", claude_code::profile_dir(&home));

@@ -2,6 +2,11 @@
 
 What changed in each release. Each release's GitHub page shows its section.
 
+## Unreleased
+
+- Connectors: when your organization's admin sets a Slack app's client ID in the Consus portal, the launcher sets Slack up in Claude Desktop and Claude Code, so each person clicks Connect once in each. Slack's write tools are blocked in both apps; the Slack app's read-only scopes are the control. Cleared in the portal, Slack is gone at each app's next launch; sign out removes it. On a machine with a Claude lock file, the lock carries Slack and the launcher adds none (README, "Tools" and "Troubleshooting").
+- The Keys tab lists the connectors your organization turned on.
+
 ## v1.3.1 (2026-11-11)
 
 - Codex CLI starts again with the launcher's settings. The newest ChatGPT's built-in Codex leaves out a field in its model list that Codex CLI 0.147 requires, so a model list the launcher built from it stopped `codex` with "missing field `supports_parallel_tool_calls`". The launcher now fills the field in. ChatGPT was not affected.
