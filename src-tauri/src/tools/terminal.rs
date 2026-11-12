@@ -65,24 +65,28 @@ pub(crate) const PI_SCRUB: Scrub = Scrub {
 /// Factory's own key (FACTORY_API_KEY).
 pub(crate) const FACTORY_SCRUB: Scrub = Scrub { prefixes: &["FACTORY"], suffixes: &[], exact: &[] };
 
-/// What the version check found, per droid binary: a pass or a refusal holds
-/// until the binary changes (an update); no answer is asked again next time.
-static FACTORY_CHECKED: Cache<(PathBuf, Signature, factory::Check)> = LazyLock::new(|| Mutex::new(HashMap::new()));
+/// What the version check found for the droid binary last checked. It holds
+/// until that binary changes (an update). No answer is kept only for this run
+/// of the launcher, so a network that blocks Factory costs one wait, not one
+/// per launch, and a restart asks again.
+static FACTORY_CHECKED: Mutex<Option<(PathBuf, Signature, factory::Check)>> = Mutex::new(None);
 
 const FACTORY_REFUSED: &str = "This droid version ignores the launcher's Factory settings, so web search would be on. Ask IT for Factory's machine-wide lock, or use another tool.";
 const FACTORY_UNSURE: &str = "Couldn't confirm that this droid version keeps web search off.";
 
 /// Whether droid reads the launcher's org-level file, asked the way the
-/// Terminal window will run it: same home, same file, same folder, and
-/// none of the FACTORY_ variables the launcher inherited.
+/// Terminal window will run it: same home, same file, same folder, droid's
+/// folder first on PATH, and none of the FACTORY_ variables the launcher
+/// inherited.
 fn factory_check(cli: &Path, work: &Path, profile: &Path, org: &Path) -> factory::Check {
     let real = fs::canonicalize(cli).unwrap_or_else(|_| cli.to_path_buf());
     let sig = signature(&real);
-    if let Some((p, s, c)) = FACTORY_CHECKED.lock().unwrap().get("droid") {
+    if let Some((p, s, c)) = FACTORY_CHECKED.lock().unwrap().as_ref() {
         if *p == real && Some(*s) == sig {
             return *c;
         }
     }
+    let bin = cli.parent().unwrap_or(Path::new("/"));
     let mut cmd = Command::new(cli);
     cmd.args(["exec", "--list-tools", "--output-format", "json"]).current_dir(work);
     for (k, _) in std::env::vars_os() {
@@ -92,10 +96,13 @@ fn factory_check(cli: &Path, work: &Path, profile: &Path, org: &Path) -> factory
     }
     cmd.env("FACTORY_HOME_OVERRIDE", profile)
         .env("FACTORY_ORG_MANAGED_SETTINGS_LOCAL_PATH", org)
-        .env("FACTORY_DROID_AUTO_UPDATE_ENABLED", "false");
-    let c = factory::check(output_within(&mut cmd, Duration::from_secs(20)).as_deref());
-    if let (Some(sig), false) = (sig, c == factory::Check::Unknown) {
-        FACTORY_CHECKED.lock().unwrap().insert("droid", (real, sig, c));
+        .env("FACTORY_DROID_AUTO_UPDATE_ENABLED", "false")
+        .env("PATH", format!("{}:{}", bin.display(), std::env::var("PATH").unwrap_or_default()));
+    // Measured under a second; the limit is for a network that holds the
+    // connection to Factory open.
+    let c = factory::check(output_within(&mut cmd, Duration::from_secs(10)).as_deref());
+    if let Some(sig) = sig {
+        *FACTORY_CHECKED.lock().unwrap() = Some((real, sig, c));
     }
     c
 }
@@ -311,8 +318,12 @@ mod tests {
         factory::write_config(&home, Path::new("/usr/bin/true"), &models, &Target::default()).unwrap();
         let profile = factory::profile_dir(&home);
         assert_eq!(factory_check(&droid, &work, &profile, &factory::org_path(&home)), factory::Check::Pass, "with the launcher's org-level file");
-        FACTORY_CHECKED.lock().unwrap().clear();
-        assert_eq!(factory_check(&droid, &work, &profile, &home.join("missing.json")), factory::Check::Refuse, "without it, droid offers web search");
+        // Without the file, whether droid lists WebSearch depends on Factory's
+        // side: it did on the morning of 2026-11-12 and did not that
+        // afternoon, with no change here. So only check() pins the refusal,
+        // on the output captured that morning.
+        *FACTORY_CHECKED.lock().unwrap() = None;
+        assert_ne!(factory_check(&droid, &work, &profile, &home.join("missing.json")), factory::Check::Unknown, "droid answers without the file too");
         let _ = fs::remove_dir_all(&home);
     }
 }

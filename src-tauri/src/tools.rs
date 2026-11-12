@@ -48,6 +48,10 @@ const PI_ICON: &str = include_str!("../assets/pi.svg");
 /// Factory's mark from factory.ai's favicon, on a rounded tile like Pi's.
 const FACTORY_ICON: &str = include_str!("../assets/factory.svg");
 
+fn svg_icon(svg: &str) -> String {
+    format!("data:image/svg+xml;base64,{}", base64::engine::general_purpose::STANDARD.encode(svg))
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Tool {
     Desktop,
@@ -489,10 +493,8 @@ pub async fn detect_tools(app: AppHandle, models: Option<Value>) -> HashMap<Stri
                     .map(|d| d.join("Contents/Resources/icon-codex-dark-color.png"))
                     .filter(|p| p.exists());
                 let icon = match (t, codex_png) {
-                    (Tool::Pi | Tool::Factory, _) => Some(format!(
-                        "data:image/svg+xml;base64,{}",
-                        base64::engine::general_purpose::STANDARD.encode(if t == Tool::Pi { PI_ICON } else { FACTORY_ICON })
-                    )),
+                    (Tool::Pi, _) => Some(svg_icon(PI_ICON)),
+                    (Tool::Factory, _) => Some(svg_icon(FACTORY_ICON)),
                     (Tool::Codex, Some(png)) => cached_icon(t, &png).or_else(|| image_icon(&app, t, &png)),
                     _ => app_icon(&app, t, Path::new(TERMINAL_APP)),
                 };

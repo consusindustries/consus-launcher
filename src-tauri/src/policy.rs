@@ -249,9 +249,10 @@ impl Policy {
 
     /// The keys droid enforces only from org settings, with the endpoint
     /// filled in (`modelPolicy.allowedBaseUrls`).
-    pub fn factory_org_keys(&self, endpoint: &str) -> Map<String, Value> {
+    pub fn factory_org_keys(&self, t: &crate::models::Target) -> Map<String, Value> {
         let required = Value::Object(self.tool("factory").lock_only.required.clone());
-        match fill(&required, &BTreeMap::from([("endpoint", endpoint)]), &[]) {
+        let v1 = t.v1();
+        match fill(&required, &BTreeMap::from([("endpoint", t.endpoint.as_str()), ("endpoint_v1", v1.as_str())]), &[]) {
             Value::Object(o) => o,
             _ => unreachable!("an object fills to an object"),
         }
@@ -645,8 +646,13 @@ mod tests {
     #[test]
     fn factorys_org_keys_carry_the_endpoint_and_every_slot_is_known() {
         let p = policy();
-        let org = Value::Object(p.factory_org_keys("https://ai-proxy.acme.example"));
-        assert_eq!(org["modelPolicy"]["allowedBaseUrls"], serde_json::json!(["https://ai-proxy.acme.example"]));
+        let t = crate::models::Target { endpoint: "https://proxy.acme.example/consus".into(), ..Default::default() };
+        let org = Value::Object(p.factory_org_keys(&t));
+        assert_eq!(
+            org["modelPolicy"]["allowedBaseUrls"],
+            serde_json::json!(["https://proxy.acme.example/consus", "https://proxy.acme.example/consus/v1"]),
+            "both surfaces, so an endpoint with a path admits its /v1 models however droid matches"
+        );
         assert_eq!(org["webSearchDisabled"], true);
         assert_eq!(org["modelPolicy"]["allowAllFactoryModels"], false);
         assert!(strings(&org).iter().all(|s| !s.starts_with('$')), "every slot is filled: {org}");

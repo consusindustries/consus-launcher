@@ -294,7 +294,7 @@
     },
     "factory": {
       "name": "Factory",
-      "file": "settings.json in the launcher's own Factory home (FACTORY_HOME_OVERRIDE), plus an org-level file the launcher names in FACTORY_ORG_MANAGED_SETTINGS_LOCAL_PATH that carries lock_only.required and the default models; the lock is Factory's machine-wide settings.json, which carries settings, the models, the default models and lock_only.required. macOS only.",
+      "file": "settings.json in the launcher's own Factory home (FACTORY_HOME_OVERRIDE), plus an org-level file the launcher names in FACTORY_ORG_MANAGED_SETTINGS_LOCAL_PATH that carries lock_only.required, the web-access sandbox, and the default models; the lock is Factory's machine-wide settings.json, which carries settings, the models, the default models and lock_only.required. macOS only.",
       "settings": {
         "cloudSessionSync": false,
         "cloudConfigSync": false,
@@ -340,7 +340,8 @@
             "allowAllFactoryModels": false,
             "allowCustomModels": true,
             "allowedBaseUrls": [
-              "$endpoint"
+              "$endpoint",
+              "$endpoint_v1"
             ]
           },
           "disableAutoUpdate": true,

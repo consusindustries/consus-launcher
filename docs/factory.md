@@ -130,20 +130,28 @@ technical control; the guide says so plainly and tells users not to use them.
   directory. Sign out removes the launcher's keys and leaves the directory, as for Pi.
 - **Two files per launch.** `settings.json` carries the models, the defaults and the
   user-level switches; `consus-org-settings.json` in the same directory carries the
-  org-only keys and the defaults, and the Terminal script sets
+  org-only keys, the web-access sandbox and the defaults, and the Terminal script sets
   `FACTORY_ORG_MANAGED_SETTINGS_LOCAL_PATH` to it. Without the second file the tile is
   not safe on its own (the table above). If the variable stops working, the version
   check below refuses the tile, and the fallback is greying it until IT pushes the
-  machine-wide lock.
+  machine-wide lock. The sandbox is in the org-level file as well as the user one because
+  the org's value wins: measured 2026-11-12, with the user file's sandbox turned off, a
+  shell `curl` was still refused.
 - **A version check guards the undocumented variable.** Once per droid binary (its real
   path and file signature, which an update changes; a stat, not a `droid --version` call
   on every launch), the launcher runs `droid exec --list-tools --output-format json` with
-  the tile's environment, timed out, and caches a pass or a refusal for that binary.
-  WebSearch or GenerateImage in the list is a positive (measured with 0.245.1: without the
-  org-level file droid lists both, with it neither): the org-level file is not being read,
-  so the tile refuses to open and says why. No answer (timeout, a non-zero exit, output it cannot read) is "couldn't
-  tell": the tile opens with a notice, and the check runs again on the next launch. Only a
-  positive WebSearch refuses. The command calls Factory's API, so it is tested on a
+  the tile's environment (droid's folder first on PATH), with a 10-second limit, and caches
+  a pass or a refusal for that binary. A web search or image generation tool in the list
+  (by `llmId`, `id` or display name, with case and punctuation ignored, so a rename such as
+  `web_search` or `WebSearchV2` still counts) is a positive: the org-level file is not being
+  read, so the tile refuses to open and says why. Measured with 0.245.1 on the morning of
+  2026-11-12: without the file droid listed WebSearch and GenerateImage, with it neither.
+  That afternoon droid listed neither even without the file, with nothing changed on the
+  machine, so whether droid offers web search also depends on Factory's side; the check
+  still refuses whenever it does. No answer (timeout, a non-zero exit, output it cannot
+  read) is "couldn't tell": the tile opens with a notice, and that answer is kept until
+  the launcher restarts, so a network that blocks Factory costs one wait. Only a positive
+  refuses. The command calls Factory's API, so it is tested on a
   machine with no Factory login (check 2).
 - **Factory's machine-wide file is the lock**, and when it exists the tile says "Managed
   by your organization" and the launcher writes nothing, as for Claude Code. The lock
@@ -191,10 +199,12 @@ A `factory` entry in `policy/launcher-policy.json`, schema 1, no new fields:
   `sandbox.network.allowedDomains` empty. `on`: `sandbox.enabled` false.
 - `lock_only.required`: `webSearchDisabled` true, `imageGenerationEnabled` false,
   `modelPolicy.allowAllFactoryModels` false, `modelPolicy.allowCustomModels` true,
-  `modelPolicy.allowedBaseUrls` `["$endpoint"]`, `disableAutoUpdate` true,
+  `modelPolicy.allowedBaseUrls` `["$endpoint", "$endpoint_v1"]` (both surfaces, so an
+  endpoint with a path admits its `/v1` models whether droid matches exactly or by
+  prefix), `disableAutoUpdate` true,
   `hostedSessionEmbeddingsEnabled` false, `advancedAnalyticsEnabled` false,
-  `wikiCloudSync` false. `allowedBaseUrls` is the one value that is a slot: the document
-  carries the shape, and both renderers fill `$endpoint` the way connector entries fill
+  `wikiCloudSync` false. `allowedBaseUrls` holds the only values that are slots: the document
+  carries the shape, and both renderers fill `$endpoint` and `$endpoint_v1` the way connector entries fill
   `$slack_client_id` (`policy.rs` `fill`, the portal's `fillEntry`). No new `LockOnly`
   field. The launcher's org-level file carries the same keys, so the writer reads them
   from here too.

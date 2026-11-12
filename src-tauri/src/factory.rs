@@ -109,8 +109,7 @@ fn custom_models(helper: &Path, models_json: &Value, t: &Target) -> Result<Vec<V
         return Err(no_models_message(t));
     }
     list.sort_by(|(_, a), (_, b)| maker_rank(&a.maker).cmp(&maker_rank(&b.maker)).then(a.name.cmp(&b.name)));
-    // droid runs the helper through a shell; the path can contain a space.
-    let helper = format!("\"{}\"", crate::config::command_path(helper));
+    let helper = crate::config::helper_shell(helper);
     Ok(list
         .into_iter()
         .map(|(id, d)| {
@@ -224,7 +223,10 @@ pub fn write_config(home: &Path, helper: &Path, models_json: &Value, t: &Target)
     merge(&mut doc, &p.factory_variant(t.web_access));
     merge(&mut doc, &defaults);
 
-    let mut org = p.factory_org_keys(&t.endpoint);
+    // The sandbox goes in the org-level file too, so droid's own settings
+    // cannot turn it off for the session.
+    let mut org = p.factory_org_keys(t);
+    merge(&mut org, &p.factory_variant(t.web_access));
     merge(&mut org, &defaults);
     write_object(&org_path(home), org)?;
     write_object(&spath, doc)
@@ -266,18 +268,27 @@ pub enum Check {
     Unknown,
 }
 
-/// Measured with droid 0.245.1: without the org-level file it lists both;
-/// with it, neither.
-const ORG_REMOVED: [&str; 2] = ["WebSearch", "GenerateImage"];
+/// The tools the org-level file removes, as their names read with case and
+/// punctuation dropped, so a rename like web_search or WebSearchV2 still
+/// counts. Measured with droid 0.245.1: without the file it lists WebSearch
+/// (id web_search) and GenerateImage (id generate-image); with it, neither.
+const ORG_REMOVED: [&str; 3] = ["websearch", "generateimage", "imagegeneration"];
+
+fn plain(s: &str) -> String {
+    s.chars().filter(char::is_ascii_alphanumeric).map(|c| c.to_ascii_lowercase()).collect()
+}
 
 pub fn check(output: Option<&str>) -> Check {
     let Some(list) = output.and_then(|s| serde_json::from_str::<Vec<Value>>(s).ok()) else {
         return Check::Unknown;
     };
-    let names: Vec<&str> = list.iter().filter_map(|t| t.get("llmId").and_then(Value::as_str)).collect();
-    if names.iter().any(|n| ORG_REMOVED.contains(n)) {
+    let names = |t: &Value| -> Vec<String> {
+        ["llmId", "id", "displayName"].iter().filter_map(|k| t.get(*k).and_then(Value::as_str)).map(plain).collect()
+    };
+    let all: Vec<String> = list.iter().flat_map(names).collect();
+    if all.iter().any(|n| ORG_REMOVED.iter().any(|r| n.contains(r))) {
         Check::Refuse
-    } else if names.contains(&"Read") {
+    } else if all.iter().any(|n| n == "read") {
         Check::Pass
     } else {
         Check::Unknown
@@ -361,15 +372,20 @@ mod tests {
         let t = Target { endpoint: "https://ai-proxy.acme.example".into(), web_access: true, ..Target::default() };
         write_config(&home, &helper(), &models(), &t).unwrap();
         let org = read(&org_path(&home));
-        assert_eq!(org["modelPolicy"]["allowedBaseUrls"], json!(["https://ai-proxy.acme.example"]));
+        assert_eq!(org["modelPolicy"]["allowedBaseUrls"], json!(["https://ai-proxy.acme.example", "https://ai-proxy.acme.example/v1"]));
         assert_eq!(org["sessionDefaultSettings"]["model"], "custom:consus-claude-opus-5-5");
-        let mut want = crate::policy::leaf_paths(&Value::Object(policy().factory_org_keys(&t.endpoint)));
+        assert_eq!(org["sandbox"], json!({ "enabled": false }), "the sandbox too, for this web-access setting");
+        let mut want = crate::policy::leaf_paths(&Value::Object(policy().factory_org_keys(&t)));
+        want.extend(crate::policy::leaf_paths(&Value::Object(policy().factory_variant(t.web_access))));
         want.extend(DEFAULT_KEYS.map(String::from));
         want.sort();
         assert_eq!(crate::policy::leaf_paths(&org), want, "nothing else, no customModels");
         let s = read(&settings_path(&home));
         assert_eq!(s["sandbox"], json!({ "enabled": false }), "web access on");
         assert_eq!(s["customModels"][0]["baseUrl"], "https://ai-proxy.acme.example");
+        let off = Target { web_access: false, ..t.clone() };
+        write_config(&home, &helper(), &models(), &off).unwrap();
+        assert_eq!(read(&org_path(&home))["sandbox"]["mode"], "per-command", "web access off: enforced from the org file");
         let _ = fs::remove_dir_all(&home);
     }
 
@@ -487,6 +503,9 @@ mod tests {
         assert_eq!(check(Some(&without_org)), Check::Refuse);
         let image = LISTED.replace("]", r#", { "id": "generate-image", "llmId": "GenerateImage" }]"#);
         assert_eq!(check(Some(&image)), Check::Refuse);
+        for renamed in [r#"{ "llmId": "WebSearchV2" }"#, r#"{ "id": "web-search-cli", "llmId": "Search" }"#, r#"{ "llmId": "X", "displayName": "Web Search" }"#] {
+            assert_eq!(check(Some(&LISTED.replace("]", &format!(", {renamed}]")))), Check::Refuse, "{renamed}");
+        }
         for unknown in [None, Some(""), Some("not json"), Some("[]"), Some(r#"{ "error": "sign in" }"#)] {
             assert_eq!(check(unknown), Check::Unknown, "{unknown:?}");
         }
