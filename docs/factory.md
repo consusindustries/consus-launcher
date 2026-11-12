@@ -223,7 +223,7 @@ move into `tools/terminal.rs` first, as a change of its own, to keep it under th
 | `src-tauri/src/tools/terminal.rs` (new in step one) | The Factory arm exporting `FACTORY_HOME_OVERRIDE`, `FACTORY_ORG_MANAGED_SETTINGS_LOCAL_PATH`, `FACTORY_DROID_AUTO_UPDATE_ENABLED=false`, PATH with droid's folder |
 | `src-tauri/src/settings.rs:49` | `("factory", "factory")` in `TOOL_IDS`, its length 5 to 6; the default tool list is every tool but Factory (the `None` case of `Settings.tools` no longer means every tool) |
 | `src/main.ts`, `index.html` | The tile, `"factory"` in `TOOLS`, vendor link `https://factory.ai`, "Not installed" copy, the "couldn't tell" notice and the refusal copy |
-| `src-tauri/assets/factory.svg` | Factory's mark, when Eric supplies it; until then the tile wears Terminal's icon, like Claude Code |
+| `src-tauri/assets/factory.svg` | Factory's mark, from factory.ai's favicon, on a rounded tile like Pi's |
 | `README.md`, `CHANGELOG.md`, version | Tools table row (macOS only), `Tools` key list and "Default: all but Factory", the generated lockdown table, the metadata sentence, the Automations and `/bug` warning with "no technical control", and that turning Factory off removes the launcher's files but not the root-owned lock, which IT removes |
 
 Tests that pin five tools and must become six: `policy.rs` (`ids`, the per-tool loop),

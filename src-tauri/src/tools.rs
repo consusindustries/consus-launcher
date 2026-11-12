@@ -45,6 +45,8 @@ fn helper_path(dir: &Path, helper: &str) -> PathBuf {
 }
 /// Pi's mark from pi.dev on its site's background color.
 const PI_ICON: &str = include_str!("../assets/pi.svg");
+/// Factory's mark from factory.ai's favicon, on a rounded tile like Pi's.
+const FACTORY_ICON: &str = include_str!("../assets/factory.svg");
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Tool {
@@ -479,18 +481,17 @@ pub async fn detect_tools(app: AppHandle, models: Option<Value>) -> HashMap<Stri
                 ToolStatus { allowed, managed: installed && org_policy(t), installed, icon, no_models: None }
             } else {
                 let installed = terminal_cli(&app, t).is_some();
-                // Pi has a logo of its own and the ChatGPT app carries
-                // Codex's; Claude Code, Factory (until its mark is added), or
-                // Codex without that app, opens in Terminal, so it wears
-                // Terminal's icon.
+                // Pi and Factory have logos of their own and the ChatGPT app
+                // carries Codex's; Claude Code, or Codex without that app,
+                // opens in Terminal, so it wears Terminal's icon.
                 let codex_png = app_spec(Tool::ChatGpt)
                     .and_then(|s| app_path(&app, &s))
                     .map(|d| d.join("Contents/Resources/icon-codex-dark-color.png"))
                     .filter(|p| p.exists());
                 let icon = match (t, codex_png) {
-                    (Tool::Pi, _) => Some(format!(
+                    (Tool::Pi | Tool::Factory, _) => Some(format!(
                         "data:image/svg+xml;base64,{}",
-                        base64::engine::general_purpose::STANDARD.encode(PI_ICON)
+                        base64::engine::general_purpose::STANDARD.encode(if t == Tool::Pi { PI_ICON } else { FACTORY_ICON })
                     )),
                     (Tool::Codex, Some(png)) => cached_icon(t, &png).or_else(|| image_icon(&app, t, &png)),
                     _ => app_icon(&app, t, Path::new(TERMINAL_APP)),
