@@ -2,6 +2,10 @@
 
 What changed in each release. Each release's GitHub page shows its section.
 
+## v1.3.1 (2026-11-11)
+
+- Codex CLI starts again with the launcher's settings. The newest ChatGPT's built-in Codex leaves out a field in its model list that Codex CLI 0.147 requires, so a model list the launcher built from it stopped `codex` with "missing field `supports_parallel_tool_calls`". The launcher now fills the field in. ChatGPT was not affected.
+
 ## v1.3.0 (2026-11-11)
 
 - The launcher reads your organization's settings from the Consus portal. An admin chooses the tools, compliance level, web access, and organization name on the portal's Launcher page, and every signed-in launcher picks them up when it starts or its window comes forward, with no file to push. Device management still wins wherever it sets a value. The launcher keeps the last settings it read, so it works offline, and removes them when you sign out.
