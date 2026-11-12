@@ -84,6 +84,11 @@ pub fn catalog(bundled: &Value, models_json: &Value, t: &Target) -> Vec<Value> {
             o.insert("availability_nux".into(), Value::Null);
             o.insert("upgrade".into(), Value::Null);
             o.insert("supports_search_tool".into(), json!(false));
+            // Codex 0.147 refuses a catalog entry without this field; the
+            // engine in ChatGPT (Codex 0.160) no longer lists it, so a catalog
+            // cloned from there stopped a standalone codex from starting.
+            // true is what 0.147's own entries carry; 0.160 accepts it.
+            o.entry("supports_parallel_tool_calls").or_insert(json!(true));
             Some(m)
         })
         .enumerate()
@@ -229,6 +234,19 @@ mod tests {
         both["models"].as_array_mut().unwrap().push(json!({ "slug": "gpt-5.4", "base_instructions": "5.4",
             "supported_reasoning_levels": [level("low"), level("medium"), level("high")] }));
         assert_eq!(catalog(&both, &models, &Target::default())[0]["base_instructions"], "5.4");
+    }
+
+    #[test]
+    fn every_entry_says_whether_it_supports_parallel_tool_calls() {
+        // ChatGPT's engine (Codex 0.160) dropped the field; Codex 0.147 needs it.
+        let models: Value = serde_json::from_str(MODELS).unwrap();
+        let list = catalog(&bundled(), &models, &Target::default());
+        assert!(list.iter().all(|m| m["supports_parallel_tool_calls"] == true));
+
+        // An entry that carries it keeps its own value.
+        let mut stock = bundled();
+        stock["models"][0]["supports_parallel_tool_calls"] = json!(false);
+        assert_eq!(catalog(&stock, &models, &Target::default())[0]["supports_parallel_tool_calls"], false);
     }
 
     #[test]
