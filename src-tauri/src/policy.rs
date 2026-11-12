@@ -237,6 +237,32 @@ impl Policy {
         self.tool("pi").env.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
     }
 
+    /// Factory's static user-level keys.
+    pub fn factory_static(&self) -> Map<String, Value> {
+        self.tool("factory").settings.clone()
+    }
+
+    /// Factory's keys that follow the org's web-access setting (its sandbox).
+    pub fn factory_variant(&self, web_access: bool) -> Map<String, Value> {
+        self.web("factory", web_access).clone()
+    }
+
+    /// The keys droid enforces only from org settings, with the endpoint
+    /// filled in (`modelPolicy.allowedBaseUrls`).
+    pub fn factory_org_keys(&self, t: &crate::models::Target) -> Map<String, Value> {
+        let required = Value::Object(self.tool("factory").lock_only.required.clone());
+        let v1 = t.v1();
+        match fill(&required, &BTreeMap::from([("endpoint", t.endpoint.as_str()), ("endpoint_v1", v1.as_str())]), &[]) {
+            Value::Object(o) => o,
+            _ => unreachable!("an object fills to an object"),
+        }
+    }
+
+    /// Factory's machine-wide settings file, the lock (macOS).
+    pub fn factory_lock_path(&self) -> &str {
+        self.tool("factory").lock.as_ref().and_then(|l| l.paths.as_ref()).and_then(|p| p.get("mac")).expect("factory has a mac lock path")
+    }
+
     /// Codex's sandbox network value for the org's web-access setting.
     pub fn codex_network_access(&self, web_access: bool) -> bool {
         self.web("codex-cli", web_access)
@@ -315,7 +341,7 @@ impl Policy {
     }
 }
 
-/// A connector entry with its `$<slot>` strings filled and its
+/// A value with its `$<slot>` strings filled and, in a connector entry, its
 /// `$blocked_tools` member expanded.
 fn fill(v: &Value, slots: &BTreeMap<&str, &str>, blocked: &[String]) -> Value {
     match v {
@@ -370,7 +396,7 @@ mod tests {
         assert_eq!(p.schema, 1);
         assert_eq!(p.launcher, env!("CARGO_PKG_VERSION"), "bump policy.launcher with the version");
         let ids: Vec<&str> = p.tools.keys().map(String::as_str).collect();
-        assert_eq!(ids, ["chatgpt-desktop", "claude-code", "claude-desktop", "codex-cli", "pi"]);
+        assert_eq!(ids, ["chatgpt-desktop", "claude-code", "claude-desktop", "codex-cli", "factory", "pi"]);
         for (id, t) in &p.tools {
             assert!(!t.name.is_empty(), "{id} has a name");
             if let Some(base) = &t.extends {
@@ -481,7 +507,7 @@ mod tests {
         let mut out = String::from(
             "| | Inference | Vendor telemetry and updates | Web search | Web fetch, off / on | Agent shell network, off / on | What still leaves the machine | Lock it for the user |\n|---|---|---|---|---|---|---|---|\n",
         );
-        for id in ["claude-desktop", "claude-code", "chatgpt-desktop", "codex-cli", "pi"] {
+        for id in ["claude-desktop", "claude-code", "chatgpt-desktop", "codex-cli", "pi", "factory"] {
             let t = p.tool(id);
             let r = &t.readme;
             out.push_str(&format!(
@@ -615,6 +641,30 @@ mod tests {
         assert!(bad(serde_json::json!({ "client_id": "1234567.7654321" })).contains("without a kind"));
         // Extra fields from a newer portal are not this launcher's to refuse.
         assert!(p.connector_from(&serde_json::json!({ "kind": "slack", "client_id": "1234567.7654321", "note": "x" })).is_ok());
+    }
+
+    #[test]
+    fn factorys_org_keys_carry_the_endpoint_and_every_slot_is_known() {
+        let p = policy();
+        let t = crate::models::Target { endpoint: "https://proxy.acme.example/consus".into(), ..Default::default() };
+        let org = Value::Object(p.factory_org_keys(&t));
+        assert_eq!(
+            org["modelPolicy"]["allowedBaseUrls"],
+            serde_json::json!(["https://proxy.acme.example/consus", "https://proxy.acme.example/consus/v1"]),
+            "both surfaces, so an endpoint with a path admits its /v1 models however droid matches"
+        );
+        assert_eq!(org["webSearchDisabled"], true);
+        assert_eq!(org["modelPolicy"]["allowAllFactoryModels"], false);
+        assert!(strings(&org).iter().all(|s| !s.starts_with('$')), "every slot is filled: {org}");
+        for (id, t) in &p.tools {
+            for slot in t.slot_keys.values().chain(t.env_slot_keys.values()) {
+                assert!(p.slots.contains_key(slot), "{id}: {slot} is not a slot");
+            }
+        }
+        assert_eq!(p.factory_variant(false)["sandbox"]["mode"], "per-command");
+        assert_eq!(p.factory_variant(true)["sandbox"], serde_json::json!({ "enabled": false }));
+        assert_eq!(p.factory_lock_path(), "/Library/Application Support/Factory/settings.json");
+        assert!(p.tool("factory").lock.as_ref().unwrap().paths.as_ref().unwrap().get("win").is_none(), "macOS only until the Windows release");
     }
 
     #[test]

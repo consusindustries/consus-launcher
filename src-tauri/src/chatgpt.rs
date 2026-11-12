@@ -27,7 +27,7 @@ use crate::models::{self, Target};
 
 // Only these GPT models are served over the Responses API the app speaks,
 // in preference order. The models endpoint does not expose this.
-const RESPONSES_MODELS: [&str; 5] = ["gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.6-luna", "gpt-5.4", "gpt-5.1"];
+pub(crate) const RESPONSES_MODELS: [&str; 5] = ["gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.6-luna", "gpt-5.4", "gpt-5.1"];
 
 // The guide's config, minus the inline key, kept verbatim in the policy
 // document (policy/launcher-policy.json) with its provenance.

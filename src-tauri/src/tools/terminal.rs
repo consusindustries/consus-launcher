@@ -4,13 +4,14 @@
 
 use serde_json::{json, Value};
 use std::fs;
+use std::path::Path;
 use std::process::Command;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 
 use super::*;
 use crate::models::Target;
-use crate::{claude_code, codex, config, keychain, pi};
+use crate::{claude_code, codex, config, factory, keychain, pi};
 
 /// Unsets, in shell, every variable whose name matches the pattern, for a
 /// Terminal window, whose environment the launcher cannot set directly.
@@ -60,6 +61,65 @@ pub(crate) const PI_SCRUB: Scrub = Scrub {
     suffixes: &["_API_KEY"],
     exact: &["HF_TOKEN", "COPILOT_GITHUB_TOKEN"],
 };
+/// Anything that could point droid at another home, org source, or
+/// Factory's own key (FACTORY_API_KEY).
+pub(crate) const FACTORY_SCRUB: Scrub = Scrub { prefixes: &["FACTORY"], suffixes: &[], exact: &[] };
+
+/// What the version check found for the droid binary last checked. It holds
+/// until that binary changes (an update). No answer is kept only for this run
+/// of the launcher, so a network that blocks Factory costs one wait, not one
+/// per launch, and a restart asks again.
+static FACTORY_CHECKED: Mutex<Option<(PathBuf, Signature, factory::Check)>> = Mutex::new(None);
+
+const FACTORY_REFUSED: &str = "This droid version ignores the launcher's Factory settings, so web search would be on. Ask IT for Factory's machine-wide lock, or use another tool.";
+const FACTORY_UNSURE: &str = "Couldn't confirm that this droid version keeps web search off.";
+
+/// Whether droid reads the launcher's org-level file, asked the way the
+/// Terminal window will run it: same home, same file, same folder, droid's
+/// folder first on PATH, and none of the FACTORY_ variables the launcher
+/// inherited.
+fn factory_check(cli: &Path, work: &Path, profile: &Path, org: &Path) -> factory::Check {
+    let real = fs::canonicalize(cli).unwrap_or_else(|_| cli.to_path_buf());
+    let sig = signature(&real);
+    if let Some((p, s, c)) = FACTORY_CHECKED.lock().unwrap().as_ref() {
+        if *p == real && Some(*s) == sig {
+            return *c;
+        }
+    }
+    let bin = cli.parent().unwrap_or(Path::new("/"));
+    let mut cmd = Command::new(cli);
+    cmd.args(["exec", "--list-tools", "--output-format", "json"]).current_dir(work);
+    for (k, _) in std::env::vars_os() {
+        if k.to_str().is_some_and(|k| FACTORY_SCRUB.matches(k)) {
+            cmd.env_remove(k);
+        }
+    }
+    cmd.env("FACTORY_HOME_OVERRIDE", profile)
+        .env("FACTORY_ORG_MANAGED_SETTINGS_LOCAL_PATH", org)
+        .env("FACTORY_DROID_AUTO_UPDATE_ENABLED", "false")
+        .env("PATH", format!("{}:{}", bin.display(), std::env::var("PATH").unwrap_or_default()));
+    // Measured under a second; the limit is for a network that holds the
+    // connection to Factory open.
+    let c = factory::check(output_within(&mut cmd, Duration::from_secs(10)).as_deref());
+    if let Some(sig) = sig {
+        *FACTORY_CHECKED.lock().unwrap() = Some((real, sig, c));
+    }
+    c
+}
+
+/// Factory's Terminal script. `org` is the launcher's org-level file, or
+/// None under the organization's lock.
+fn factory_script(work: &Path, profile: &Path, org: Option<&Path>, bin: &Path, cli: &Path) -> String {
+    let org = org.map(|o| format!(" FACTORY_ORG_MANAGED_SETTINGS_LOCAL_PATH=\"{}\"", o.display())).unwrap_or_default();
+    format!(
+        "cd \"{}\" || exit 1; {} export PATH=\"{}:$PATH\" FACTORY_HOME_OVERRIDE=\"{}\" FACTORY_DROID_AUTO_UPDATE_ENABLED=\"false\"{org}; clear; exec \"{}\"",
+        work.display(),
+        scrub(&FACTORY_SCRUB.pattern()),
+        bin.display(),
+        profile.display(),
+        cli.display()
+    )
+}
 
 /// Configures a terminal tool and returns the POSIX script its Terminal
 /// window runs. The per-tool part; everything around it is shared.
@@ -162,6 +222,31 @@ pub(super) fn terminal_script(app: &AppHandle, t: Tool, models: &Value, target: 
                 cli.display()
             ))
         }
+        Tool::Factory => {
+            let cli = cli(app, "droid").ok_or("Factory is not installed.")?;
+            let bin = cli.parent().ok_or("Factory is not installed.")?;
+            let profile = factory::profile_dir(&home);
+            fs::create_dir_all(&work).map_err(|e| format!("{}: {e}", work.display()))?;
+            // Under the organization's lock the launcher writes nothing and
+            // names no org-level file: the lock is the whole policy.
+            let org = if factory_policy() {
+                None
+            } else {
+                let helper = helper_path(&helper_dir, FACTORY_HELPER_NAME);
+                config::write_helper(&helper)?;
+                factory::write_config(&home, &helper, models, target)?;
+                let org = factory::org_path(&home);
+                match factory_check(&cli, &work, &profile, &org) {
+                    factory::Check::Refuse => return Err(FACTORY_REFUSED.into()),
+                    factory::Check::Unknown => {
+                        let _ = app.emit("tool-notice", json!({ "tool": key(t), "message": FACTORY_UNSURE }));
+                    }
+                    factory::Check::Pass => {}
+                }
+                Some(org)
+            };
+            Ok(factory_script(&work, &profile, org.as_deref(), bin, &cli))
+        }
         Tool::Desktop | Tool::ChatGpt => Err(format!("{} is not a terminal tool.", name(t))),
     }
 }
@@ -172,7 +257,7 @@ mod tests {
 
     #[test]
     fn scrub_names_are_plain_identifiers_so_the_pattern_needs_no_escaping() {
-        for s in [&CLAUDE_SCRUB, &CODEX_SCRUB, &PI_SCRUB] {
+        for s in [&CLAUDE_SCRUB, &CODEX_SCRUB, &PI_SCRUB, &FACTORY_SCRUB] {
             for n in s.prefixes.iter().chain(s.suffixes).chain(s.exact) {
                 assert!(n.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_'), "{n}");
             }
@@ -202,5 +287,43 @@ mod tests {
             assert_eq!(CODEX_SCRUB.matches(name), codex, "{name} codex");
             assert_eq!(PI_SCRUB.matches(name), pi, "{name} pi");
         }
+    }
+
+    #[test]
+    fn factorys_script_names_its_home_and_org_file_and_never_the_key() {
+        let p = |s: &str| PathBuf::from(s);
+        let (work, profile, org) = (p("/Users/x/Consus"), p("/Users/x/.factory-consus-gateway"), p("/Users/x/.factory-consus-gateway/.factory/consus-org-settings.json"));
+        let (bin, cli) = (p("/Users/x/.local/bin"), p("/Users/x/.local/bin/droid"));
+        let s = factory_script(&work, &profile, Some(&org), &bin, &cli);
+        assert!(s.starts_with("cd \"/Users/x/Consus\" || exit 1; for v in $(env | grep -oE \"^((FACTORY)[A-Za-z0-9_]*)=\""), "{s}");
+        assert!(s.contains(" export PATH=\"/Users/x/.local/bin:$PATH\" FACTORY_HOME_OVERRIDE=\"/Users/x/.factory-consus-gateway\" FACTORY_DROID_AUTO_UPDATE_ENABLED=\"false\" FACTORY_ORG_MANAGED_SETTINGS_LOCAL_PATH=\"/Users/x/.factory-consus-gateway/.factory/consus-org-settings.json\";"), "{s}");
+        assert!(s.ends_with("; clear; exec \"/Users/x/.local/bin/droid\""), "{s}");
+        assert!(!s.contains("KEY") && !s.contains('\''), "no key, and nothing Terminal's quoting cannot carry: {s}");
+        let locked = factory_script(&work, &profile, None, &bin, &cli);
+        assert!(locked.contains("FACTORY_HOME_OVERRIDE") && !locked.contains("FACTORY_ORG_MANAGED_SETTINGS_LOCAL_PATH"), "under the lock: {locked}");
+        assert!(FACTORY_SCRUB.matches("FACTORY_API_KEY") && FACTORY_SCRUB.matches("FACTORY_TELEMETRY_INGEST_BASE_URL") && !FACTORY_SCRUB.matches("PATH"));
+    }
+
+    /// Against the real droid on this machine (`droid` in ~/.local/bin):
+    /// cargo test -- --ignored with_the_real_droid
+    #[test]
+    #[ignore]
+    fn factory_check_with_the_real_droid() {
+        let home = std::env::temp_dir().join(format!("consus-launcher-real-droid-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&home);
+        let droid = PathBuf::from(std::env::var("HOME").unwrap()).join(".local/bin/droid");
+        let work = home.join("Consus");
+        fs::create_dir_all(&work).unwrap();
+        let models = json!([{ "id": "consus/claude-opus-5-5:itar", "display_name": "Claude Opus 5.5" }]);
+        factory::write_config(&home, Path::new("/usr/bin/true"), &models, &Target::default()).unwrap();
+        let profile = factory::profile_dir(&home);
+        assert_eq!(factory_check(&droid, &work, &profile, &factory::org_path(&home)), factory::Check::Pass, "with the launcher's org-level file");
+        // Without the file, whether droid lists WebSearch depends on Factory's
+        // side: it did on the morning of 2026-11-12 and did not that
+        // afternoon, with no change here. So only check() pins the refusal,
+        // on the output captured that morning.
+        *FACTORY_CHECKED.lock().unwrap() = None;
+        assert_ne!(factory_check(&droid, &work, &profile, &home.join("missing.json")), factory::Check::Unknown, "droid answers without the file too");
+        let _ = fs::remove_dir_all(&home);
     }
 }

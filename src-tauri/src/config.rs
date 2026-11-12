@@ -112,6 +112,12 @@ pub fn command_path(p: &Path) -> String {
     }
 }
 
+/// The helper as a whole shell command (the policy's `helper_shell` slot):
+/// quoted, since the path can contain a space.
+pub fn helper_shell(helper: &Path) -> String {
+    format!("\"{}\"", command_path(helper))
+}
+
 fn no_models_message(t: &Target) -> String {
     format!("No Claude {} models are available to this key.", t.tag())
 }

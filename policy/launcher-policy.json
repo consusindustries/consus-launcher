@@ -25,7 +25,7 @@
     },
     "models": {
       "kind": "model-list",
-      "note": "Every model the key may use at that level, in the tool's own list shape."
+      "note": "Every model the key may use at that level, in the tool's own list shape. Factory: one customModels entry per model, id custom:consus-<bare id without the level, dots as dashes>, and its subagent mediumModel and lightModel are the first Sonnet and the first Haiku, else model (docs/factory.md)."
     },
     "opus": {
       "kind": "model-id"
@@ -290,6 +290,80 @@
         "shell": "Not restricted: Pi has no sandbox",
         "leaves_machine": "`fd` and `ripgrep` from GitHub on first run",
         "lock": "Pi offers no lock; a container or the network edge"
+      }
+    },
+    "factory": {
+      "name": "Factory",
+      "file": "settings.json in the launcher's own Factory home (FACTORY_HOME_OVERRIDE), plus an org-level file the launcher names in FACTORY_ORG_MANAGED_SETTINGS_LOCAL_PATH that carries lock_only.required, the web-access sandbox, and the default models; the lock is Factory's machine-wide settings.json, which carries settings, the models, the default models and lock_only.required. macOS only.",
+      "settings": {
+        "cloudSessionSync": false,
+        "cloudConfigSync": false,
+        "cloudItemPull": false,
+        "telemetry": {
+          "enabled": false
+        },
+        "sessionEmbeddingChoice": {
+          "provider": "off"
+        }
+      },
+      "slot_keys": {
+        "customModels": "models",
+        "sessionDefaultSettings.model": "model",
+        "sessionDefaultSettings.specModeModel": "model",
+        "compactionModel": "model",
+        "missionOrchestratorModel": "model",
+        "missionModelSettings.workerModel": "model",
+        "missionModelSettings.validationWorkerModel": "model",
+        "subagentModelSettings.heavyModel": "model"
+      },
+      "by_web_access": {
+        "off": {
+          "sandbox": {
+            "enabled": true,
+            "mode": "per-command",
+            "network": {
+              "allowedDomains": []
+            }
+          }
+        },
+        "on": {
+          "sandbox": {
+            "enabled": false
+          }
+        }
+      },
+      "lock_only": {
+        "required": {
+          "webSearchDisabled": true,
+          "imageGenerationEnabled": false,
+          "modelPolicy": {
+            "allowAllFactoryModels": false,
+            "allowCustomModels": true,
+            "allowedBaseUrls": [
+              "$endpoint",
+              "$endpoint_v1"
+            ]
+          },
+          "disableAutoUpdate": true,
+          "hostedSessionEmbeddingsEnabled": false,
+          "advancedAnalyticsEnabled": false,
+          "wikiCloudSync": false
+        }
+      },
+      "lock": {
+        "kind": "settings-file",
+        "paths": {
+          "mac": "/Library/Application Support/Factory/settings.json"
+        },
+        "note": "Factory reads one org source, the first that exists, and this file is first: when it exists the launcher writes nothing for Factory."
+      },
+      "readme": {
+        "telemetry": "Off: telemetry, cloud session and config sync, auto-update",
+        "web_search": "Removed by the org-level file",
+        "web_fetch": "None / any host (Factory's sandbox)",
+        "shell": "None / any host (Factory's sandbox, macOS)",
+        "leaves_machine": "Sign-in, feature flags, and token counts per turn to Factory",
+        "lock": "Factory's machine-wide `settings.json` from the portal"
       }
     }
   },

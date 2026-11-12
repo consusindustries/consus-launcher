@@ -44,7 +44,7 @@ fn settings_path(home: &Path) -> PathBuf {
 
 /// Writes a temp file and renames it over the target, so an interrupted
 /// write never leaves a truncated file that would block every later launch.
-fn write_object(path: &Path, doc: Map<String, Value>) -> Result<(), String> {
+pub(crate) fn write_object(path: &Path, doc: Map<String, Value>) -> Result<(), String> {
     let text = serde_json::to_string_pretty(&Value::Object(doc)).map_err(|e| e.to_string())?;
     let tmp = path.with_extension("json.tmp");
     fs::write(&tmp, text + "\n")
@@ -70,7 +70,7 @@ fn thinking_map(efforts: &[String]) -> Value {
 }
 
 /// Claude first, then GPT, Gemini, Grok, and the rest, by name within each.
-fn maker_rank(maker: &str) -> usize {
+pub(crate) fn maker_rank(maker: &str) -> usize {
     ["anthropic", "openai", "google", "xai"].iter().position(|m| *m == maker).unwrap_or(4)
 }
 

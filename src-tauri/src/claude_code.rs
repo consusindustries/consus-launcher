@@ -141,8 +141,7 @@ fn owned(
     // the gateway. Only the slots are filled here.
     let policy = crate::policy::policy();
     let mut top = policy.claude_code_static();
-    // apiKeyHelper runs through the shell; the path can contain a space.
-    top.insert("apiKeyHelper".into(), json!(format!("\"{}\"", crate::config::command_path(helper))));
+    top.insert("apiKeyHelper".into(), json!(crate::config::helper_shell(helper)));
     top.insert("model".into(), json!(main.id));
     top.insert("availableModels".into(), json!(list.iter().map(|m| &m.id).collect::<Vec<_>>()));
 
