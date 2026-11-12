@@ -34,6 +34,7 @@ Decided since (Eric's calls):
 - **No auto-update, drafted releases** (2026-09-24). Releases were Mac-only until Windows support landed; they now include a Windows `.msi` (2026-09-25; signed from v1.0.0). See section 9.
 - **Line count** (2026-09-24): about 1,500 lines of app code is a guideline, not a limit.
 - **Org settings from the portal** (2026-11-11): the launcher reads the org's settings document with the person's key, device management winning field by field; a value it does not know fails closed. Design: [`docs/device-policy.md`](device-policy.md).
+- **Connectors from the portal** (2026-11-11, 1.4.0): the org's device policy can name a connector (Slack: the client ID of the org's Slack app); the policy document's `connectors` section is the single source both the launcher and the portal's lock files render. Claude Desktop and Claude Code only. Claude Code's server is added through `claude mcp`, never by writing its state file; write tools are blocked by Desktop's `toolPolicy` and Claude Code deny rules. Under a lock the launcher removes its own and adds nothing. Design: [`docs/device-policy-connectors.md`](device-policy-connectors.md).
 
 ## 3. Repo
 
@@ -91,9 +92,9 @@ Org settings (built 2026-09-24): read from the `io.consus.launcher` managed pref
 
 | Tool | Detect | Configure | Key | Launch |
 |---|---|---|---|---|
-| Claude Desktop | `Claude.app` | Gateway entry in `~/Library/Application Support/Claude-3p/configLibrary/` | Launcher binary as the credential helper | The app, placed in the glass |
+| Claude Desktop | `Claude.app` | Gateway entry in `~/Library/Application Support/Claude-3p/configLibrary/`, with the org's connectors in its `managedMcpServers` | Launcher binary as the credential helper | The app, placed in the glass |
 | ChatGPT | `ChatGPT.app` | Compliance template merged key by key into `~/.codex/config.toml` | Environment of the process the launcher starts | The app, placed in the glass |
-| Claude Code | `claude` on PATH or the login shell | `~/.claude-consus-gateway/settings.json` | `apiKeyHelper` pointing at the launcher | Terminal, in `~/Consus` |
+| Claude Code | `claude` on PATH or the login shell | `~/.claude-consus-gateway/settings.json`; the org's connectors through `claude mcp` (server `slack`, user scope), their write tools in `permissions.deny` | `apiKeyHelper` pointing at the launcher | Terminal, in `~/Consus` |
 | Codex CLI | `codex`, or the one inside ChatGPT.app | `~/.codex-consus-gateway/config.toml` + model catalog | Fetched from the keychain helper into Codex's environment | Terminal, in `~/Consus` |
 | Pi | `pi` | `~/.pi-consus-gateway/models.json` + default model | Pi runs the launcher's helper per request | Terminal, in `~/Consus` |
 

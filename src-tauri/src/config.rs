@@ -156,6 +156,14 @@ pub fn write_claude_desktop(home: &Path, helper: &Path, models: &Value, t: &Targ
     entry.insert("inferenceCredentialHelper".into(), json!(helper.to_string_lossy()));
     entry.insert("inferenceModels".into(), json!(picked));
     entry.extend(policy.claude_desktop_variant(t.web_access));
+    // The connectors the org turned on (Slack: the org's Slack app, with
+    // its write tools blocked). The entry is rewritten whole, so one the
+    // org turned off is gone at the next launch, and so is one a person
+    // added to this entry by hand.
+    let servers: Vec<Value> = t.connectors.iter().filter_map(|c| policy.connector_entry(c, "claude-desktop")).collect();
+    if !servers.is_empty() {
+        entry.insert("managedMcpServers".into(), Value::Array(servers));
+    }
     write_json(&lib.join(format!("{ENTRY_ID}.json")), &Value::Object(entry))?;
 
     let meta_path = lib.join("_meta.json");
@@ -303,6 +311,22 @@ mod tests {
         let on = entry_for("web-on", &Target { web_access: true, ..Target::default() });
         assert_eq!(on["disabledBuiltinTools"], json!(["WebSearch"]), "search is a server tool the gateway refuses");
         assert_eq!(on["coworkEgressAllowedHosts"], json!(["*"]));
+    }
+
+    #[test]
+    fn slack_is_in_the_entry_while_the_org_has_it_on() {
+        let models = json!([{ "id": "consus/claude-sonnet-5:itar" }]);
+        let (home, lib) = library("slack", r#"{ "appliedId": null, "entries": [] }"#);
+        let read = || -> Value { serde_json::from_str(&fs::read_to_string(lib.join(format!("{ENTRY_ID}.json"))).unwrap()).unwrap() };
+        let on = Target { connectors: vec![crate::models::slack("1234567.7654321")], ..Target::default() };
+        write_claude_desktop(&home, Path::new("/x/helper"), &models, &on).unwrap();
+        let servers = read()["managedMcpServers"].as_array().cloned().unwrap();
+        assert_eq!(servers.len(), 1);
+        assert_eq!(servers[0], crate::policy::policy().connector_entry(&on.connectors[0], "claude-desktop").unwrap());
+        assert_eq!(servers[0]["oauth"]["clientId"], "1234567.7654321");
+        write_claude_desktop(&home, Path::new("/x/helper"), &models, &Target::default()).unwrap();
+        assert!(read().get("managedMcpServers").is_none(), "turned off in the portal: gone at the next launch");
+        let _ = fs::remove_dir_all(&home);
     }
 
     #[test]

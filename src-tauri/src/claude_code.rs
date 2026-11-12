@@ -10,12 +10,20 @@
 //
 // settings.json is merged key by key. The launcher owns, by name:
 // apiKeyHelper, skipWebFetchPreflight, model, availableModels; the gateway
-// and traffic keys under env; the WebSearch and WebFetch rules in
-// permissions.deny; and the network keys under sandbox (OWNED_SANDBOX).
-// Everything else, including what Claude Code itself writes there and a
-// user's own sandbox sub-keys such as excludedCommands, stays. Sign out
-// removes only the owned keys. The profile directory is never deleted: the
-// user's history lives in it.
+// and traffic keys under env; the WebSearch and WebFetch rules and each
+// connector's blocked-tool rules in permissions.deny; and the network keys
+// under sandbox (OWNED_SANDBOX). Everything else, including what Claude Code
+// itself writes there and a user's own sandbox sub-keys such as
+// excludedCommands, stays. Sign out removes only the owned keys. The profile
+// directory is never deleted: the user's history lives in it.
+//
+// Connectors (MCP servers the org turned on) are not settings: Claude Code
+// keeps servers in its own state file (<profile>/.claude.json), which the
+// launcher reads but never writes. It asks Claude Code to add or remove
+// them (`claude mcp add` / `remove`, user scope), and only when what
+// Claude Code holds differs from what the org chose (mcp_steps). The names
+// the policy document's connectors use (`slack`) are the launcher's; a
+// server a person named that is replaced. Their other servers stay.
 //
 // Not written here: allowedProviders, which refuses every claude.ai and
 // Console sign-in. Claude Code reads it from managed settings only (it is
@@ -53,9 +61,18 @@ const OWNED_ENV: [&str; 13] = [
     "CLAUDE_CODE_DISABLE_LAUNCHER_SIGN_IN",
     "CLAUDE_CODE_DISABLE_WEB_FETCH",
 ];
-/// The permissions.deny rules the launcher owns (the policy document's
-/// web-access variant says which of them a launch writes).
+/// The permissions.deny rules the launcher owns for web access (the policy
+/// document's web-access variant says which of them a launch writes). Each
+/// connector's blocked-tool rules are owned too (owned_deny).
 const OWNED_DENY: [&str; 2] = ["WebSearch", "WebFetch"];
+
+/// Every permissions.deny rule the launcher owns: the web rules and the
+/// blocked-tool rules of every connector the policy document knows, turned
+/// on or not, so one the org turns off loses its rules.
+fn owned_deny() -> Vec<String> {
+    let p = crate::policy::policy();
+    OWNED_DENY.iter().map(|r| r.to_string()).chain(p.connectors.keys().flat_map(|k| p.connector_deny(k))).collect()
+}
 /// The paths under `sandbox` the launcher owns (the policy document's
 /// web-off variant carries them).
 const OWNED_SANDBOX: [&[&str]; 7] = [
@@ -239,7 +256,11 @@ pub fn write_settings(home: &Path, helper: &Path, models_json: &Value, t: &Targe
     }
     env_obj.extend(env);
 
-    let (_, deny, sandbox) = crate::policy::policy().claude_code_variant(t.web_access);
+    let policy = crate::policy::policy();
+    let (_, mut deny, sandbox) = policy.claude_code_variant(t.web_access);
+    // A connector's write tools, refused as a second layer: the server-side
+    // grant (Slack: the app's scopes) is the control.
+    deny.extend(t.connectors.iter().flat_map(|c| policy.connector_deny(&c.kind)));
     let deny: Vec<&str> = deny.iter().map(String::as_str).collect();
     set_deny(&mut doc, &deny).map_err(|e| format!("{}: {e}", path.display()))?;
     set_sandbox(&mut doc, sandbox).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -263,7 +284,8 @@ fn set_deny(doc: &mut Map<String, Value>, ours: &[&str]) -> Result<(), String> {
         .or_insert_with(|| json!([]))
         .as_array_mut()
         .ok_or("'permissions.deny' is not a list")?;
-    deny.retain(|v| !v.as_str().is_some_and(|r| OWNED_DENY.contains(&r)));
+    let owned = owned_deny();
+    deny.retain(|v| !v.as_str().is_some_and(|r| owned.iter().any(|o| o == r)));
     deny.extend(ours.iter().map(|r| json!(r)));
     if deny.is_empty() {
         perms.remove("deny");
@@ -294,11 +316,12 @@ pub fn remove_settings(home: &Path) -> Result<(), String> {
         }
     }
     // Map indexing panics on a missing key; get() does not.
+    let owned = owned_deny();
     let has_ours = doc
         .get("permissions")
         .and_then(|p| p.get("deny"))
         .and_then(Value::as_array)
-        .is_some_and(|d| d.iter().any(|v| v.as_str().is_some_and(|r| OWNED_DENY.contains(&r))));
+        .is_some_and(|d| d.iter().any(|v| v.as_str().is_some_and(|r| owned.iter().any(|o| o == r))));
     if has_ours {
         set_deny(&mut doc, &[])?;
     }
@@ -308,6 +331,114 @@ pub fn remove_settings(home: &Path) -> Result<(), String> {
     if doc.is_empty() {
         return fs::remove_file(&path).map_err(|e| e.to_string());
     }
+    let text = serde_json::to_string_pretty(&Value::Object(doc)).map_err(|e| e.to_string())?;
+    fs::write(&path, text + "\n").map_err(|e| format!("{}: {e}", path.display()))
+}
+
+/// Claude Code's own state file in the launcher's profile, where `claude
+/// mcp add --scope user` keeps servers. Read here, never written.
+fn state_path(home: &Path) -> PathBuf {
+    profile_dir(home).join(".claude.json")
+}
+
+/// The servers the org's connectors give Claude Code, by name.
+pub fn connector_servers(t: &Target) -> Vec<(String, Value)> {
+    let policy = crate::policy::policy();
+    t.connectors
+        .iter()
+        .filter_map(|c| Some((policy.connector_key(&c.kind, "claude-code")?.to_string(), policy.connector_entry(c, "claude-code")?)))
+        .collect()
+}
+
+/// The `claude` runs (arguments) that make the servers Claude Code holds
+/// under the launcher's names what `wanted` says: a remove for each name
+/// that holds something else, then an add for each wanted one that is not
+/// there as it should be. Nothing when they already match, so a launch
+/// costs no run. A state file that cannot be read right now (a running
+/// session midway through rewriting it) means nothing is done this time:
+/// removing and re-adding under a running session is worse than waiting
+/// for the next launch.
+pub fn mcp_steps(home: &Path, wanted: &[(String, Value)]) -> Vec<Vec<String>> {
+    let Ok(state) = read_object(&state_path(home)) else {
+        return Vec::new();
+    };
+    let held = |name: &str| state.get("mcpServers").and_then(|m| m.get(name));
+    let mut removes = Vec::new();
+    let mut adds = Vec::new();
+    for name in crate::policy::policy().connector_keys("claude-code") {
+        let want = wanted.iter().find(|(k, _)| k == name).map(|(_, v)| v);
+        let have = held(name);
+        match (have, want) {
+            (None, None) => continue,
+            (Some(h), Some(w)) if holds(h, w) => continue,
+            _ => {}
+        }
+        if have.is_some() {
+            removes.push(scoped(&["mcp", "remove", name]));
+        }
+        if let Some(v) = want {
+            adds.push(add_args(name, v));
+        }
+    }
+    removes.into_iter().chain(adds).collect()
+}
+
+fn scoped(args: &[&str]) -> Vec<String> {
+    args.iter().chain(&["--scope", "user"]).map(|a| a.to_string()).collect()
+}
+
+/// Whether what Claude Code holds carries everything the launcher rendered,
+/// with the same values. A field Claude Code adds of its own (another
+/// version may default one) is not a difference worth a remove and add.
+fn holds(have: &Value, want: &Value) -> bool {
+    match (have, want) {
+        (Value::Object(h), Value::Object(w)) => w.iter().all(|(k, v)| h.get(k).is_some_and(|x| holds(x, v))),
+        _ => have == want,
+    }
+}
+
+/// The run that adds `entry` under `name`. An http server with an OAuth
+/// client ID and port, which is what the policy document renders, goes as
+/// plain flags (`claude mcp add --transport http … --client-id …
+/// --callback-port …`), which Claude Code stores exactly as add-json does
+/// (2.1.322) and which carry no quote: on Windows an npm `claude.cmd` runs
+/// through cmd.exe, which mangles quoted JSON. Anything else is add-json.
+fn add_args(name: &str, entry: &Value) -> Vec<String> {
+    let flags = || -> Option<Vec<String>> {
+        let o = entry.as_object()?;
+        let oauth = o.get("oauth")?.as_object()?;
+        let plain = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric() || b":/._-*".contains(&b));
+        let (kind, url) = (o.get("type")?.as_str()?, o.get("url")?.as_str()?);
+        let (id, port) = (oauth.get("clientId")?.as_str()?, oauth.get("callbackPort")?.as_u64()?);
+        let known = o.keys().all(|k| ["type", "url", "oauth"].contains(&k.as_str()))
+            && oauth.keys().all(|k| ["clientId", "callbackPort"].contains(&k.as_str()));
+        (known && kind == "http" && plain(url) && plain(id)).then(|| {
+            scoped(&["mcp", "add", "--transport", kind, name, url, "--client-id", id, "--callback-port", &port.to_string()])
+        })
+    };
+    flags().unwrap_or_else(|| scoped(&["mcp", "add-json", name, &entry.to_string()]))
+}
+
+/// Removes the connectors' deny rules from settings.json and nothing else:
+/// under the org's lock, which carries its own, the launcher writes nothing
+/// but still takes back what it wrote before the lock came.
+pub fn remove_connector_rules(home: &Path) -> Result<(), String> {
+    let path = settings_path(home);
+    let p = crate::policy::policy();
+    let rules: Vec<String> = p.connectors.keys().flat_map(|k| p.connector_deny(k)).collect();
+    let mut doc = read_object(&path)?;
+    let Some(deny) = doc.get("permissions").and_then(|p| p.get("deny")).and_then(Value::as_array) else {
+        return Ok(());
+    };
+    if !deny.iter().any(|v| v.as_str().is_some_and(|r| rules.iter().any(|o| o == r))) {
+        return Ok(());
+    }
+    // set_deny replaces every rule the launcher owns, so the web rules there
+    // now go back in as they were.
+    let web: Vec<String> =
+        deny.iter().filter_map(Value::as_str).filter(|r| OWNED_DENY.contains(r)).map(String::from).collect();
+    let web: Vec<&str> = web.iter().map(String::as_str).collect();
+    set_deny(&mut doc, &web).map_err(|e| format!("{}: {e}", path.display()))?;
     let text = serde_json::to_string_pretty(&Value::Object(doc)).map_err(|e| e.to_string())?;
     fs::write(&path, text + "\n").map_err(|e| format!("{}: {e}", path.display()))
 }
@@ -372,6 +503,115 @@ mod tests {
         for (k, v) in p.claude_code_env_static() {
             assert_eq!(env_doc[&k], v, "{k}");
         }
+    }
+
+    fn slack_on() -> Target {
+        Target { connectors: vec![crate::models::slack("1234567.7654321")], ..Target::default() }
+    }
+
+    fn deny_rules(home: &Path) -> Vec<String> {
+        let doc = read_object(&settings_path(home)).unwrap();
+        doc.get("permissions").and_then(|p| p.get("deny")).and_then(Value::as_array).map_or(vec![], |a| {
+            a.iter().map(|v| v.as_str().unwrap().to_string()).collect()
+        })
+    }
+
+    #[test]
+    fn slacks_write_tools_are_denied_while_slack_is_on() {
+        let home = temp_home("slack-deny");
+        fs::create_dir_all(profile_dir(&home)).unwrap();
+        fs::write(settings_path(&home), r#"{ "permissions": { "deny": ["Bash(rm:*)", "mcp__slack__slack_read_canvas"] } }"#).unwrap();
+        let models: Value = serde_json::from_str(MODELS).unwrap();
+        write_settings(&home, &helper(), &models, &slack_on()).unwrap();
+        let deny = deny_rules(&home);
+        let slack = crate::policy::policy().connector_deny("slack");
+        assert_eq!(slack.len(), 13);
+        assert!(slack.iter().all(|r| deny.contains(r)), "{deny:?}");
+        assert!(deny.contains(&"Bash(rm:*)".to_string()) && deny.contains(&"mcp__slack__slack_read_canvas".to_string()), "a person's own rules stay");
+
+        write_settings(&home, &helper(), &models, &Target::default()).unwrap();
+        let deny = deny_rules(&home);
+        assert!(!deny.iter().any(|r| slack.contains(r)), "turned off: the rules go");
+        assert_eq!(deny, ["Bash(rm:*)", "mcp__slack__slack_read_canvas", "WebSearch", "WebFetch"]);
+
+        write_settings(&home, &helper(), &models, &slack_on()).unwrap();
+        remove_settings(&home).unwrap();
+        assert_eq!(deny_rules(&home), ["Bash(rm:*)", "mcp__slack__slack_read_canvas"], "sign out removes them");
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn an_entry_off_the_plain_shape_goes_as_json() {
+        let e = json!({ "type": "http", "url": "https://x.example/mcp", "oauth": { "clientId": "1.2", "callbackPort": 1, "scope": "a b" } });
+        assert_eq!(add_args("x", &e)[1], "add-json");
+        assert_eq!(add_args("x", &e)[3], e.to_string());
+        let quoted = json!({ "type": "http", "url": "https://x.example/mcp?a=\"b\"", "oauth": { "clientId": "1.2", "callbackPort": 1 } });
+        assert_eq!(add_args("x", &quoted)[1], "add-json", "flags only for values with nothing to quote");
+    }
+
+    #[test]
+    fn under_the_lock_the_connector_rules_go_and_the_rest_stays() {
+        let home = temp_home("lock-rules");
+        let models: Value = serde_json::from_str(MODELS).unwrap();
+        fs::create_dir_all(profile_dir(&home)).unwrap();
+        fs::write(settings_path(&home), r#"{ "permissions": { "deny": ["Bash(rm:*)"] } }"#).unwrap();
+        write_settings(&home, &helper(), &models, &slack_on()).unwrap();
+        let before = fs::read_to_string(settings_path(&home)).unwrap();
+        remove_connector_rules(&home).unwrap();
+        assert_eq!(deny_rules(&home), ["Bash(rm:*)", "WebSearch", "WebFetch"]);
+        let after = read_object(&settings_path(&home)).unwrap();
+        assert!(before.contains("mcp__slack__") && after.get("apiKeyHelper").is_some(), "only the rules change");
+        let once = fs::read_to_string(settings_path(&home)).unwrap();
+        remove_connector_rules(&home).unwrap();
+        assert_eq!(fs::read_to_string(settings_path(&home)).unwrap(), once, "nothing to take back: untouched");
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn claude_code_is_asked_only_for_what_differs() {
+        let home = temp_home("mcp-steps");
+        let wanted = connector_servers(&slack_on());
+        assert_eq!(wanted.len(), 1);
+        let (name, entry) = &wanted[0];
+        assert_eq!(name, "slack");
+        let add = vec![
+            "mcp", "add", "--transport", "http", "slack", "https://mcp.slack.com/mcp",
+            "--client-id", "1234567.7654321", "--callback-port", "3118", "--scope", "user",
+        ];
+        let remove = vec!["mcp", "remove", "slack", "--scope", "user"];
+        let steps = |w: &[(String, Value)]| mcp_steps(&home, w);
+
+        // No state file yet (Claude Code never ran in the profile).
+        assert!(steps(&[]).is_empty(), "nothing held, nothing wanted: no run");
+        assert_eq!(steps(&wanted), [add.clone()]);
+
+        fs::create_dir_all(profile_dir(&home)).unwrap();
+        let state = |servers: Value| {
+            fs::write(state_path(&home), json!({ "userID": "u", "mcpServers": servers }).to_string()).unwrap();
+        };
+        state(json!({ "slack": entry, "theirs": { "type": "stdio", "command": "x" } }));
+        assert!(steps(&wanted).is_empty(), "already as wanted: no run");
+        assert_eq!(steps(&[]), [remove.clone()], "turned off, or the lock: removed; theirs is never named");
+
+        let other = connector_servers(&Target { connectors: vec![crate::models::slack("7654321.1234567")], ..Target::default() });
+        assert_eq!(steps(&other).len(), 2);
+        assert_eq!(steps(&other)[0], remove, "a changed client ID: remove first, then add");
+        assert_eq!(steps(&other)[1][7], "7654321.1234567");
+
+        // A field Claude Code adds of its own is no difference.
+        let mut extra = entry.clone();
+        extra["headers"] = json!({});
+        state(json!({ "slack": extra }));
+        assert!(steps(&wanted).is_empty());
+
+        state(json!({ "slack": { "type": "stdio", "command": "their-own-slack" } }));
+        assert_eq!(steps(&wanted), [remove.clone(), add.clone()], "a server the person named slack is replaced");
+
+        fs::write(state_path(&home), "{ torn").unwrap();
+        assert!(steps(&wanted).is_empty(), "midway through a rewrite: wait for the next launch");
+        assert_eq!(fs::read_to_string(state_path(&home)).unwrap(), "{ torn", "Claude Code's file is never written here");
+        let _ = (remove, add);
+        let _ = fs::remove_dir_all(&home);
     }
 
     #[test]

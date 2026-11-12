@@ -44,6 +44,10 @@
     "endpoint_host": {
       "kind": "host",
       "note": "The host of endpoint, for allowlists."
+    },
+    "slack_client_id": {
+      "kind": "slack-client-id",
+      "note": "The client ID of the Slack app the organization registered (<team>.<app>, two numbers of 6 to 20 digits), from the org's device policy. Not the A0... app ID."
     }
   },
   "tools": {
@@ -287,6 +291,50 @@
         "leaves_machine": "`fd` and `ripgrep` from GitHub on first run",
         "lock": "Pi offers no lock; a container or the network edge"
       }
+    }
+  },
+  "connectors": {
+    "slack": {
+      "name": "Slack",
+      "server": "https://mcp.slack.com/mcp",
+      "about": "Slack's hosted MCP server, through the Slack app the organization registered (PKCE, no secret, read scopes only). The scopes are the control; blocked_tools is a second layer on the client, best effort, reviewed each release.",
+      "slot_keys": { "client_id": "slack_client_id" },
+      "blocked_tools": [
+        "slack_send_message",
+        "slack_schedule_message",
+        "slack_send_message_draft",
+        "slack_add_reaction",
+        "slack_create_conversation",
+        "slack_create_list",
+        "slack_update_list",
+        "slack_add_list_record",
+        "slack_update_list_record",
+        "slack_create_canvas",
+        "slack_update_canvas",
+        "slack_get_file_upload_url",
+        "slack_complete_file_upload"
+      ],
+      "tools": {
+        "claude-desktop": {
+          "entry": {
+            "name": "Slack",
+            "transport": "http",
+            "url": "https://mcp.slack.com/mcp",
+            "oauth": { "clientId": "$slack_client_id", "callbackHost": "localhost", "callbackPort": 53280 },
+            "toolPolicy": { "$blocked_tools": "blocked" }
+          }
+        },
+        "claude-code": {
+          "key": "slack",
+          "entry": {
+            "type": "http",
+            "url": "https://mcp.slack.com/mcp",
+            "oauth": { "clientId": "$slack_client_id", "callbackPort": 3118 }
+          },
+          "allow": { "serverUrl": "https://mcp.slack.com/*" }
+        }
+      },
+      "redirect_urls": ["http://localhost:53280/callback", "http://localhost:3118/callback"]
     }
   }
 }

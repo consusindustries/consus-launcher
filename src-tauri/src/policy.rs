@@ -28,6 +28,44 @@ pub struct Policy {
     pub about: String,
     pub slots: BTreeMap<String, Slot>,
     pub tools: BTreeMap<String, Tool>,
+    /// What an org may turn on in its device policy's `connectors`. Absent
+    /// is none.
+    #[serde(default)]
+    pub connectors: BTreeMap<String, Connector>,
+}
+
+/// A connector: an MCP server the org's device policy can name (by kind),
+/// and the entry each tool gets for it.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)]
+pub struct Connector {
+    pub name: String,
+    pub server: String,
+    pub about: String,
+    /// The device-policy entry's field -> the slot it fills.
+    pub slot_keys: BTreeMap<String, String>,
+    /// Tools the client refuses to call, in each tool's own form (a second
+    /// layer: the server-side grant is the control).
+    pub blocked_tools: Vec<String>,
+    pub tools: BTreeMap<String, ConnectorTool>,
+    /// The OAuth redirect URLs the connector's app must register; a record
+    /// for the portal and the README, read by no writer.
+    pub redirect_urls: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)]
+pub struct ConnectorTool {
+    /// The server's name in the tool's config, where the tool keys servers
+    /// by name (Claude Code).
+    pub key: Option<String>,
+    /// With `$<slot>` strings and a `"$blocked_tools": v` member, which
+    /// becomes one `"<tool>": v` per blocked tool.
+    pub entry: Value,
+    /// What the portal adds to the lock's server allowlist.
+    pub allow: Option<Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -206,6 +244,98 @@ impl Policy {
             .and_then(|s| s.get("network_access"))
             .and_then(Value::as_bool)
             .expect("the Codex variant sets sandbox_workspace_write.network_access")
+    }
+}
+
+impl Policy {
+    /// A device-policy connector entry (`{ "kind": "slack", "client_id": … }`)
+    /// as this launcher can use it: a kind this document knows and every
+    /// field its slots need, each valid. The error names the kind, never a
+    /// value.
+    pub fn connector_from(&self, entry: &Value) -> Result<crate::models::Connector, String> {
+        let kind = entry.get("kind").and_then(Value::as_str).ok_or("an entry without a kind")?;
+        let def = self.connectors.get(kind).ok_or_else(|| format!("{kind}: not a kind this launcher knows"))?;
+        let mut fields = BTreeMap::new();
+        for (field, slot) in &def.slot_keys {
+            let v = entry.get(field).and_then(Value::as_str).map(str::trim).unwrap_or("");
+            if !self.valid_slot(slot, v) {
+                return Err(format!("{kind}: {field} is missing or not valid"));
+            }
+            fields.insert(field.clone(), v.to_string());
+        }
+        Ok(crate::models::Connector { kind: kind.to_string(), fields })
+    }
+
+    /// Whether `v` is a valid value for a slot an org fills. A slot kind this
+    /// launcher does not check is never valid.
+    fn valid_slot(&self, slot: &str, v: &str) -> bool {
+        let digits = |p: &str| (6..=20).contains(&p.len()) && p.bytes().all(|b| b.is_ascii_digit());
+        match self.slots.get(slot).map(|s| s.kind.as_str()) {
+            // Slack's client ID: <team>.<app>, as the gateway checks it.
+            Some("slack-client-id") => v.split_once('.').is_some_and(|(a, b)| digits(a) && digits(b)),
+            _ => false,
+        }
+    }
+
+    /// The display name of a connector kind.
+    pub fn connector_name<'a>(&'a self, kind: &'a str) -> &'a str {
+        self.connectors.get(kind).map_or(kind, |c| c.name.as_str())
+    }
+
+    /// `tool`'s entry for a connector the org turned on, its slots filled.
+    /// None when this document has no entry for that tool.
+    pub fn connector_entry(&self, c: &crate::models::Connector, tool: &str) -> Option<Value> {
+        let def = self.connectors.get(&c.kind)?;
+        let t = def.tools.get(tool)?;
+        let mut slots = BTreeMap::new();
+        for (field, slot) in &def.slot_keys {
+            slots.insert(slot.as_str(), c.fields.get(field)?.as_str());
+        }
+        Some(fill(&t.entry, &slots, &def.blocked_tools))
+    }
+
+    /// `tool`'s server name for a connector kind (Claude Code's key).
+    pub fn connector_key(&self, kind: &str, tool: &str) -> Option<&str> {
+        self.connectors.get(kind)?.tools.get(tool)?.key.as_deref()
+    }
+
+    /// Every server name `tool`'s connectors use, turned on or not: the
+    /// names the launcher owns in that tool.
+    pub fn connector_keys(&self, tool: &str) -> Vec<&str> {
+        self.connectors.keys().filter_map(|k| self.connector_key(k, tool)).collect()
+    }
+
+    /// Claude Code's deny rules for a connector kind: one per blocked tool,
+    /// as Claude Code names MCP tools (`mcp__<server>__<tool>`).
+    pub fn connector_deny(&self, kind: &str) -> Vec<String> {
+        let (Some(def), Some(key)) = (self.connectors.get(kind), self.connector_key(kind, "claude-code")) else {
+            return Vec::new();
+        };
+        def.blocked_tools.iter().map(|t| format!("mcp__{key}__{t}")).collect()
+    }
+}
+
+/// A connector entry with its `$<slot>` strings filled and its
+/// `$blocked_tools` member expanded.
+fn fill(v: &Value, slots: &BTreeMap<&str, &str>, blocked: &[String]) -> Value {
+    match v {
+        Value::String(s) => match s.strip_prefix('$').and_then(|n| slots.get(n)) {
+            Some(x) => Value::String(x.to_string()),
+            None => v.clone(),
+        },
+        Value::Array(a) => Value::Array(a.iter().map(|x| fill(x, slots, blocked)).collect()),
+        Value::Object(o) => {
+            let mut out = Map::new();
+            for (k, x) in o {
+                if k == "$blocked_tools" {
+                    out.extend(blocked.iter().map(|b| (b.clone(), x.clone())));
+                } else {
+                    out.insert(k.clone(), fill(x, slots, blocked));
+                }
+            }
+            Value::Object(out)
+        }
+        _ => v.clone(),
     }
 }
 
@@ -393,6 +523,98 @@ mod tests {
         assert_eq!(leaf_paths(&Value::Object(cc.lock_only.admin.clone())), ["allowManagedMcpServersOnly", "allowedMcpServers", "sandbox.network.allowManagedDomainsOnly"]);
         assert_eq!(p.tool("codex-cli").extends.as_deref(), Some("chatgpt-desktop"));
         assert!(p.tool("codex-cli").toml.is_none(), "codex-cli takes its TOML from chatgpt-desktop");
+    }
+
+    const SLACK_TOOLS: [&str; 13] = [
+        "slack_send_message", "slack_schedule_message", "slack_send_message_draft", "slack_add_reaction",
+        "slack_create_conversation", "slack_create_list", "slack_update_list", "slack_add_list_record",
+        "slack_update_list_record", "slack_create_canvas", "slack_update_canvas", "slack_get_file_upload_url",
+        "slack_complete_file_upload",
+    ];
+
+    /// Every string anywhere in a value.
+    fn strings(v: &Value) -> Vec<&str> {
+        match v {
+            Value::String(s) => vec![s.as_str()],
+            Value::Array(a) => a.iter().flat_map(strings).collect(),
+            Value::Object(o) => o.iter().flat_map(|(k, x)| std::iter::once(k.as_str()).chain(strings(x))).collect(),
+            _ => vec![],
+        }
+    }
+
+    #[test]
+    fn slack_renders_for_both_claude_tools_from_one_section() {
+        let p = policy();
+        let slack = crate::models::slack("1234567.7654321");
+        let desktop = p.connector_entry(&slack, "claude-desktop").unwrap();
+        assert_eq!(desktop["name"], "Slack");
+        assert_eq!(desktop["transport"], "http");
+        assert_eq!(desktop["url"], "https://mcp.slack.com/mcp");
+        assert_eq!(desktop["oauth"], serde_json::json!({ "clientId": "1234567.7654321", "callbackHost": "localhost", "callbackPort": 53280 }));
+        let blocked: Vec<&str> = desktop["toolPolicy"].as_object().unwrap().keys().map(String::as_str).collect();
+        let mut want = SLACK_TOOLS.to_vec();
+        want.sort();
+        assert_eq!(blocked, want);
+        assert!(desktop["toolPolicy"].as_object().unwrap().values().all(|v| v == "blocked"));
+
+        let code = p.connector_entry(&slack, "claude-code").unwrap();
+        assert_eq!(code, serde_json::json!({ "type": "http", "url": "https://mcp.slack.com/mcp", "oauth": { "clientId": "1234567.7654321", "callbackPort": 3118 } }));
+        assert_eq!(p.connector_key("slack", "claude-code"), Some("slack"));
+        assert_eq!(p.connector_deny("slack"), SLACK_TOOLS.map(|t| format!("mcp__slack__{t}")));
+
+        for e in [&desktop, &code] {
+            assert!(strings(e).iter().all(|s| !s.starts_with('$')), "every slot is filled: {e}");
+        }
+        assert!(p.connector_entry(&crate::models::Connector { kind: "github".into(), fields: Default::default() }, "claude-code").is_none());
+        assert!(p.connector_entry(&slack, "codex-cli").is_none(), "no Codex entry: its redirect cannot be registered");
+        assert!(p.connector_deny("github").is_empty());
+    }
+
+    #[test]
+    fn the_connector_section_agrees_with_itself() {
+        for (kind, c) in &policy().connectors {
+            for (field, slot) in &c.slot_keys {
+                assert!(policy().slots.contains_key(slot), "{kind}: {field} fills {slot}, which slots lacks");
+            }
+            for (tool, t) in &c.tools {
+                assert!(policy().tools.contains_key(tool), "{kind}: {tool} is a tool");
+                assert_eq!(t.entry["url"], c.server.as_str(), "{kind}/{tool}: one server");
+            }
+            let ports: Vec<String> = c
+                .tools
+                .values()
+                .filter_map(|t| t.entry["oauth"]["callbackPort"].as_u64())
+                .map(|port| format!("http://localhost:{port}/callback"))
+                .collect();
+            let mut urls = c.redirect_urls.clone();
+            let mut ports_sorted = ports.clone();
+            urls.sort();
+            ports_sorted.sort();
+            assert_eq!(urls, ports_sorted, "{kind}: redirect_urls are the callback ports");
+            let host = c.server.split('/').nth(2).unwrap();
+            assert_eq!(c.tools["claude-code"].allow.as_ref().unwrap()["serverUrl"], format!("https://{host}/*"), "{kind}: allowed by URL");
+        }
+    }
+
+    #[test]
+    fn a_device_policy_entry_is_used_only_when_valid() {
+        let p = policy();
+        let ok = p.connector_from(&serde_json::json!({ "kind": "slack", "client_id": "8044899004343.12576865136610" })).unwrap();
+        assert_eq!(ok, crate::models::slack("8044899004343.12576865136610"));
+        let bad = |e: Value| p.connector_from(&e).unwrap_err();
+        for id in ["", "A0123456789", "12345.1234567", "1234567.", "1234567.7654321.1", "123456789012345678901.1234567", "1234567 .7654321"] {
+            let e = bad(serde_json::json!({ "kind": "slack", "client_id": id }));
+            assert!(e.starts_with("slack:"), "{e}");
+            if !id.is_empty() {
+                assert!(!e.contains(id), "the error never carries the value: {e}");
+            }
+        }
+        assert!(bad(serde_json::json!({ "kind": "slack" })).starts_with("slack:"));
+        assert!(bad(serde_json::json!({ "kind": "slack", "client_id": 1234567 })).starts_with("slack:"));
+        assert!(bad(serde_json::json!({ "kind": "github", "host": "x" })).contains("not a kind this launcher knows"));
+        assert!(bad(serde_json::json!({ "client_id": "1234567.7654321" })).contains("without a kind"));
+        // Extra fields from a newer portal are not this launcher's to refuse.
+        assert!(p.connector_from(&serde_json::json!({ "kind": "slack", "client_id": "1234567.7654321", "note": "x" })).is_ok());
     }
 
     #[test]

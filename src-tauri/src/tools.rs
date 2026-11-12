@@ -793,6 +793,75 @@ fn inherited_claude_var(name: &str) -> bool {
     CLAUDE_SCRUB.matches(name)
 }
 
+/// The `claude` the launcher runs for `claude mcp`, ready for arguments.
+#[cfg(windows)]
+fn claude_command(_app: &AppHandle) -> Option<Command> {
+    win::claude_command()
+}
+
+/// The `claude` the launcher runs for `claude mcp`, ready for arguments. An
+/// npm install is a Node script; its node sits next to it, and an app
+/// started from Finder has no node on its PATH.
+#[cfg(not(windows))]
+fn claude_command(app: &AppHandle) -> Option<Command> {
+    let cli = cli(app, "claude")?;
+    let mut c = Command::new(&cli);
+    if let Some(bin) = cli.parent() {
+        c.env("PATH", format!("{}:{}", bin.display(), std::env::var("PATH").unwrap_or_default()));
+    }
+    Some(c)
+}
+
+const CONNECTORS_NOT_SET: &str =
+    "Claude Code's connectors could not be updated this time, so Slack may be missing or still listed. Open Claude Code again to retry.";
+
+/// Asks Claude Code to hold the servers `wanted` names under the launcher's
+/// connector names in the launcher's profile: the org's connectors at a
+/// launch, none under the org's lock or at sign out. Claude Code writes its
+/// own file; the launcher reads it before (nothing to do, no run) and after
+/// (whether it worked). An error is for a notice, never a failed launch.
+fn sync_claude_connectors(claude: &dyn Fn() -> Option<Command>, home: &Path, wanted: &[(String, Value)]) -> Result<(), String> {
+    let steps = claude_code::mcp_steps(home, wanted);
+    if steps.is_empty() {
+        return Ok(());
+    }
+    let profile = claude_code::profile_dir(home);
+    fs::create_dir_all(&profile).map_err(|e| format!("{}: {e}", profile.display()))?;
+    // Claude Code reads the folder it runs in as a project (its .claude and
+    // .mcp.json), so these runs start where sessions do: the empty ~/Consus,
+    // never wherever the launcher was started from.
+    let work = claude_code::work_dir(home);
+    fs::create_dir_all(&work).map_err(|e| format!("{}: {e}", work.display()))?;
+    // The session's own switches (no traffic to Anthropic), the launcher's
+    // own Claude session scrubbed out, and the launcher's profile.
+    let quiet = crate::policy::policy().claude_code_env_static();
+    for args in steps {
+        let mut cmd = claude().ok_or(CONNECTORS_NOT_SET)?;
+        for (k, _) in std::env::vars_os() {
+            if inherited_claude_var(&k.to_string_lossy().to_uppercase()) {
+                cmd.env_remove(k);
+            }
+        }
+        cmd.envs(quiet.iter().filter_map(|(k, v)| Some((k, v.as_str()?))));
+        cmd.env("CLAUDE_CONFIG_DIR", &profile).current_dir(&work).args(&args);
+        // "No server named" and "already exists" are fine answers; the file
+        // says what happened.
+        let _ = output_within(&mut cmd, Duration::from_secs(20));
+    }
+    claude_code::mcp_steps(home, wanted).is_empty().then_some(()).ok_or_else(|| CONNECTORS_NOT_SET.to_string())
+}
+
+/// sync_claude_connectors for a Claude Code launch: the org's connectors, or
+/// none under the org's lock, which carries its own (and the launcher then
+/// also takes back the deny rules it wrote before). A failure is a notice.
+fn launch_claude_connectors(app: &AppHandle, home: &Path, target: &Target, locked: bool) {
+    let wanted = if locked { Vec::new() } else { claude_code::connector_servers(target) };
+    let removed = if locked { claude_code::remove_connector_rules(home) } else { Ok(()) };
+    if let Err(e) = removed.and(sync_claude_connectors(&|| claude_command(app), home, &wanted)) {
+        let _ = app.emit("tool-notice", json!({ "tool": key(Tool::Code), "message": e }));
+    }
+}
+
 /// Unsets, in shell, every variable whose name matches the pattern, for a
 /// Terminal window, whose environment the launcher cannot set directly.
 fn scrub(names: &str) -> String {
@@ -869,13 +938,16 @@ fn terminal_script(app: &AppHandle, t: Tool, models: &Value, target: &Target) ->
     match t {
         Tool::Code => {
             let cli = cli(app, "claude").ok_or("Claude Code is not installed.")?;
-            // Under the organization's policy the launcher writes nothing;
+            // Under the organization's policy the launcher writes nothing,
+            // and removes the connectors it added before the lock came;
             // the profile folder still keeps the user's own ~/.claude apart.
-            if !claude_code_policy() {
+            let locked = claude_code_policy();
+            if !locked {
                 let helper = helper_path(&helper_dir, CODE_HELPER_NAME);
                 config::write_helper(&helper)?;
                 claude_code::write_settings(&home, &helper, models, target)?;
             }
+            launch_claude_connectors(app, &home, target, locked);
             fs::create_dir_all(&work).map_err(|e| format!("{}: {e}", work.display()))?;
             // The user's own ~/.claude is never involved: an isolated profile
             // and a scrubbed environment.
@@ -1062,10 +1134,16 @@ fn removal_paths(app: &AppHandle) -> Result<(PathBuf, PathBuf), String> {
     Ok((home, catalog))
 }
 
+/// Async so `claude mcp remove`, which can take seconds, runs off the UI
+/// thread.
 #[tauri::command]
-pub fn remove_tool_configs(app: AppHandle) -> Result<(), String> {
+pub async fn remove_tool_configs(app: AppHandle) -> Result<(), String> {
     let (home, catalog) = removal_paths(&app)?;
-    TOOLS.into_iter().map(|t| remove_config(&home, &catalog, t)).fold(Ok(()), Result::and)
+    TOOLS
+        .into_iter()
+        .map(|t| remove_config(&home, &catalog, t))
+        .chain([sync_claude_connectors(&|| claude_command(&app), &home, &[])])
+        .fold(Ok(()), Result::and)
 }
 
 /// The tools an org's settings turn off.
@@ -1086,6 +1164,9 @@ pub fn remove_turned_off(app: &AppHandle) {
         // start tries again.
         if !app_running(t) {
             let _ = remove_config(&home, &catalog, t);
+        }
+        if t == Tool::Code {
+            let _ = sync_claude_connectors(&|| claude_command(app), &home, &[]);
         }
     }
 }
@@ -1197,6 +1278,36 @@ fn other_terminate(_: &[Running]) {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Against the real Claude Code on this machine (`claude` on PATH):
+    /// cargo test -- --ignored with_the_real_claude
+    #[test]
+    #[ignore]
+    fn connectors_with_the_real_claude() {
+        let home = std::env::temp_dir().join(format!("consus-launcher-real-claude-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&home);
+        let claude = || Some(Command::new("claude"));
+        let state = || claude_code::read_object(&claude_code::profile_dir(&home).join(".claude.json")).unwrap();
+        let on = Target { connectors: vec![crate::models::slack("1234567.7654321")], ..Target::default() };
+        let wanted = claude_code::connector_servers(&on);
+
+        sync_claude_connectors(&claude, &home, &wanted).unwrap();
+        assert_eq!(state()["mcpServers"]["slack"], wanted[0].1, "Claude Code holds the entry as rendered");
+        assert!(claude_code::mcp_steps(&home, &wanted).is_empty(), "the next launch runs nothing");
+
+        // A server of the person's own stays through a change and a removal.
+        let mut theirs = Command::new("claude");
+        theirs.env("CLAUDE_CONFIG_DIR", claude_code::profile_dir(&home));
+        theirs.args(["mcp", "add-json", "theirs", r#"{"type":"http","url":"https://example.com/mcp"}"#, "--scope", "user"]);
+        assert!(theirs.output().unwrap().status.success());
+        let other = claude_code::connector_servers(&Target { connectors: vec![crate::models::slack("7654321.1234567")], ..Target::default() });
+        sync_claude_connectors(&claude, &home, &other).unwrap();
+        assert_eq!(state()["mcpServers"]["slack"]["oauth"]["clientId"], "7654321.1234567");
+        sync_claude_connectors(&claude, &home, &[]).unwrap();
+        let servers = state()["mcpServers"].as_object().cloned().unwrap();
+        assert!(!servers.contains_key("slack") && servers.contains_key("theirs"), "{servers:?}");
+        let _ = fs::remove_dir_all(&home);
+    }
 
     #[test]
     fn the_successor_is_a_new_process_not_one_already_seen() {
