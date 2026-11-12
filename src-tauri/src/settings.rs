@@ -540,7 +540,9 @@ fn checked_connectors(v: &Value) -> Option<Value> {
             Err(e) => eprintln!("device policy: connector not used ({e})"),
         }
     }
-    Some(Value::Array(kept))
+    // Nothing usable is not a value from the portal: the Keys tab's header
+    // and source should not claim one.
+    (!kept.is_empty()).then_some(Value::Array(kept))
 }
 
 /// The connectors in a checked list.
@@ -889,14 +891,14 @@ mod tests {
         let (c, _, _) = with(json!([{ "kind": "github", "host": "x" }, { "kind": "slack", "client_id": "1234567.7654321" }]));
         assert_eq!(c, vec![slack.clone()]);
         let (c, source, names) = with(json!([{ "kind": "slack", "client_id": "A0123" }]));
-        assert_eq!((c.len(), source, names.len()), (0, Source::Portal, 0));
+        assert_eq!((c.len(), source, names.len()), (0, Source::Default, 0), "nothing usable: not from the portal");
         let (c, _, _) = with(json!([
             { "kind": "slack", "client_id": "1234567.7654321" },
             { "kind": "slack", "client_id": "7654321.1234567" }
         ]));
         assert_eq!(c, vec![slack], "one per kind: the first");
 
-        assert!(with(json!([])).0.is_empty());
+        assert_eq!(with(json!([])).1, Source::Default);
         let (c, source, _) = with(json!("slack"));
         assert_eq!((c.len(), source), (0, Source::Default), "not a list: not used");
         let l = loaded(Raw::default(), Raw::default(), Some(json!({ "tools": ["pi"] })), DEFAULT_ENDPOINT);

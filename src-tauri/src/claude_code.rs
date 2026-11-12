@@ -20,7 +20,7 @@
 // Connectors (MCP servers the org turned on) are not settings: Claude Code
 // keeps servers in its own state file (<profile>/.claude.json), which the
 // launcher reads but never writes. It asks Claude Code to add or remove
-// them (`claude mcp add-json` / `remove`, user scope), and only when what
+// them (`claude mcp add` / `remove`, user scope), and only when what
 // Claude Code holds differs from what the org chose (mcp_steps). The names
 // the policy document's connectors use (`slack`) are the launcher's; a
 // server a person named that is replaced. Their other servers stay.
@@ -354,31 +354,93 @@ pub fn connector_servers(t: &Target) -> Vec<(String, Value)> {
 /// under the launcher's names what `wanted` says: a remove for each name
 /// that holds something else, then an add for each wanted one that is not
 /// there as it should be. Nothing when they already match, so a launch
-/// costs no run. A state file that cannot be read counts as holding
-/// something else under every name.
+/// costs no run. A state file that cannot be read right now (a running
+/// session midway through rewriting it) means nothing is done this time:
+/// removing and re-adding under a running session is worse than waiting
+/// for the next launch.
 pub fn mcp_steps(home: &Path, wanted: &[(String, Value)]) -> Vec<Vec<String>> {
-    let state = read_object(&state_path(home));
-    let held = |name: &str| match &state {
-        Ok(doc) => doc.get("mcpServers").and_then(|m| m.get(name)).cloned(),
-        Err(_) => Some(Value::Null),
+    let Ok(state) = read_object(&state_path(home)) else {
+        return Vec::new();
     };
-    let run = |args: &[&str]| args.iter().chain(&["--scope", "user"]).map(|a| a.to_string()).collect::<Vec<_>>();
+    let held = |name: &str| state.get("mcpServers").and_then(|m| m.get(name));
     let mut removes = Vec::new();
     let mut adds = Vec::new();
     for name in crate::policy::policy().connector_keys("claude-code") {
         let want = wanted.iter().find(|(k, _)| k == name).map(|(_, v)| v);
         let have = held(name);
-        if have.as_ref() == want {
-            continue;
+        match (have, want) {
+            (None, None) => continue,
+            (Some(h), Some(w)) if holds(h, w) => continue,
+            _ => {}
         }
         if have.is_some() {
-            removes.push(run(&["mcp", "remove", name]));
+            removes.push(scoped(&["mcp", "remove", name]));
         }
         if let Some(v) = want {
-            adds.push(run(&["mcp", "add-json", name, &v.to_string()]));
+            adds.push(add_args(name, v));
         }
     }
     removes.into_iter().chain(adds).collect()
+}
+
+fn scoped(args: &[&str]) -> Vec<String> {
+    args.iter().chain(&["--scope", "user"]).map(|a| a.to_string()).collect()
+}
+
+/// Whether what Claude Code holds carries everything the launcher rendered,
+/// with the same values. A field Claude Code adds of its own (another
+/// version may default one) is not a difference worth a remove and add.
+fn holds(have: &Value, want: &Value) -> bool {
+    match (have, want) {
+        (Value::Object(h), Value::Object(w)) => w.iter().all(|(k, v)| h.get(k).is_some_and(|x| holds(x, v))),
+        _ => have == want,
+    }
+}
+
+/// The run that adds `entry` under `name`. An http server with an OAuth
+/// client ID and port, which is what the policy document renders, goes as
+/// plain flags (`claude mcp add --transport http … --client-id …
+/// --callback-port …`), which Claude Code stores exactly as add-json does
+/// (2.1.322) and which carry no quote: on Windows an npm `claude.cmd` runs
+/// through cmd.exe, which mangles quoted JSON. Anything else is add-json.
+fn add_args(name: &str, entry: &Value) -> Vec<String> {
+    let flags = || -> Option<Vec<String>> {
+        let o = entry.as_object()?;
+        let oauth = o.get("oauth")?.as_object()?;
+        let plain = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric() || b":/._-*".contains(&b));
+        let (kind, url) = (o.get("type")?.as_str()?, o.get("url")?.as_str()?);
+        let (id, port) = (oauth.get("clientId")?.as_str()?, oauth.get("callbackPort")?.as_u64()?);
+        let known = o.keys().all(|k| ["type", "url", "oauth"].contains(&k.as_str()))
+            && oauth.keys().all(|k| ["clientId", "callbackPort"].contains(&k.as_str()));
+        (known && kind == "http" && plain(url) && plain(id)).then(|| {
+            scoped(&["mcp", "add", "--transport", kind, name, url, "--client-id", id, "--callback-port", &port.to_string()])
+        })
+    };
+    flags().unwrap_or_else(|| scoped(&["mcp", "add-json", name, &entry.to_string()]))
+}
+
+/// Removes the connectors' deny rules from settings.json and nothing else:
+/// under the org's lock, which carries its own, the launcher writes nothing
+/// but still takes back what it wrote before the lock came.
+pub fn remove_connector_rules(home: &Path) -> Result<(), String> {
+    let path = settings_path(home);
+    let p = crate::policy::policy();
+    let rules: Vec<String> = p.connectors.keys().flat_map(|k| p.connector_deny(k)).collect();
+    let mut doc = read_object(&path)?;
+    let Some(deny) = doc.get("permissions").and_then(|p| p.get("deny")).and_then(Value::as_array) else {
+        return Ok(());
+    };
+    if !deny.iter().any(|v| v.as_str().is_some_and(|r| rules.iter().any(|o| o == r))) {
+        return Ok(());
+    }
+    // set_deny replaces every rule the launcher owns, so the web rules there
+    // now go back in as they were.
+    let web: Vec<String> =
+        deny.iter().filter_map(Value::as_str).filter(|r| OWNED_DENY.contains(r)).map(String::from).collect();
+    let web: Vec<&str> = web.iter().map(String::as_str).collect();
+    set_deny(&mut doc, &web).map_err(|e| format!("{}: {e}", path.display()))?;
+    let text = serde_json::to_string_pretty(&Value::Object(doc)).map_err(|e| e.to_string())?;
+    fs::write(&path, text + "\n").map_err(|e| format!("{}: {e}", path.display()))
 }
 
 #[cfg(test)]
@@ -479,14 +541,43 @@ mod tests {
     }
 
     #[test]
+    fn an_entry_off_the_plain_shape_goes_as_json() {
+        let e = json!({ "type": "http", "url": "https://x.example/mcp", "oauth": { "clientId": "1.2", "callbackPort": 1, "scope": "a b" } });
+        assert_eq!(add_args("x", &e)[1], "add-json");
+        assert_eq!(add_args("x", &e)[3], e.to_string());
+        let quoted = json!({ "type": "http", "url": "https://x.example/mcp?a=\"b\"", "oauth": { "clientId": "1.2", "callbackPort": 1 } });
+        assert_eq!(add_args("x", &quoted)[1], "add-json", "flags only for values with nothing to quote");
+    }
+
+    #[test]
+    fn under_the_lock_the_connector_rules_go_and_the_rest_stays() {
+        let home = temp_home("lock-rules");
+        let models: Value = serde_json::from_str(MODELS).unwrap();
+        fs::create_dir_all(profile_dir(&home)).unwrap();
+        fs::write(settings_path(&home), r#"{ "permissions": { "deny": ["Bash(rm:*)"] } }"#).unwrap();
+        write_settings(&home, &helper(), &models, &slack_on()).unwrap();
+        let before = fs::read_to_string(settings_path(&home)).unwrap();
+        remove_connector_rules(&home).unwrap();
+        assert_eq!(deny_rules(&home), ["Bash(rm:*)", "WebSearch", "WebFetch"]);
+        let after = read_object(&settings_path(&home)).unwrap();
+        assert!(before.contains("mcp__slack__") && after.get("apiKeyHelper").is_some(), "only the rules change");
+        let once = fs::read_to_string(settings_path(&home)).unwrap();
+        remove_connector_rules(&home).unwrap();
+        assert_eq!(fs::read_to_string(settings_path(&home)).unwrap(), once, "nothing to take back: untouched");
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
     fn claude_code_is_asked_only_for_what_differs() {
         let home = temp_home("mcp-steps");
         let wanted = connector_servers(&slack_on());
         assert_eq!(wanted.len(), 1);
         let (name, entry) = &wanted[0];
         assert_eq!(name, "slack");
-        let json = entry.to_string();
-        let add = vec!["mcp", "add-json", "slack", &json, "--scope", "user"];
+        let add = vec![
+            "mcp", "add", "--transport", "http", "slack", "https://mcp.slack.com/mcp",
+            "--client-id", "1234567.7654321", "--callback-port", "3118", "--scope", "user",
+        ];
         let remove = vec!["mcp", "remove", "slack", "--scope", "user"];
         let steps = |w: &[(String, Value)]| mcp_steps(&home, w);
 
@@ -505,14 +596,21 @@ mod tests {
         let other = connector_servers(&Target { connectors: vec![crate::models::slack("7654321.1234567")], ..Target::default() });
         assert_eq!(steps(&other).len(), 2);
         assert_eq!(steps(&other)[0], remove, "a changed client ID: remove first, then add");
-        assert_eq!(steps(&other)[1][1], "add-json");
+        assert_eq!(steps(&other)[1][7], "7654321.1234567");
+
+        // A field Claude Code adds of its own is no difference.
+        let mut extra = entry.clone();
+        extra["headers"] = json!({});
+        state(json!({ "slack": extra }));
+        assert!(steps(&wanted).is_empty());
 
         state(json!({ "slack": { "type": "stdio", "command": "their-own-slack" } }));
         assert_eq!(steps(&wanted), [remove.clone(), add.clone()], "a server the person named slack is replaced");
 
         fs::write(state_path(&home), "{ torn").unwrap();
-        assert_eq!(steps(&wanted), [remove, add], "unreadable: ask for everything; Claude Code's file is never written here");
-        assert_eq!(fs::read_to_string(state_path(&home)).unwrap(), "{ torn");
+        assert!(steps(&wanted).is_empty(), "midway through a rewrite: wait for the next launch");
+        assert_eq!(fs::read_to_string(state_path(&home)).unwrap(), "{ torn", "Claude Code's file is never written here");
+        let _ = (remove, add);
         let _ = fs::remove_dir_all(&home);
     }
 

@@ -171,23 +171,33 @@ dropped is gone at the next launch. Skipped when the Desktop lock is present (as
 
 **Claude Code** (`claude_code.rs`), two parts:
 
-- *The server:* the launcher asks Claude Code to add it. For every connector key the
-  document knows, `claude mcp remove <key> --scope user` (a "not found" answer is fine),
-  then for each one the policy names, `claude mcp add-json <key> '<entry>' --scope user`,
-  each run with `CLAUDE_CONFIG_DIR` set to the profile (`~/.claude-consus-gateway`), the
+- *The server:* the launcher asks Claude Code to add it. For a connector key that holds
+  something other than what the policy names, `claude mcp remove <key> --scope user`;
+  then for each one the policy names, `claude mcp add --transport http <key> <url>
+  --client-id <id> --callback-port <port> --scope user`. Claude Code stores that exactly
+  as `add-json` would (checked, 2.1.322), and the command line carries no quote: on
+  Windows an npm `claude.cmd` runs through `cmd.exe`, which mangles quoted JSON when the
+  path has a space. An entry outside that shape falls back to `add-json`. Each run has
+  `CLAUDE_CONFIG_DIR` set to the profile (`~/.claude-consus-gateway`), `~/Consus` as its
+  working folder (Claude Code reads the folder it runs in as a project), the
   launcher's own `CLAUDE*` / `ANTHROPIC*` variables scrubbed, the policy's no-traffic env
   switches set, and a 20-second limit. It runs before the terminal opens, with the
   `claude` binary the launcher already finds. Before running anything the launcher reads
   Claude Code's state file (read-only) and runs nothing when the servers under its names
-  already match (`mcp_steps`), so an ordinary launch costs no run; afterwards it reads the
-  file again, and a mismatch is the notice. Claude Code writes
+  already match (`mcp_steps`: the held entry carries every rendered field with the same
+  value; a field Claude Code adds of its own is no difference), so an ordinary launch
+  costs no run; afterwards it reads the file again, and a mismatch is the notice. A state
+  file that cannot be read (a running session midway through rewriting it) means nothing
+  is done that launch. Claude Code writes
   its own state file in its own format, and a session already running in that profile is
   something `claude mcp add` is built to coexist with. A failed add is a tile notice
   ("Slack could not be added to Claude Code"), not a failed launch.
 - *The blocked tools:* `mcp__<key>__<tool>` rules join the launcher's owned deny rules in
   `settings.json`, through `set_deny`, so `remove_settings` already removes them.
 
-Sign out runs the same removal. Under the Claude Code lock the removal runs and nothing is
+Sign out runs the same removal, off the UI thread. Under the Claude Code lock the removal
+runs, the connector deny rules are taken out of `settings.json` (`remove_connector_rules`,
+nothing else in the file changes), and nothing is
 added. The Claude Code `/mcp` screen then shows Slack with "Needs authentication" until
 the person authenticates once.
 
@@ -253,9 +263,11 @@ connector; `kind:"github"` is skipped with the rest applied; a bad `client_id` i
 `config.rs`: the entry carries `managedMcpServers` with one Slack when set and no such key
 when not; a second write with no connectors removes it.
 
-`claude_code.rs`: the CLI calls for one Slack are a remove then an `add-json` with the
-rendered entry and `--scope user`; with no connectors, only the remove; under the lock,
-only the remove. The deny rules carry all thirteen `mcp__slack__` names when Slack is set,
+`claude_code.rs`: the CLI calls for one Slack are an `add` with plain flags and `--scope
+user`; a changed client ID is a remove then the add; with no connectors, only the remove;
+an extra field Claude Code added, or an unreadable state file, asks for nothing; an entry
+off the plain shape goes as `add-json`. Under the lock the connector deny rules go and
+nothing else in `settings.json` changes. The deny rules carry all thirteen `mcp__slack__` names when Slack is set,
 none when it is not, and a person's own deny rules survive both.
 `the_owned_keys_are_exactly_what_the_policy_document_describes` extends to the connector
 deny rules.
@@ -277,10 +289,8 @@ end.
      (Slack in Connectors, Connect once, ask about Slack) and Claude Code (`/mcp` shows
      slack, Authenticate once, ask about Slack); clear the ID in the portal, refocus,
      relaunch both, Slack is gone from both.
-   - Windows, Claude Code installed both ways: the native `claude.exe`, and npm's
-     `claude.cmd`, which the launcher runs through `cmd.exe`. The entry is JSON on the
-     command line; it holds none of `cmd.exe`'s special characters and should reach node
-     intact, but only this check shows it. A failure is the tile notice, not silence.
+   - Windows: Claude Code shows `slack` in `/mcp` after a launch from the launcher (npm's
+     `claude.cmd` if that is how it is installed; the add uses plain flags, no quotes).
    - In both clients, ask Claude to send a Slack message: it is refused (Desktop by
      `toolPolicy`, Claude Code by the deny rule), and Claude can still read.
    - Claude Desktop lock installed: Slack comes from the profile; the launcher writes no

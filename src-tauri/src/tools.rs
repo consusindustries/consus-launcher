@@ -827,6 +827,11 @@ fn sync_claude_connectors(claude: &dyn Fn() -> Option<Command>, home: &Path, wan
     }
     let profile = claude_code::profile_dir(home);
     fs::create_dir_all(&profile).map_err(|e| format!("{}: {e}", profile.display()))?;
+    // Claude Code reads the folder it runs in as a project (its .claude and
+    // .mcp.json), so these runs start where sessions do: the empty ~/Consus,
+    // never wherever the launcher was started from.
+    let work = claude_code::work_dir(home);
+    fs::create_dir_all(&work).map_err(|e| format!("{}: {e}", work.display()))?;
     // The session's own switches (no traffic to Anthropic), the launcher's
     // own Claude session scrubbed out, and the launcher's profile.
     let quiet = crate::policy::policy().claude_code_env_static();
@@ -838,7 +843,7 @@ fn sync_claude_connectors(claude: &dyn Fn() -> Option<Command>, home: &Path, wan
             }
         }
         cmd.envs(quiet.iter().filter_map(|(k, v)| Some((k, v.as_str()?))));
-        cmd.env("CLAUDE_CONFIG_DIR", &profile).args(&args);
+        cmd.env("CLAUDE_CONFIG_DIR", &profile).current_dir(&work).args(&args);
         // "No server named" and "already exists" are fine answers; the file
         // says what happened.
         let _ = output_within(&mut cmd, Duration::from_secs(20));
@@ -847,10 +852,12 @@ fn sync_claude_connectors(claude: &dyn Fn() -> Option<Command>, home: &Path, wan
 }
 
 /// sync_claude_connectors for a Claude Code launch: the org's connectors, or
-/// none under the org's lock, which carries its own. A failure is a notice.
+/// none under the org's lock, which carries its own (and the launcher then
+/// also takes back the deny rules it wrote before). A failure is a notice.
 fn launch_claude_connectors(app: &AppHandle, home: &Path, target: &Target, locked: bool) {
     let wanted = if locked { Vec::new() } else { claude_code::connector_servers(target) };
-    if let Err(e) = sync_claude_connectors(&|| claude_command(app), home, &wanted) {
+    let removed = if locked { claude_code::remove_connector_rules(home) } else { Ok(()) };
+    if let Err(e) = removed.and(sync_claude_connectors(&|| claude_command(app), home, &wanted)) {
         let _ = app.emit("tool-notice", json!({ "tool": key(Tool::Code), "message": e }));
     }
 }
@@ -1127,8 +1134,10 @@ fn removal_paths(app: &AppHandle) -> Result<(PathBuf, PathBuf), String> {
     Ok((home, catalog))
 }
 
+/// Async so `claude mcp remove`, which can take seconds, runs off the UI
+/// thread.
 #[tauri::command]
-pub fn remove_tool_configs(app: AppHandle) -> Result<(), String> {
+pub async fn remove_tool_configs(app: AppHandle) -> Result<(), String> {
     let (home, catalog) = removal_paths(&app)?;
     TOOLS
         .into_iter()
