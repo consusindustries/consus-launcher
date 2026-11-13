@@ -62,6 +62,18 @@ fn marker_json() -> Value {
     json!({ "deploymentMode": "3p" })
 }
 
+/// The mode marker that switches Claude Desktop into gateway mode.
+fn marker_path(home: &Path) -> PathBuf {
+    profile_dir(home).join("claude_desktop_config.json")
+}
+
+/// Left beside the marker when the launcher creates it. The app rewrites the
+/// marker with its own preferences on first run, so its content cannot say
+/// whose it is; this file can, and sign out uses it to switch the app back.
+fn created_path(home: &Path) -> PathBuf {
+    profile_dir(home).join("claude_desktop_config.json.consus-created")
+}
+
 fn read_meta(lib: &Path) -> Value {
     fs::read_to_string(lib.join("_meta.json"))
         .ok()
@@ -83,13 +95,26 @@ pub fn write_helper(path: &Path) -> Result<(), String> {
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
-    let _ = fs::remove_file(path);
     #[cfg(unix)]
     {
-        std::os::unix::fs::symlink(&exe, path).map_err(|e| e.to_string())
+        // Already this binary: left as it is, so a tool running the helper
+        // at this moment never finds it missing.
+        if fs::read_link(path).is_ok_and(|t| t == exe) {
+            return Ok(());
+        }
+        // Made beside it and moved over it in one step, for the same reason.
+        let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let tmp = path.with_file_name(format!(".{name}.{}", std::process::id()));
+        let _ = fs::remove_file(&tmp);
+        std::os::unix::fs::symlink(&exe, &tmp).map_err(|e| format!("{}: {e}", tmp.display()))?;
+        fs::rename(&tmp, path).map_err(|e| {
+            let _ = fs::remove_file(&tmp);
+            format!("{}: {e}", path.display())
+        })
     }
     #[cfg(not(unix))]
     {
+        let _ = fs::remove_file(path);
         // A helper a tool is running right now cannot be replaced; the one
         // in place is this same program, so keep it.
         if path.exists() {
@@ -135,13 +160,14 @@ pub fn write_claude_desktop(home: &Path, helper: &Path, models: &Value, t: &Targ
         return Err(no_models_message(t));
     }
 
-    let profile = profile_dir(home);
     let lib = library_dir(home);
     fs::create_dir_all(&lib).map_err(|e| e.to_string())?;
 
-    let marker = profile.join("claude_desktop_config.json");
+    // A marker already there was not the launcher's: it stays at sign out.
+    let marker = marker_path(home);
     if !marker.exists() {
         write_json(&marker, &marker_json())?;
+        fs::write(created_path(home), "").map_err(|e| e.to_string())?;
     }
 
     // The entry's values come from the policy document (policy/
@@ -187,52 +213,83 @@ pub fn write_claude_desktop(home: &Path, helper: &Path, models: &Value, t: &Targ
     write_json(&meta_path, &meta)
 }
 
+/// Whether the launcher has anything set up in Claude Desktop's gateway
+/// profile, so sign out has something to remove (and Claude, if open, must
+/// be closed first).
+pub fn has_claude_desktop(home: &Path) -> bool {
+    let lib = library_dir(home);
+    lib.join(format!("{ENTRY_ID}.json")).exists()
+        || created_path(home).exists()
+        || read_meta(&lib)["entries"].as_array().is_some_and(|e| e.iter().any(|e| e["id"] == ENTRY_ID))
+}
+
 /// Removes the launcher's entry. If it was the applied one, the first
-/// remaining entry becomes applied. If nothing remains and the mode marker
-/// is the one the launcher wrote, that goes too, so a machine the launcher
-/// switched into gateway mode returns to how it was. A library that holds
-/// nothing of the launcher's is left as it is.
+/// remaining entry becomes applied. If nothing remains and the launcher
+/// created the mode marker, that goes too, whatever the app has since added
+/// to it, so a machine the launcher switched into gateway mode returns to
+/// how it was. A marker the launcher found already there stays, and so does
+/// one other entries still need, which is theirs from then on. A library
+/// that holds nothing of the launcher's is left as it is.
 pub fn remove_claude_desktop(home: &Path) -> Result<(), String> {
     let lib = library_dir(home);
     let entry = lib.join(format!("{ENTRY_ID}.json"));
     let had_entry = entry.exists();
     let _ = fs::remove_file(&entry);
+    // The record outlives a marker removal that failed, so a later sign out
+    // still reaches the marker after the entry is already gone.
+    let created = created_path(home).exists();
     let meta_path = lib.join("_meta.json");
-    if !meta_path.exists() {
-        return Ok(());
-    }
-    // Strictly: a file the app is midway through writing must not read as
-    // empty and take everyone's entries with it.
-    let mut meta = fs::read_to_string(&meta_path)
-        .ok()
-        .and_then(|s| serde_json::from_str::<Value>(&s).ok())
-        .filter(Value::is_object)
-        .ok_or_else(|| format!("{}: could not be read", meta_path.display()))?;
-    let all = meta["entries"].as_array().cloned().unwrap_or_default();
-    let listed = meta["appliedId"] == ENTRY_ID || all.iter().any(|e| e["id"] == ENTRY_ID);
-    if !had_entry && !listed {
-        return Ok(());
-    }
-    let entries: Vec<Value> = all.into_iter().filter(|e| e["id"] != ENTRY_ID).collect();
-    let none_left = entries.is_empty();
-    if listed {
-        if meta["appliedId"] == ENTRY_ID {
-            meta["appliedId"] = entries.first().map(|e| e["id"].clone()).unwrap_or(Value::Null);
-        }
-        meta["entries"] = Value::Array(entries);
-        write_json(&meta_path, &meta)?;
-    }
-
-    if none_left {
-        let marker = profile_dir(home).join("claude_desktop_config.json");
-        let ours = fs::read_to_string(&marker)
+    let none_left = if meta_path.exists() {
+        // Strictly: a file the app is midway through writing must not read
+        // as empty and take everyone's entries with it.
+        let mut meta = fs::read_to_string(&meta_path)
             .ok()
             .and_then(|s| serde_json::from_str::<Value>(&s).ok())
-            .map(|v| v == marker_json())
-            .unwrap_or(false);
-        if ours {
-            let _ = fs::remove_file(&marker);
+            .filter(Value::is_object)
+            .ok_or_else(|| format!("{}: could not be read", meta_path.display()))?;
+        let all = meta["entries"].as_array().cloned().unwrap_or_default();
+        let listed = meta["appliedId"] == ENTRY_ID || all.iter().any(|e| e["id"] == ENTRY_ID);
+        if !had_entry && !listed && !created {
+            return Ok(());
         }
+        let entries: Vec<Value> = all.into_iter().filter(|e| e["id"] != ENTRY_ID).collect();
+        let none_left = entries.is_empty();
+        if listed {
+            if meta["appliedId"] == ENTRY_ID {
+                meta["appliedId"] = entries.first().map(|e| e["id"].clone()).unwrap_or(Value::Null);
+            }
+            meta["entries"] = Value::Array(entries);
+            write_json(&meta_path, &meta)?;
+        }
+        none_left
+    } else if created {
+        true
+    } else {
+        return Ok(());
+    };
+
+    if !none_left {
+        // Other entries still run in gateway mode, so the marker is theirs
+        // from now on and stays at every later sign out too.
+        let _ = fs::remove_file(created_path(home));
+        return Ok(());
+    }
+    let marker = marker_path(home);
+    // Without the record (a launcher before 1.5.1 made it), only a marker
+    // still exactly as the launcher wrote it is known to be ours.
+    let ours = created
+        || fs::read_to_string(&marker)
+            .ok()
+            .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+            .is_some_and(|v| v == marker_json());
+    if ours {
+        match fs::remove_file(&marker) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            // The record stays, so the next sign out tries again.
+            Err(e) => return Err(format!("{}: {e}", marker.display())),
+        }
+        let _ = fs::remove_file(created_path(home));
     }
     Ok(())
 }
@@ -363,6 +420,97 @@ mod tests {
         let after: Value = serde_json::from_str(&fs::read_to_string(lib.join("_meta.json")).unwrap()).unwrap();
         assert_eq!(after, json!({ "appliedId": "theirs", "entries": [{ "id": "theirs" }] }));
         assert!(!lib.join(format!("{ENTRY_ID}.json")).exists());
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    const MODELS: &str = r#"[{ "id": "consus/claude-sonnet-5:itar" }]"#;
+    /// Claude Desktop rewrites the marker with its own preferences on first
+    /// run (seen 2026-11-12), so it no longer equals what the launcher wrote.
+    const REWRITTEN: &str = r#"{ "deploymentMode": "3p", "preferences": { "sidebarMode": "chat" } }"#;
+
+    fn set_up(home: &Path) {
+        let models: Value = serde_json::from_str(MODELS).unwrap();
+        write_claude_desktop(home, Path::new("/x/helper"), &models, &Target::default()).unwrap();
+    }
+
+    #[test]
+    fn the_launcher_records_a_marker_it_creates_and_only_that() {
+        let (home, _) = library("record", r#"{ "appliedId": null, "entries": [] }"#);
+        set_up(&home);
+        assert!(marker_path(&home).exists());
+        assert!(created_path(&home).exists());
+        let _ = fs::remove_dir_all(&home);
+
+        let (home, _) = library("found", r#"{ "appliedId": null, "entries": [] }"#);
+        fs::write(marker_path(&home), REWRITTEN).unwrap();
+        set_up(&home);
+        assert!(!created_path(&home).exists(), "a marker already there is not the launcher's");
+        assert_eq!(fs::read_to_string(marker_path(&home)).unwrap(), REWRITTEN);
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn sign_out_removes_a_marker_the_launcher_created_after_the_app_rewrote_it() {
+        let (home, _) = library("rewritten", r#"{ "appliedId": null, "entries": [] }"#);
+        set_up(&home);
+        assert!(has_claude_desktop(&home));
+        fs::write(marker_path(&home), REWRITTEN).unwrap();
+        remove_claude_desktop(&home).unwrap();
+        assert!(!marker_path(&home).exists(), "the app is back to its normal mode");
+        assert!(!created_path(&home).exists());
+        assert!(!has_claude_desktop(&home));
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn without_the_record_only_a_pristine_marker_goes() {
+        let meta = format!(r#"{{ "appliedId": "{ENTRY_ID}", "entries": [{{ "id": "{ENTRY_ID}" }}] }}"#);
+        let (home, lib) = library("old-rewritten", &meta);
+        fs::write(lib.join(format!("{ENTRY_ID}.json")), "{}").unwrap();
+        fs::write(marker_path(&home), REWRITTEN).unwrap();
+        remove_claude_desktop(&home).unwrap();
+        assert_eq!(fs::read_to_string(marker_path(&home)).unwrap(), REWRITTEN, "not known to be ours");
+        let _ = fs::remove_dir_all(&home);
+
+        let (home, lib) = library("old-pristine", &meta);
+        fs::write(lib.join(format!("{ENTRY_ID}.json")), "{}").unwrap();
+        write_json(&marker_path(&home), &marker_json()).unwrap();
+        remove_claude_desktop(&home).unwrap();
+        assert!(!marker_path(&home).exists());
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn with_other_entries_left_the_marker_stays_and_becomes_theirs() {
+        let (home, lib) = library("others", r#"{ "appliedId": "theirs", "entries": [{ "id": "theirs" }] }"#);
+        set_up(&home);
+        remove_claude_desktop(&home).unwrap();
+        assert!(marker_path(&home).exists(), "their entry still runs in gateway mode");
+        assert!(!created_path(&home).exists(), "the marker is theirs from now on");
+        assert!(!has_claude_desktop(&home), "so a later sign out leaves Claude open");
+        let after: Value = serde_json::from_str(&fs::read_to_string(lib.join("_meta.json")).unwrap()).unwrap();
+        assert_eq!(after, json!({ "appliedId": "theirs", "entries": [{ "id": "theirs" }] }));
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn a_marker_that_could_not_be_removed_is_tried_again_at_the_next_sign_out() {
+        use std::os::unix::fs::PermissionsExt;
+        let (home, _) = library("retry", r#"{ "appliedId": null, "entries": [] }"#);
+        set_up(&home);
+        let profile = profile_dir(&home);
+        fs::set_permissions(&profile, fs::Permissions::from_mode(0o555)).unwrap();
+        let first = remove_claude_desktop(&home);
+        fs::set_permissions(&profile, fs::Permissions::from_mode(0o755)).unwrap();
+        // Root ignores the mode, so the removal can succeed under it.
+        if first.is_err() {
+            assert!(marker_path(&home).exists());
+            assert!(created_path(&home).exists(), "the record stays for the retry");
+            assert!(has_claude_desktop(&home));
+            remove_claude_desktop(&home).unwrap();
+        }
+        assert!(!marker_path(&home).exists());
+        assert!(!created_path(&home).exists());
         let _ = fs::remove_dir_all(&home);
     }
 }

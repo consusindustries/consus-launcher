@@ -43,6 +43,47 @@ fn helper_path(dir: &Path, helper: &str) -> PathBuf {
         dir.join(helper)
     }
 }
+
+/// Every key helper, by the name its tool runs it under.
+pub const HELPERS: [&str; 5] = [HELPER_NAME, CODE_HELPER_NAME, CODEX_HELPER_NAME, PI_HELPER_NAME, FACTORY_HELPER_NAME];
+
+/// Puts all the key helpers in `dir`, whatever the lock state and whichever
+/// tools the org allows. A machine-wide lock (MDM) names one of these paths,
+/// and under a lock the launcher writes no tool settings, so without this
+/// the helper the lock points at would never exist. They are links to this
+/// binary, so all five cost nothing.
+pub fn write_helpers_in(dir: &Path) -> Result<(), String> {
+    let failed: Vec<String> = HELPERS
+        .into_iter()
+        .filter_map(|h| config::write_helper(&helper_path(dir, h)).err().map(|e| format!("{h}: {e}")))
+        .collect();
+    if failed.is_empty() {
+        Ok(())
+    } else {
+        Err(failed.join("; "))
+    }
+}
+
+/// The key helpers in the launcher's folder, at sign-in and at each start
+/// while signed in. Best effort: a failure is logged, never in the way of
+/// signing in. A copy of the launcher run from where it will not stay (the
+/// disk image, or a copy macOS runs from a temporary place) writes none, so
+/// the helpers keep pointing at the installed launcher.
+pub fn write_helpers(app: &AppHandle) {
+    if std::env::current_exe().is_ok_and(|e| transient(&e)) {
+        return;
+    }
+    let written = app.path().app_config_dir().map_err(|e| e.to_string()).and_then(|d| write_helpers_in(&d));
+    if let Err(e) = written {
+        eprintln!("key helpers: {e}");
+    }
+}
+
+/// Whether this binary runs from a mounted disk image or from macOS's App
+/// Translocation copy, both gone once the launcher quits.
+fn transient(exe: &Path) -> bool {
+    cfg!(target_os = "macos") && (exe.starts_with("/Volumes") || exe.to_string_lossy().contains("/AppTranslocation/"))
+}
 /// Pi's mark from pi.dev on its site's background color.
 const PI_ICON: &str = include_str!("../assets/pi.svg");
 /// Factory's mark from factory.ai's favicon, on a rounded tile like Pi's.
@@ -523,8 +564,22 @@ fn osascript(script: &str) -> Result<String, String> {
     }
 }
 
+/// This account's uid. Another account logged in on the same Mac (fast user
+/// switching) runs its own copy of an app, which is not ours to place or quit.
+static UID: LazyLock<Option<String>> = LazyLock::new(|| {
+    let o = Command::new("id").arg("-u").output().ok()?;
+    let uid = String::from_utf8_lossy(&o.stdout).trim().to_string();
+    (o.status.success() && !uid.is_empty()).then_some(uid)
+});
+
 fn running_pids(process: &str) -> Vec<u32> {
-    Command::new("pgrep")
+    // Options before the name: pgrep stops reading options at the first
+    // pattern. -u is the effective user, the one ps shows.
+    let mut pgrep = Command::new("pgrep");
+    if let Some(uid) = UID.as_deref() {
+        pgrep.args(["-u", uid]);
+    }
+    pgrep
         .args(["-x", process])
         .output()
         .map(|o| {
@@ -1018,9 +1073,40 @@ pub async fn remove_tool_configs(app: AppHandle) -> Result<(), String> {
     let (home, catalog) = removal_paths(&app)?;
     TOOLS
         .into_iter()
-        .map(|t| remove_config(&home, &catalog, t))
+        .map(|t| {
+            // Claude Desktop and ChatGPT write their config back when they
+            // quit, which would undo the removal, so one holding the
+            // launcher's settings is closed first, as a launch does. One
+            // that will not close still loses the settings now, and the
+            // reason is reported so the person can close it.
+            let closed = if holds_launcher_config(&home, t) { quit_app(t) } else { Ok(()) };
+            remove_config(&home, &catalog, t).and(closed)
+        })
         .chain([sync_claude_connectors(&|| claude_command(&app), &home, &[])])
         .fold(Ok(()), Result::and)
+}
+
+/// Whether a desktop app holds settings the launcher wrote. An app the
+/// launcher never set up is left open at sign out.
+fn holds_launcher_config(home: &Path, t: Tool) -> bool {
+    match t {
+        Tool::Desktop => config::has_claude_desktop(home),
+        Tool::ChatGpt => chatgpt::has_config(home),
+        Tool::Code | Tool::Codex | Tool::Pi | Tool::Factory => false,
+    }
+}
+
+/// Closes Claude Desktop or ChatGPT if it is open. The command-line tools
+/// read their settings per session, so there is nothing to close.
+fn quit_app(t: Tool) -> Result<(), String> {
+    if !app_running(t) {
+        return Ok(());
+    }
+    if cfg!(target_os = "macos") {
+        app_spec(t).map_or(Ok(()), |s| quit_and_wait(t, &s))
+    } else {
+        other_quit(t)
+    }
 }
 
 /// The tools an org's settings turn off.
@@ -1066,6 +1152,16 @@ fn other_running(t: Tool) -> bool {
 #[cfg(not(windows))]
 fn other_running(_: Tool) -> bool {
     false
+}
+
+#[cfg(windows)]
+fn other_quit(t: Tool) -> Result<(), String> {
+    win::quit(t)
+}
+
+#[cfg(not(windows))]
+fn other_quit(_: Tool) -> Result<(), String> {
+    Ok(())
 }
 
 /// On launcher exit the apps it started are asked to quit, then killed if
@@ -1301,5 +1397,32 @@ mod tests {
         assert!(fs::read_to_string(home.join(".claude-consus-gateway/settings.json")).unwrap().contains("apiKeyHelper"));
         assert!(fs::read_to_string(home.join(".codex-consus-gateway/config.toml")).unwrap().contains("consus"));
         let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn every_key_helper_is_put_in_place_whatever_is_locked() {
+        let dir = std::env::temp_dir().join(format!("consus-launcher-helpers-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        write_helpers_in(&dir).unwrap();
+        let exe = std::env::current_exe().unwrap();
+        for h in HELPERS {
+            let path = helper_path(&dir, h);
+            assert!(path.exists(), "{h} is missing");
+            #[cfg(unix)]
+            assert_eq!(fs::read_link(&path).unwrap(), exe, "{h} runs this binary");
+        }
+        // Again, as at every start: the links are simply replaced.
+        write_helpers_in(&dir).unwrap();
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn a_launcher_running_from_a_disk_image_or_a_translocated_copy_writes_no_helpers() {
+        assert!(transient(Path::new("/Volumes/Consus Launcher/Consus Launcher.app/Contents/MacOS/consus-launcher")));
+        assert!(transient(Path::new(
+            "/private/var/folders/x/AppTranslocation/ABC/d/Consus Launcher.app/Contents/MacOS/consus-launcher"
+        )));
+        assert!(!transient(Path::new("/Applications/Consus Launcher.app/Contents/MacOS/consus-launcher")));
     }
 }

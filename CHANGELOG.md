@@ -2,6 +2,13 @@
 
 What changed in each release. Each release's GitHub page shows its section.
 
+## v1.5.1 (2026-11-13)
+
+- Locked machines: signing in now puts the launcher's key helpers in place for every tool, and so does each start while signed in. A lock file your device management pushes (Claude Code's `managed-settings.json`, Claude Desktop's profile, Factory's settings file) names one of these helpers, but until now the launcher made a helper only when it set a tool up itself, which it never does under a lock, so the locked tool could not get a key.
+- Sign out returns Claude Desktop to its normal mode. The launcher records that it switched Claude into gateway mode, and sign out uses that record to switch it back, even after Claude has added its own preferences to the file. Before, sign out left Claude in gateway mode with no configuration. A machine that signed in on an earlier launcher and has opened Claude since has no record, so there sign out still leaves Claude in gateway mode: delete `claude_desktop_config.json` in `~/Library/Application Support/Claude-3p` (`%LOCALAPPDATA%\Claude-3p` on Windows) with Claude closed.
+- Sign out first closes Claude Desktop and ChatGPT if they hold the launcher's settings, because both write their settings back as they quit, which undid the sign out. An app the launcher never set up is left open. If one will not close, sign out still removes the settings and says which app to close.
+- macOS: with two people logged in at once (fast user switching), the launcher no longer takes the other person's Claude Desktop or ChatGPT for yours. Before, the tile showed Running, and clicking it tried to close the other person's app, failed, and did not open yours.
+
 ## v1.5.0 (2026-11-12)
 
 - Factory: Factory's `droid` agent is a sixth tool, on macOS, for organizations that turn it on (it is not in the default set: `factory` in `Tools`, or on in the Consus portal). The launcher opens `droid` in Terminal with its own home and an organization settings file that removes web search and image generation, refuses Factory's own models, and admits models only at your endpoint; prompts and responses go only to Consus. If a `droid` version stops reading that file, the tile refuses to open. Factory still receives your sign-in, its feature flags, and token counts for each turn, and its Automations and `/bug` upload content with no setting to stop them (README, "Tools"). The first launch asks you to sign in to Factory.
