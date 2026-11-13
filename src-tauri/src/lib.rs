@@ -23,7 +23,7 @@ fn helper_mode() -> Option<bool> {
     let name = std::path::Path::new(&arg0).file_stem()?.to_str()?;
     match name {
         tools::HELPER_NAME => Some(true),
-        tools::CODE_HELPER_NAME | tools::CODEX_HELPER_NAME | tools::PI_HELPER_NAME | tools::FACTORY_HELPER_NAME => Some(false),
+        n if tools::HELPERS.contains(&n) => Some(false),
         _ => None,
     }
 }
@@ -44,7 +44,14 @@ pub fn run() {
                 settings::init(dir);
             }
             let handle = app.handle().clone();
-            std::thread::spawn(move || tools::remove_turned_off(&handle));
+            std::thread::spawn(move || {
+                tools::remove_turned_off(&handle);
+                // Signed in on a launcher that made the helpers only when it
+                // set a tool up: a lock that came later needs them now.
+                if keychain::get_key().is_some() {
+                    tools::write_helpers(&handle);
+                }
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

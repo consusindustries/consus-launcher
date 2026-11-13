@@ -209,6 +209,26 @@ pub fn remove_config(home: &Path, catalog: &Path) -> Result<(), String> {
     remove_config_at(&path, &extra(ours.then_some(catalog)))
 }
 
+/// Whether the user's config holds the launcher's settings, so sign out has
+/// something to remove (and ChatGPT, if open, must be closed first).
+pub fn has_config(home: &Path) -> bool {
+    fs::read_to_string(config_path(home))
+        .ok()
+        .and_then(|s| s.parse::<DocumentMut>().ok())
+        .is_some_and(|d| launcher_wrote(&d))
+}
+
+/// The launcher's mark: its provider, with the key taken from the
+/// environment. The same key names in a user's own Codex config are theirs.
+fn launcher_wrote(doc: &DocumentMut) -> bool {
+    doc.get("model_providers")
+        .and_then(|p| p.get("consus"))
+        .and_then(|c| c.get("env_http_headers"))
+        .and_then(|h| h.get("x-api-key"))
+        .and_then(Item::as_str)
+        == Some("CONSUS_API_KEY")
+}
+
 /// Does nothing to a file the launcher did not write: its provider, with the
 /// key taken from the environment, is the launcher's mark. The same key
 /// names in a user's own Codex config are theirs.
@@ -219,14 +239,7 @@ pub fn remove_config_at(path: &Path, extra: &Table) -> Result<(), String> {
     let mut doc: DocumentMut = existing
         .parse()
         .map_err(|e| format!("{}: {e}", path.display()))?;
-    let ours = doc
-        .get("model_providers")
-        .and_then(|p| p.get("consus"))
-        .and_then(|c| c.get("env_http_headers"))
-        .and_then(|h| h.get("x-api-key"))
-        .and_then(Item::as_str)
-        == Some("CONSUS_API_KEY");
-    if !ours {
+    if !launcher_wrote(&doc) {
         return Ok(());
     }
     // The helper entry is the launcher's too, though not in the template.
@@ -343,6 +356,19 @@ followUpQueueMode = "steer"
             assert!(out.contains(kept), "{kept} should survive");
         }
         assert!(!out.contains("computer_use"), "template key inside a shared table is removed");
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn only_the_launchers_settings_count_as_its_config() {
+        let home = temp_home("has");
+        assert!(!has_config(&home), "no file");
+        fs::write(config_path(&home), EXISTING).unwrap();
+        assert!(!has_config(&home), "the user's own config");
+        write_config(&home, &serde_json::from_str(MODELS).unwrap(), &Target::default(), None, helper()).unwrap();
+        assert!(has_config(&home));
+        remove_config(&home, Path::new("/nowhere/chatgpt-models.json")).unwrap();
+        assert!(!has_config(&home), "gone at sign out");
         let _ = fs::remove_dir_all(&home);
     }
 

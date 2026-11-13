@@ -276,6 +276,12 @@ pub fn running(t: Tool) -> bool {
     app_dir(t).is_some_and(|d| !pids_in(&d).is_empty())
 }
 
+/// Closes Claude Desktop or ChatGPT if it is running, so the config can be
+/// removed without the app writing it back on its way out.
+pub fn quit(t: Tool) -> Result<(), String> {
+    app_dir(t).map_or(Ok(()), |d| quit_running(t, &d))
+}
+
 /// Starts a Store app the way the Start menu does, and returns its main
 /// process. The package family name comes from the install folder,
 /// <name>_<version>_<arch>__<publisher id>; `app_id` is the manifest's

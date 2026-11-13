@@ -302,16 +302,19 @@ async function resetAll(): Promise<void> {
     revoked: false,
     message: "Signed out on this computer. " + String(err),
   }));
+  // Best effort; the UI resets below either way. What could not be done
+  // (an app that would not close) is shown with the sign-out message.
+  let removal = "";
   try {
     await invoke("remove_tool_configs");
-  } catch {
-    // best-effort; UI state still resets below
+  } catch (err) {
+    removal = " " + String(err);
   }
   signinMeta = null;
   K = { def: null };
   // Sign out also dropped the org's settings from the portal.
   await loadSettings().catch(() => undefined);
-  $("signinErr").textContent = r.message;
+  $("signinErr").textContent = r.message + removal;
   cur = null;
   $("empty").style.display = "";
   document.querySelectorAll<HTMLElement>(".tool").forEach((x) => {

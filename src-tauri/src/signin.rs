@@ -264,6 +264,9 @@ async fn store_key(app: &AppHandle, key: &str, meta: &Meta) -> Result<(), String
     }
     // After the old key's revoke, which goes where its document says.
     crate::settings::forget_other_key(key);
+    // A machine-wide lock points each tool at a helper; signing in is what
+    // puts them there, whether or not this launcher ever opens the tool.
+    crate::tools::write_helpers(app);
     Ok(())
 }
 
@@ -393,6 +396,7 @@ pub fn adopt_helper_key(app: AppHandle) -> Result<Option<String>, String> {
     };
     crate::keychain::set_key(&key)?;
     write_meta(&app, &meta)?;
+    crate::tools::write_helpers(&app);
     Ok(Some(key))
 }
 
