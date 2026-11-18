@@ -2,10 +2,11 @@
 
 What changed in each release. Each release's GitHub page shows its section.
 
-## v1.6.0 (unreleased)
+## v1.6.0 (2026-11-18)
 
 - Model order: your organization's admin can set, in the Consus portal, the order every tool lists models in and the model it starts on. It never hides a model or adds one; a model the admin did not place comes after the ordered ones, and a tool none of whose models are in the order stays as it was. In Claude Code it also decides what `opus` and `sonnet` mean; in Pi, a start model the admin names replaces your own pick. The Keys tab shows the order.
 - Your organization's own connectors: an admin can add MCP servers as JSON in the Consus portal, and the launcher writes them into Claude Desktop and Claude Code as saved, after checking each again (remote servers only, no commands, no headers or secrets, no variable references). The tile tells you once when one is added or changed. Removed in the portal, a server is removed at each app's next launch; sign out removes them. On Windows with an npm install of Claude Code, such a server needs `node` to be found and is skipped with a notice when it is not.
+- Claude Desktop starts on the first model in the order (it has no start-model setting of its own).
 - For IT: on a machine with a Claude lock file, the model order and connectors for Claude come from the lock; push the lock files again after changing either in the portal.
 - A tile's notice now stays until that tool is next opened, instead of being cleared when the launcher refreshes.
 
