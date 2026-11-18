@@ -2,6 +2,7 @@ mod chatgpt;
 mod claude_code;
 mod codex;
 mod config;
+mod custom;
 mod factory;
 mod keychain;
 mod models;
@@ -41,6 +42,7 @@ pub fn run() {
             // Before anything reads the settings, so the startup removal
             // below already sees the org's last document.
             if let Ok(dir) = app.path().app_config_dir() {
+                custom::init(dir.clone());
                 settings::init(dir);
             }
             let handle = app.handle().clone();
@@ -71,6 +73,7 @@ pub fn run() {
             signin::adopt_helper_key,
             signin::revoke_key,
             tools::detect_tools,
+            tools::connector_notices,
             tools::launch_tool,
             tools::remove_tool_configs,
         ])

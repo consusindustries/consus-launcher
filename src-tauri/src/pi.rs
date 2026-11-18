@@ -83,17 +83,19 @@ pub fn no_models(models_json: &Value, t: &Target) -> Option<String> {
     models::at_level(models_json, t).is_empty().then(|| no_models_message(t))
 }
 
-/// The guide's provider block, with one row per model this key has at the
-/// target level.
-fn provider(helper: &Path, models_json: &Value, t: &Target) -> Result<Value, String> {
-    let tag = t.tag();
+/// Every model this key has at the target level, in Pi's and Factory's own
+/// order: by maker (maker_rank), then by name.
+pub(crate) fn by_maker(models_json: &Value, t: &Target) -> Vec<(String, models::Detail)> {
     let mut list = models::at_level(models_json, t);
-    if list.is_empty() {
-        return Err(no_models_message(t));
-    }
     list.sort_by(|(_, a), (_, b)| maker_rank(&a.maker).cmp(&maker_rank(&b.maker)).then(a.name.cmp(&b.name)));
+    list
+}
+
+/// The guide's provider block, with one row per model in `list`.
+fn provider(helper: &Path, list: &[(String, models::Detail)], t: &Target) -> Value {
+    let tag = t.tag();
     let rows: Vec<Value> = list
-        .into_iter()
+        .iter()
         .map(|(id, d)| {
             let mut m = json!({
                 "id": id,
@@ -115,7 +117,7 @@ fn provider(helper: &Path, models_json: &Value, t: &Target) -> Result<Value, Str
             m
         })
         .collect();
-    Ok(json!({
+    json!({
         "baseUrl": t.v1(),
         "api": "openai-completions",
         "apiKey": "consus",
@@ -130,17 +132,20 @@ fn provider(helper: &Path, models_json: &Value, t: &Target) -> Result<Value, Str
             "maxTokensField": "max_tokens",
         },
         "models": rows,
-    }))
+    })
 }
 
 pub fn write_config(home: &Path, helper: &Path, models_json: &Value, t: &Target) -> Result<(), String> {
-    let p = provider(helper, models_json, t)?;
-    let ids: Vec<String> = p["models"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|m| m["id"].as_str().map(String::from))
-        .collect();
+    let own = by_maker(models_json, t);
+    if own.is_empty() {
+        return Err(no_models_message(t));
+    }
+    let list = models::ordered(own, t.models.as_ref());
+    let p = provider(helper, &list, t);
+    let ids: Vec<String> = list.iter().map(|(id, _)| id.clone()).collect();
+    // The org's named default replaces the person's pick; with none, a pick
+    // of theirs that is still a Consus model stays.
+    let named = models::named(&list, t.models.as_ref()).map(|(id, _)| id.clone());
     fs::create_dir_all(profile_dir(home)).map_err(|e| e.to_string())?;
 
     // Read both files before writing either, so a bad one changes nothing.
@@ -155,15 +160,16 @@ pub fn write_config(home: &Path, helper: &Path, models_json: &Value, t: &Target)
         .ok_or_else(|| format!("{}: 'providers' is not an object", mpath.display()))?
         .insert(PROVIDER.into(), p);
 
-    let keep = sdoc.get("defaultProvider").and_then(Value::as_str) == Some(PROVIDER)
+    let keep = named.is_none()
+        && sdoc.get("defaultProvider").and_then(Value::as_str) == Some(PROVIDER)
         && sdoc.get("defaultModel").and_then(Value::as_str).is_some_and(|m| ids.iter().any(|id| id == m));
     if !keep {
-        // Newest Opus when the key has one, else the GPT model ChatGPT would
-        // start on, else the first model.
-        let default = models::claude_models(models_json, t)
-            .into_iter()
-            .map(|m| m.id)
-            .find(|id| ids.contains(id))
+        // The org's start model; with no order, the newest Opus when the
+        // key has one, else the GPT model ChatGPT would start on, else the
+        // first model.
+        let default = named
+            .or_else(|| models::start(&list, t.models.as_ref()).map(|(id, _)| id.clone()))
+            .or_else(|| models::claude_models(models_json, t).into_iter().map(|m| m.id).find(|id| ids.contains(id)))
             .or_else(|| crate::chatgpt::select_model(models_json, t).filter(|id| ids.contains(id)))
             .unwrap_or_else(|| ids[0].clone());
         sdoc.insert("defaultProvider".into(), json!(PROVIDER));
@@ -328,7 +334,7 @@ mod tests {
               "max_output_tokens": 32768, "input_modalities": ["text", "image"], "reasoning_efforts": [] },
             { "id": "consus/titan-embed-text-v2:itar", "owned_by": "amazon", "max_output_tokens": null }
         ]);
-        let p = provider(&helper(), &models, &Target::default()).unwrap();
+        let p = provider(&helper(), &by_maker(&models, &Target::default()), &Target::default());
         let rows = p["models"].as_array().unwrap();
         let ids: Vec<&str> = rows.iter().map(|m| m["id"].as_str().unwrap()).collect();
         assert_eq!(ids, ["claude-sonnet-4-5:itar", "gpt-4.1:itar", "grok-4.6:itar"], "Claude first, no embeddings");
@@ -348,5 +354,40 @@ mod tests {
         let gpt = &rows[1];
         assert_eq!(gpt["reasoning"], false);
         assert!(gpt.get("thinkingLevelMap").is_none(), "no efforts, no reasoning levels to offer");
+    }
+
+    #[test]
+    fn the_order_decides_the_rows_and_a_named_default_replaces_the_pick() {
+        let home = temp_home("order");
+        fs::create_dir_all(profile_dir(&home)).unwrap();
+        fs::write(settings_path(&home), r#"{ "defaultProvider": "consus", "defaultModel": "gpt-5.4:itar" }"#).unwrap();
+        let m: Value = serde_json::from_str(MODELS).unwrap();
+        let named = Target { models: Some(models::order(&["gpt-5.4", "claude-opus-5"], Some("claude-opus-5"))), ..Target::default() };
+        write_config(&home, &helper(), &m, &named).unwrap();
+        let ids: Vec<String> =
+            read(&models_path(&home))["providers"]["consus"]["models"].as_array().unwrap().iter().map(|r| r["id"].as_str().unwrap().into()).collect();
+        assert_eq!(ids, ["gpt-5.4:itar", "claude-opus-5:itar", "claude-opus-5-5:itar"]);
+        assert_eq!(read(&settings_path(&home))["defaultModel"], "claude-opus-5:itar", "the org's default replaces the pick");
+
+        fs::write(settings_path(&home), r#"{ "defaultProvider": "consus", "defaultModel": "claude-opus-5-5:itar" }"#).unwrap();
+        let unnamed = Target { models: Some(models::order(&["gpt-5.4"], None)), ..Target::default() };
+        write_config(&home, &helper(), &m, &unnamed).unwrap();
+        assert_eq!(read(&settings_path(&home))["defaultModel"], "claude-opus-5-5:itar", "no default named: the person's pick stays");
+        fs::remove_file(settings_path(&home)).unwrap();
+        write_config(&home, &helper(), &m, &unnamed).unwrap();
+        assert_eq!(read(&settings_path(&home))["defaultModel"], "gpt-5.4:itar", "no pick: the first of the order");
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn a_list_that_places_none_of_pis_models_leaves_it_as_it_was() {
+        let m: Value = serde_json::from_str(MODELS).unwrap();
+        let t = Target { models: Some(models::order(&["gemini-3-flash"], Some("gemini-3-flash"))), ..Target::default() };
+        let (a, b) = (temp_home("none-a"), temp_home("none-b"));
+        write_config(&a, &helper(), &m, &t).unwrap();
+        write_config(&b, &helper(), &m, &Target::default()).unwrap();
+        assert_eq!(read(&models_path(&a)), read(&models_path(&b)));
+        assert_eq!(read(&settings_path(&a)), read(&settings_path(&b)));
+        let _ = (fs::remove_dir_all(&a), fs::remove_dir_all(&b));
     }
 }

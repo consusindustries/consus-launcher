@@ -325,6 +325,17 @@ impl Policy {
         self.connectors.get(kind)?.tools.get(tool)?.key.as_deref()
     }
 
+    /// The built-in connector kinds ("slack").
+    pub fn connector_kinds(&self) -> impl Iterator<Item = &str> {
+        self.connectors.keys().map(String::as_str)
+    }
+
+    /// The names Claude Desktop shows the built-in connectors under
+    /// ("Slack"), which a custom server may not take.
+    pub fn connector_desktop_names(&self) -> Vec<&str> {
+        self.connectors.values().filter_map(|c| c.tools.get("claude-desktop")?.entry.get("name")?.as_str()).collect()
+    }
+
     /// Every server name `tool`'s connectors use, turned on or not: the
     /// names the launcher owns in that tool.
     pub fn connector_keys(&self, tool: &str) -> Vec<&str> {

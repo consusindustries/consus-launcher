@@ -345,10 +345,32 @@ pub(super) fn claude_command() -> Option<Command> {
     Some(c)
 }
 
+/// The `claude` for a run that carries values an admin typed: never
+/// through cmd.exe. A native claude.exe runs as it is; npm's claude.cmd is
+/// replaced by node.exe running Claude Code's script, both by full path.
+pub(super) fn claude_command_direct() -> Result<Command, String> {
+    let exe = terminal_cli(Tool::Code).ok_or("Claude Code was not found.")?;
+    let mut c = if is_script(&exe) {
+        let dirs: Vec<PathBuf> = std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect()).unwrap_or_default();
+        let (node, script) = super::connectors::node_and_script(&exe, &dirs)
+            .ok_or("Node.js was not found next to Claude Code or on PATH, and it will not be run through cmd.exe.")?;
+        let mut c = Command::new(node);
+        c.arg(script);
+        c
+    } else {
+        Command::new(exe)
+    };
+    c.creation_flags(CREATE_NO_WINDOW);
+    Ok(c)
+}
+
+fn is_script(exe: &Path) -> bool {
+    exe.extension().is_some_and(|e| e.eq_ignore_ascii_case("cmd") || e.eq_ignore_ascii_case("bat"))
+}
+
 /// Runs a command-line tool; npm installs it as a .cmd, which needs cmd.
 fn cli_command(exe: &Path) -> Command {
-    let script = exe.extension().is_some_and(|e| e.eq_ignore_ascii_case("cmd") || e.eq_ignore_ascii_case("bat"));
-    if script {
+    if is_script(exe) {
         let mut c = Command::new("cmd.exe");
         c.args(["/d", "/c"]).arg(exe);
         c

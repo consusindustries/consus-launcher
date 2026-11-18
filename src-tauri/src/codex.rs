@@ -53,11 +53,12 @@ fn catalog_path(home: &Path) -> PathBuf {
     profile_dir(home).join("consus-models.json")
 }
 
-/// The catalog entries for this key, from `codex debug models --bundled`.
+/// The catalog entries for this key, from `codex debug models --bundled`,
+/// in the org's order (else the catalog's).
 pub fn catalog(bundled: &Value, models_json: &Value, t: &Target) -> Vec<Value> {
     let stock = bundled["models"].as_array().cloned().unwrap_or_default();
     let tag = t.tag();
-    CATALOG
+    let rows: Vec<(String, Value)> = CATALOG
         .iter()
         .filter_map(|(base, from)| {
             let id = format!("{base}:{}", t.level);
@@ -89,8 +90,12 @@ pub fn catalog(bundled: &Value, models_json: &Value, t: &Target) -> Vec<Value> {
             // cloned from there stopped a standalone codex from starting.
             // true is what 0.147's own entries carry; 0.160 accepts it.
             o.entry("supports_parallel_tool_calls").or_insert(json!(true));
-            Some(m)
+            Some((id, m))
         })
+        .collect();
+    models::ordered(rows, t.models.as_ref())
+        .into_iter()
+        .map(|(_, m)| m)
         .enumerate()
         .map(|(i, mut m)| {
             m["priority"] = json!(i + 1);
@@ -313,5 +318,16 @@ mod tests {
         assert_eq!(list.len(), 1);
         assert_eq!(list[0]["slug"], "gpt-5.6-terra:fedramp-high");
         assert_eq!(list[0]["display_name"], "GPT-5.6 Terra (FedRAMP High)");
+    }
+
+    #[test]
+    fn the_order_decides_the_catalog_rows() {
+        let models: Value = serde_json::from_str(MODELS).unwrap();
+        let t = Target { models: Some(models::order(&["gpt-5.1"], None)), ..Target::default() };
+        let list = catalog(&bundled(), &models, &t);
+        let rows: Vec<(&str, u64)> = list.iter().map(|m| (m["slug"].as_str().unwrap(), m["priority"].as_u64().unwrap())).collect();
+        assert_eq!(rows, [("gpt-5.1:itar", 1), ("gpt-5.6-terra:itar", 2)]);
+        let claude_only = Target { models: Some(models::order(&["claude-opus-5-5"], None)), ..Target::default() };
+        assert_eq!(catalog(&bundled(), &models, &claude_only), catalog(&bundled(), &models, &Target::default()));
     }
 }

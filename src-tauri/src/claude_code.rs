@@ -22,8 +22,10 @@
 // launcher reads but never writes. It asks Claude Code to add or remove
 // them (`claude mcp add` / `remove`, user scope), and only when what
 // Claude Code holds differs from what the org chose (mcp_steps). The names
-// the policy document's connectors use (`slack`) are the launcher's; a
-// server a person named that is replaced. Their other servers stay.
+// the policy document's connectors use (`slack`), and the names of the
+// org's own servers the launcher recorded adding (custom.rs), are the
+// launcher's; a server a person named that is replaced. Their other servers
+// stay.
 //
 // Not written here: allowedProviders, which refuses every claude.ai and
 // Console sign-in. Claude Code reads it from managed settings only (it is
@@ -116,15 +118,23 @@ pub fn read_object(path: &Path) -> Result<Map<String, Value>, String> {
     }
 }
 
-/// The launcher's part of settings.json for these models.
+/// The launcher's part of settings.json for these models (`list`, Claude
+/// Code's own order). The org's order decides what the picker lists, what a
+/// session starts on, and what `opus` and `sonnet` mean; the background
+/// model keeps its own rule, which is about what works there.
 fn owned(
     helper: &Path,
     list: &[models::ClaudeModel],
     models_json: &Value,
     t: &Target,
 ) -> Option<(Map<String, Value>, Map<String, Value>)> {
-    let first = |family: &str| list.iter().find(|m| m.family == family);
-    let main = first("opus").or_else(|| first("sonnet")).or_else(|| list.first())?;
+    let shown = models::ordered(list.iter().collect(), t.models.as_ref());
+    let first = |family: &str| shown.iter().copied().find(|m| m.family == family);
+    let main = models::start(&shown, t.models.as_ref())
+        .copied()
+        .or_else(|| first("opus"))
+        .or_else(|| first("sonnet"))
+        .or_else(|| shown.first().copied())?;
     let opus = first("opus").unwrap_or(main);
     let sonnet = first("sonnet").unwrap_or(main);
     let background = BACKGROUND_PREFERENCE
@@ -143,7 +153,7 @@ fn owned(
     let mut top = policy.claude_code_static();
     top.insert("apiKeyHelper".into(), json!(crate::config::helper_shell(helper)));
     top.insert("model".into(), json!(main.id));
-    top.insert("availableModels".into(), json!(list.iter().map(|m| &m.id).collect::<Vec<_>>()));
+    top.insert("availableModels".into(), json!(shown.iter().map(|m| &m.id).collect::<Vec<_>>()));
 
     let mut env = policy.claude_code_env_static();
     env.insert("ANTHROPIC_BASE_URL".into(), json!(t.endpoint));
@@ -340,31 +350,59 @@ fn state_path(home: &Path) -> PathBuf {
     profile_dir(home).join(".claude.json")
 }
 
-/// The servers the org's connectors give Claude Code, by name.
+/// The servers the org's connectors give Claude Code, by name: the built-in
+/// ones, then the ones it wrote itself, as given.
 pub fn connector_servers(t: &Target) -> Vec<(String, Value)> {
     let policy = crate::policy::policy();
     t.connectors
         .iter()
         .filter_map(|c| Some((policy.connector_key(&c.kind, "claude-code")?.to_string(), policy.connector_entry(c, "claude-code")?)))
+        .chain(t.custom.iter().filter_map(|c| Some((c.name.clone(), c.claude_code.clone()?))))
         .collect()
 }
 
-/// The `claude` runs (arguments) that make the servers Claude Code holds
-/// under the launcher's names what `wanted` says: a remove for each name
-/// that holds something else, then an add for each wanted one that is not
-/// there as it should be. Nothing when they already match, so a launch
-/// costs no run. A state file that cannot be read right now (a running
-/// session midway through rewriting it) means nothing is done this time:
-/// removing and re-adding under a running session is worse than waiting
-/// for the next launch.
-pub fn mcp_steps(home: &Path, wanted: &[(String, Value)]) -> Vec<Vec<String>> {
-    let Ok(state) = read_object(&state_path(home)) else {
-        return Vec::new();
-    };
+/// One `claude mcp` run, and what it is for.
+#[derive(Debug, PartialEq)]
+pub struct Step {
+    /// The server it adds or removes.
+    pub name: String,
+    pub args: Vec<String>,
+    /// An add of a server the org wrote itself: values an admin typed are in
+    /// `args`, so on Windows it never goes through cmd.exe.
+    pub admin_text: bool,
+}
+
+/// mcp_plan's steps alone.
+#[cfg(test)]
+pub fn mcp_steps(home: &Path, wanted: &[(String, Value)], owned: &[String]) -> Vec<Step> {
+    mcp_plan(home, wanted, owned).map(|p| p.steps).unwrap_or_default()
+}
+
+/// The `claude` runs that make the servers Claude Code holds under the
+/// launcher's names, and the names of every server it holds, from one read
+/// of its state file.
+pub struct Plan {
+    pub steps: Vec<Step>,
+    pub held: Vec<String>,
+}
+
+/// The plan for the launcher's names (`owned`: the built-in connectors'
+/// names, those the launcher recorded adding, and those wanted now) to hold
+/// what `wanted` says: a remove for each name that holds something else,
+/// then an add for each wanted one that is not there as it should be. A
+/// server under any other name is never named. No steps when they already
+/// match, so a launch costs no run. None while the state file cannot be
+/// read (a running session midway through rewriting it): nothing is done
+/// this time, since removing and re-adding under a running session is worse
+/// than waiting for the next launch.
+pub fn mcp_plan(home: &Path, wanted: &[(String, Value)], owned: &[String]) -> Option<Plan> {
+    let state = read_object(&state_path(home)).ok()?;
+    let built_in = crate::policy::policy().connector_keys("claude-code");
     let held = |name: &str| state.get("mcpServers").and_then(|m| m.get(name));
     let mut removes = Vec::new();
     let mut adds = Vec::new();
-    for name in crate::policy::policy().connector_keys("claude-code") {
+    for name in owned {
+        let name = name.as_str();
         let want = wanted.iter().find(|(k, _)| k == name).map(|(_, v)| v);
         let have = held(name);
         match (have, want) {
@@ -373,13 +411,14 @@ pub fn mcp_steps(home: &Path, wanted: &[(String, Value)]) -> Vec<Vec<String>> {
             _ => {}
         }
         if have.is_some() {
-            removes.push(scoped(&["mcp", "remove", name]));
+            removes.push(Step { name: name.into(), args: scoped(&["mcp", "remove", name]), admin_text: false });
         }
         if let Some(v) = want {
-            adds.push(add_args(name, v));
+            adds.push(Step { name: name.into(), args: add_args(name, v), admin_text: !built_in.contains(&name) });
         }
     }
-    removes.into_iter().chain(adds).collect()
+    let held = state.get("mcpServers").and_then(Value::as_object).map(|m| m.keys().cloned().collect()).unwrap_or_default();
+    Some(Plan { steps: removes.into_iter().chain(adds).collect(), held })
 }
 
 fn scoped(args: &[&str]) -> Vec<String> {
@@ -578,7 +617,8 @@ mod tests {
             "--client-id", "1234567.7654321", "--callback-port", "3118", "--scope", "user",
         ];
         let remove = vec!["mcp", "remove", "slack", "--scope", "user"];
-        let steps = |w: &[(String, Value)]| mcp_steps(&home, w);
+        let owned = vec!["slack".to_string()];
+        let steps = |w: &[(String, Value)]| -> Vec<Vec<String>> { mcp_steps(&home, w, &owned).into_iter().map(|s| s.args).collect() };
 
         // No state file yet (Claude Code never ran in the profile).
         assert!(steps(&[]).is_empty(), "nothing held, nothing wanted: no run");
@@ -596,6 +636,7 @@ mod tests {
         assert_eq!(steps(&other).len(), 2);
         assert_eq!(steps(&other)[0], remove, "a changed client ID: remove first, then add");
         assert_eq!(steps(&other)[1][7], "7654321.1234567");
+        assert!(mcp_steps(&home, &other, &owned).iter().all(|s| !s.admin_text), "the policy document's own values");
 
         // A field Claude Code adds of its own is no difference.
         let mut extra = entry.clone();
@@ -802,5 +843,83 @@ mod tests {
         assert_eq!(doc["env"]["ANTHROPIC_BASE_URL"], "https://ai-proxy.acme.example");
         assert_eq!(doc["model"], "claude-opus-5-5:fedramp-high");
         let _ = fs::remove_dir_all(&home);
+    }
+
+    /// The Claude Code slots for a model listing and an order.
+    fn slots(models_json: &Value, t: &Target) -> [Value; 6] {
+        let (top, env) = owned(Path::new("/h"), &models::claude_models(models_json, t), models_json, t).unwrap();
+        let env = |k: &str| env.get(k).cloned().unwrap_or(Value::Null);
+        [
+            top["model"].clone(),
+            env("ANTHROPIC_DEFAULT_OPUS_MODEL"),
+            env("ANTHROPIC_DEFAULT_SONNET_MODEL"),
+            env("ANTHROPIC_DEFAULT_HAIKU_MODEL"),
+            env("CLAUDE_CODE_MAX_CONTEXT_TOKENS"),
+            top["availableModels"].clone(),
+        ]
+    }
+
+    #[test]
+    fn every_shared_case_fills_claude_codes_slots() {
+        let doc: Value = serde_json::from_str(models::MODEL_CHOICE_CASES).unwrap();
+        for case in doc["cases"].as_array().unwrap() {
+            let Some(want) = case["expect"].get("claude_code") else { continue };
+            let id = case["id"].as_str().unwrap();
+            let listing: Vec<Value> =
+                case["candidates"].as_array().unwrap().iter().map(|c| json!({ "id": format!("consus/{}:itar", c["base"].as_str().unwrap()) })).collect();
+            let choice = (!case["choice"].is_null()).then(|| models::ModelChoice::read(&case["choice"]).unwrap());
+            let t = Target { models: choice, ..Target::default() };
+            let [model, opus, sonnet, background, window, _] = slots(&Value::Array(listing), &t);
+            let id_of = |v: &Value| json!(v.as_str().map(|s| s.strip_suffix(":itar").unwrap_or(s)));
+            assert_eq!(id_of(&model), want["model"], "{id}: model");
+            assert_eq!(id_of(&opus), want["opus"], "{id}: opus");
+            assert_eq!(id_of(&sonnet), want["sonnet"], "{id}: sonnet");
+            assert_eq!(id_of(&background), want["background"], "{id}: background");
+            assert_eq!(json!(window.as_str().map(|w| w.parse::<u64>().unwrap())), want["context_window"], "{id}: context window");
+        }
+    }
+
+    #[test]
+    fn the_order_decides_available_models_and_the_aliases() {
+        let listing = json!([
+            { "id": "consus/claude-opus-5-5:itar" },
+            { "id": "consus/claude-opus-5:itar" },
+            { "id": "consus/claude-sonnet-5-5:itar" }
+        ]);
+        let t = Target {
+            models: Some(models::order(&["claude-sonnet-5-5", "claude-opus-5", "claude-opus-5-5"], Some("claude-sonnet-5-5"))),
+            ..Target::default()
+        };
+        let [model, opus, sonnet, _, _, available] = slots(&listing, &t);
+        assert_eq!(model, "claude-sonnet-5-5:itar", "the default starts");
+        assert_eq!(opus, "claude-opus-5:itar", "Opus 5 above Opus 5.5: the admin chose what opus means");
+        assert_eq!(sonnet, "claude-sonnet-5-5:itar");
+        assert_eq!(available, json!(["claude-sonnet-5-5:itar", "claude-opus-5:itar", "claude-opus-5-5:itar"]));
+    }
+
+    #[test]
+    fn the_background_model_ignores_the_order() {
+        let listing: Value = serde_json::from_str(MODELS).unwrap();
+        let t = Target { models: Some(models::order(&["claude-sonnet-5", "claude-opus-5"], None)), ..Target::default() };
+        assert_eq!(slots(&listing, &t)[3], slots(&listing, &Target::default())[3]);
+        assert_eq!(slots(&listing, &t)[3], "claude-sonnet-4-5:itar", "never Sonnet 5, whatever the order");
+    }
+
+    #[test]
+    fn with_no_choice_the_settings_are_what_1_5_1_wrote() {
+        let listing: Value = serde_json::from_str(MODELS).unwrap();
+        assert_eq!(
+            slots(&listing, &Target::default()),
+            [
+                json!("claude-opus-5-5:itar"),
+                json!("claude-opus-5-5:itar"),
+                json!("claude-sonnet-5:itar"),
+                json!("claude-sonnet-4-5:itar"),
+                json!("1000000"),
+                json!(["claude-opus-5-5:itar", "claude-opus-5:itar", "claude-sonnet-5:itar", "claude-sonnet-4-5:itar"]),
+            ]
+        );
+        let gpt_only = Target { models: Some(models::order(&["gpt-5.6-terra"], Some("gpt-5.6-terra"))), ..Target::default() };
+        assert_eq!(slots(&listing, &gpt_only), slots(&listing, &Target::default()), "a list that places none of these is no choice");
     }
 }

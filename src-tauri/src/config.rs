@@ -18,10 +18,11 @@ use crate::models::{self, Target};
 const ENTRY_ID: &str = "6c3e2a4e-0b1d-4f7a-9e8c-5a1c0f2d3b47";
 const ENTRY_NAME: &str = "Consus Launcher";
 /// The models a Claude Desktop picker lists: Claude only, the target level
-/// only, newest per family first and marked as that family's default.
+/// only, in the org's order (else newest per family first), the first of
+/// each family marked as that family's default.
 pub fn select_models(models_json: &Value, t: &Target) -> Vec<Value> {
     let mut seen: Vec<String> = Vec::new();
-    models::claude_models(models_json, t)
+    models::ordered(models::claude_models(models_json, t), t.models.as_ref())
         .into_iter()
         .map(|m| {
             let first = !seen.contains(&m.family);
@@ -189,10 +190,15 @@ pub fn write_claude_desktop(home: &Path, helper: &Path, models: &Value, t: &Targ
     entry.insert("inferenceModels".into(), json!(picked));
     entry.extend(policy.claude_desktop_variant(t.web_access));
     // The connectors the org turned on (Slack: the org's Slack app, with
-    // its write tools blocked). The entry is rewritten whole, so one the
-    // org turned off is gone at the next launch, and so is one a person
-    // added to this entry by hand.
-    let servers: Vec<Value> = t.connectors.iter().filter_map(|c| policy.connector_entry(c, "claude-desktop")).collect();
+    // its write tools blocked), then the servers it wrote itself, as given.
+    // The entry is rewritten whole, so one the org turned off is gone at the
+    // next launch, and so is one a person added to this entry by hand.
+    let servers: Vec<Value> = t
+        .connectors
+        .iter()
+        .filter_map(|c| policy.connector_entry(c, "claude-desktop"))
+        .chain(t.custom.iter().filter_map(|c| c.desktop_entry()))
+        .collect();
     if !servers.is_empty() {
         entry.insert("managedMcpServers".into(), Value::Array(servers));
     }
@@ -512,5 +518,59 @@ mod tests {
         assert!(!marker_path(&home).exists());
         assert!(!created_path(&home).exists());
         let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn the_order_decides_inference_models_and_family_defaults() {
+        let listing = json!([
+            { "id": "consus/claude-opus-5-5:itar" },
+            { "id": "consus/claude-opus-5:itar" },
+            { "id": "consus/claude-sonnet-5:itar" }
+        ]);
+        let t = Target { models: Some(models::order(&["claude-sonnet-5", "claude-opus-5"], None)), ..Target::default() };
+        let picked = select_models(&listing, &t);
+        let names: Vec<&str> = picked.iter().map(|m| m["name"].as_str().unwrap()).collect();
+        assert_eq!(names, ["claude-sonnet-5:itar", "claude-opus-5:itar", "claude-opus-5-5:itar"]);
+        let defaults: Vec<&str> = picked.iter().filter(|m| m["isFamilyDefault"] == true).map(|m| m["name"].as_str().unwrap()).collect();
+        assert_eq!(defaults, ["claude-sonnet-5:itar", "claude-opus-5:itar"], "the first of each family in the order");
+        assert_eq!(select_models(&listing, &Target::default())[0]["name"], "claude-opus-5-5:itar", "no order: newest first");
+    }
+
+    fn custom(name: &str, desktop: Value) -> crate::models::CustomServer {
+        crate::models::CustomServer { name: name.into(), claude_code: None, claude_desktop: Some(desktop) }
+    }
+
+    #[test]
+    fn custom_servers_follow_the_built_in_ones() {
+        let models = json!([{ "id": "consus/claude-sonnet-5:itar" }]);
+        let (home, lib) = library("custom", r#"{ "appliedId": null, "entries": [] }"#);
+        let read = || -> Value { serde_json::from_str(&fs::read_to_string(lib.join(format!("{ENTRY_ID}.json"))).unwrap()).unwrap() };
+        let blob = json!({ "name": "Issues", "transport": "http", "url": "https://mcp.example.com/mcp", "oauth": { "clientId": "abc123" } });
+        let t = Target {
+            connectors: vec![crate::models::slack("1234567.7654321")],
+            custom: vec![custom("issues", blob.clone())],
+            ..Target::default()
+        };
+        write_claude_desktop(&home, Path::new("/x/helper"), &models, &t).unwrap();
+        let servers = read()["managedMcpServers"].as_array().cloned().unwrap();
+        assert_eq!(servers.iter().map(|s| s["name"].as_str().unwrap()).collect::<Vec<_>>(), ["Slack", "issues"], "the entry's name");
+        let mut given = blob.clone();
+        given["name"] = json!("issues");
+        assert_eq!(servers[1], given, "otherwise written as given");
+        write_claude_desktop(&home, Path::new("/x/helper"), &models, &Target::default()).unwrap();
+        assert!(read().get("managedMcpServers").is_none(), "removed in the portal: gone at the next launch");
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn a_blob_without_a_name_gets_the_entrys() {
+        let c = custom("issues", json!({ "transport": "http", "url": "https://mcp.example.com/mcp" }));
+        assert_eq!(c.desktop_entry().unwrap()["name"], "issues");
+    }
+
+    #[test]
+    fn a_name_in_the_blob_is_replaced_by_the_entrys() {
+        let c = custom("issues", json!({ "name": "Slack", "transport": "http", "url": "https://mcp.example.com/mcp" }));
+        assert_eq!(c.desktop_entry().unwrap()["name"], "issues");
     }
 }

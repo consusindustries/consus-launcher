@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 
 use crate::claude_code::read_object;
 use crate::models::{self, Target};
-use crate::pi::{maker_rank, write_object};
+use crate::pi::{by_maker, write_object};
 use crate::policy::policy;
 
 pub const PROFILE_DIR: &str = ".factory-consus-gateway";
@@ -100,20 +100,13 @@ fn provider(bare: &str, t: &Target) -> (&'static str, String) {
     }
 }
 
-/// One customModels entry per model this key has at the target level,
-/// Claude first, as Pi lists them.
-fn custom_models(helper: &Path, models_json: &Value, t: &Target) -> Result<Vec<Value>, String> {
+/// One customModels entry per model in `list`.
+fn custom_models(helper: &Path, list: &[(String, models::Detail)], t: &Target) -> Vec<Value> {
     let tag = t.tag();
-    let mut list = models::at_level(models_json, t);
-    if list.is_empty() {
-        return Err(no_models_message(t));
-    }
-    list.sort_by(|(_, a), (_, b)| maker_rank(&a.maker).cmp(&maker_rank(&b.maker)).then(a.name.cmp(&b.name)));
     let helper = crate::config::helper_shell(helper);
-    Ok(list
-        .into_iter()
+    list.iter()
         .map(|(id, d)| {
-            let (provider, base_url) = provider(&id, t);
+            let (provider, base_url) = provider(id, t);
             json!({
                 "id": model_id(&id),
                 "model": id,
@@ -126,18 +119,21 @@ fn custom_models(helper: &Path, models_json: &Value, t: &Target) -> Result<Vec<V
                 "apiKeyHelperTtlMs": HELPER_TTL_MS,
             })
         })
-        .collect())
+        .collect()
 }
 
-/// The default-model keys: the newest Opus, else what ChatGPT would start
-/// on, else the first model; the medium and light subagents take the first
-/// Sonnet and the first Haiku, else that model.
-fn defaults(models_json: &Value, t: &Target, ids: &[String]) -> Map<String, Value> {
-    let claude: Vec<String> = models::claude_models(models_json, t).into_iter().map(|m| m.id).collect();
-    let first = |family: &str| {
-        claude.iter().find(|id| id.starts_with(&format!("claude-{family}-"))).map(|id| model_id(id)).filter(|id| ids.contains(id))
-    };
-    let main = first("opus")
+/// The default-model keys for the models in `list` (in the org's order when
+/// it has one): the org's start model, else the newest Opus, else what ChatGPT
+/// would start on, else the first model; the medium and light subagents take
+/// the first Sonnet and the first Haiku in the order, else that model.
+fn defaults(models_json: &Value, t: &Target, list: &[(String, models::Detail)]) -> Map<String, Value> {
+    let ids: Vec<String> = list.iter().map(|(id, _)| model_id(id)).collect();
+    let claude = models::claude_models(models_json, t);
+    let claude: Vec<&models::ClaudeModel> = models::ordered(claude.iter().collect(), t.models.as_ref());
+    let first = |family: &str| claude.iter().find(|m| m.family == family).map(|m| model_id(&m.id)).filter(|id| ids.contains(id));
+    let main = models::start(list, t.models.as_ref())
+        .map(|(id, _)| model_id(id))
+        .or_else(|| first("opus"))
         .or_else(|| crate::chatgpt::select_model(models_json, t).map(|id| model_id(&id)).filter(|id| ids.contains(id)))
         .unwrap_or_else(|| ids[0].clone());
     let mut out = Map::new();
@@ -201,9 +197,13 @@ fn merge(dst: &mut Map<String, Value>, src: &Map<String, Value>) {
 }
 
 pub fn write_config(home: &Path, helper: &Path, models_json: &Value, t: &Target) -> Result<(), String> {
-    let mine = custom_models(helper, models_json, t)?;
-    let ids: Vec<String> = mine.iter().filter_map(|m| m["id"].as_str().map(String::from)).collect();
-    let defaults = defaults(models_json, t, &ids);
+    let own = by_maker(models_json, t);
+    if own.is_empty() {
+        return Err(no_models_message(t));
+    }
+    let list = models::ordered(own, t.models.as_ref());
+    let mine = custom_models(helper, &list, t);
+    let defaults = defaults(models_json, t, &list);
     fs::create_dir_all(factory_dir(home)).map_err(|e| e.to_string())?;
 
     // The user-level file is read before either is written, so a bad one
@@ -391,25 +391,23 @@ mod tests {
 
     #[test]
     fn defaults_pin_every_key_to_a_consus_model() {
-        let ids = |m: &Value| -> Vec<String> {
-            custom_models(&helper(), m, &Target::default()).unwrap().iter().map(|x| x["id"].as_str().unwrap().to_string()).collect()
-        };
+        let list = |m: &Value| by_maker(m, &Target::default());
         let get = |d: &Map<String, Value>, path: &str| {
             path.split('.').fold(Value::Object(d.clone()), |v, k| v[k].clone()).as_str().unwrap().to_string()
         };
         let full = models();
-        let d = defaults(&full, &Target::default(), &ids(&full));
+        let d = defaults(&full, &Target::default(), &list(&full));
         assert_eq!(get(&d, "sessionDefaultSettings.model"), "custom:consus-claude-opus-5-5", "the newest Opus");
         assert_eq!(get(&d, "compactionModel"), "custom:consus-claude-opus-5-5");
         assert_eq!(get(&d, "subagentModelSettings.mediumModel"), "custom:consus-claude-sonnet-5-5");
         assert_eq!(get(&d, "subagentModelSettings.lightModel"), "custom:consus-claude-haiku-5-5");
 
         let opus_only = json!([{ "id": "consus/claude-opus-5-5:itar" }]);
-        let d = defaults(&opus_only, &Target::default(), &ids(&opus_only));
+        let d = defaults(&opus_only, &Target::default(), &list(&opus_only));
         assert!(DEFAULT_KEYS.iter().all(|k| get(&d, k) == "custom:consus-claude-opus-5-5"), "one model fills every key");
 
         let gpt = json!([{ "id": "consus/gpt-oss-120b:itar" }, { "id": "consus/gpt-5.4:itar" }]);
-        let d = defaults(&gpt, &Target::default(), &ids(&gpt));
+        let d = defaults(&gpt, &Target::default(), &list(&gpt));
         assert_eq!(get(&d, "sessionDefaultSettings.model"), "custom:consus-gpt-5-4", "without Claude, ChatGPT's model");
         assert_eq!(get(&d, "subagentModelSettings.lightModel"), "custom:consus-gpt-5-4");
     }
@@ -509,5 +507,35 @@ mod tests {
         for unknown in [None, Some(""), Some("not json"), Some("[]"), Some(r#"{ "error": "sign in" }"#)] {
             assert_eq!(check(unknown), Check::Unknown, "{unknown:?}");
         }
+    }
+
+    #[test]
+    fn the_order_decides_the_rows_and_the_defaults() {
+        let get = |d: &Map<String, Value>, path: &str| path.split('.').fold(Value::Object(d.clone()), |v, k| v[k].clone());
+        let m = models();
+        let t = Target { models: Some(models::order(&["claude-sonnet-5-5", "claude-haiku-5-5"], None)), ..Target::default() };
+        let list = models::ordered(by_maker(&m, &t), t.models.as_ref());
+        let ids: Vec<&str> = list.iter().map(|(id, _)| id.as_str()).take(2).collect();
+        assert_eq!(ids, ["claude-sonnet-5-5:itar", "claude-haiku-5-5:itar"]);
+        let d = defaults(&m, &t, &list);
+        assert_eq!(get(&d, "sessionDefaultSettings.model"), "custom:consus-claude-sonnet-5-5", "no default: the first of the order");
+        assert_eq!(get(&d, "subagentModelSettings.mediumModel"), "custom:consus-claude-sonnet-5-5");
+        assert_eq!(get(&d, "subagentModelSettings.lightModel"), "custom:consus-claude-haiku-5-5");
+
+        let grok = Target { models: Some(models::order(&["grok-4.6"], Some("grok-4.6"))), ..Target::default() };
+        let d = defaults(&m, &grok, &models::ordered(by_maker(&m, &grok), grok.models.as_ref()));
+        assert_eq!(get(&d, "sessionDefaultSettings.model"), "custom:consus-grok-4-6");
+        assert_eq!(get(&d, "subagentModelSettings.lightModel"), "custom:consus-claude-haiku-5-5", "the tiers still follow Claude's order");
+    }
+
+    #[test]
+    fn a_list_that_places_none_of_factorys_models_leaves_it_as_it_was() {
+        let t = Target { models: Some(models::order(&["gemini-9"], Some("gemini-9"))), ..Target::default() };
+        let (a, b) = (temp_home("none-a"), temp_home("none-b"));
+        write_config(&a, &helper(), &models(), &t).unwrap();
+        write_config(&b, &helper(), &models(), &Target::default()).unwrap();
+        assert_eq!(read(&settings_path(&a)), read(&settings_path(&b)));
+        assert_eq!(read(&org_path(&a)), read(&org_path(&b)));
+        let _ = (fs::remove_dir_all(&a), fs::remove_dir_all(&b));
     }
 }

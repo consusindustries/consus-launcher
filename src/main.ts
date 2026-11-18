@@ -120,7 +120,7 @@ let currentModels: unknown = null;
 let settingsError: string | null = null;
 
 type Source = "mdm" | "portal" | "local" | "default";
-type Field = "endpoint" | "level" | "tools" | "org_name" | "web_access" | "connectors";
+type Field = "endpoint" | "level" | "tools" | "org_name" | "web_access" | "connectors" | "models";
 
 interface SettingsView {
   org_name: string | null;
@@ -135,6 +135,8 @@ interface SettingsView {
     web_access: boolean;
     // Connector names ("Slack").
     connectors: string[];
+    // The org's model order (base ids) and start model; null is each tool's own.
+    models: { list: string[]; default: string | null } | null;
   } | null;
   portal_updated_at: string | null;
 }
@@ -150,6 +152,12 @@ function toolName(key: string): string {
   return isTool(key) ? (toolTile(key).querySelector(".nm")?.textContent ?? key) : key;
 }
 
+// "claude-sonnet-5-5 (start), claude-opus-5-5", or each tool's own order.
+function modelOrder(m: { list: string[]; default: string | null } | null): string {
+  if (!m) return "Each tool's own";
+  return m.list.map((id) => (id === m.default ? id + " (start)" : id)).join(", ");
+}
+
 // The Keys tab's Settings block: each value and where it came from.
 function renderSettings(s: SettingsView): void {
   const v = s.values;
@@ -159,6 +167,7 @@ function renderSettings(s: SettingsView): void {
         ["level", "Compliance", v.level],
         ["web_access", "Web access", v.web_access ? "On" : "Off"],
         ["connectors", "Connectors", v.connectors.join(", ") || "None"],
+        ["models", "Model order", modelOrder(v.models)],
         ["endpoint", "Endpoint", v.endpoint],
         ["org_name", "Organization", s.org_name ?? "Not set"],
       ]
@@ -250,9 +259,9 @@ function setConnected(on: boolean): void {
     showPickATool();
     $("whoNote").textContent = signedInNote();
     renderKeys();
-    void refreshTools();
-    void syncPolicy(true);
+    void Promise.allSettled([refreshTools(), syncPolicy(true)]).then(showConnectorNotices);
   } else {
+    notices.clear();
     ($("keyIn") as HTMLInputElement).value = "";
     $("keyErr").textContent = "";
     (["c1", "c2", "c3"] as const).forEach((c) => ($(c).className = "cn"));
@@ -512,8 +521,16 @@ interface ToolStatus {
   no_models: string | null;
 }
 
+// A tile's notice (a connector that could not be set, or one the org added),
+// kept through refreshes and cleared when that tool is next opened.
+const notices = new Map<Tool, string>();
+// The tools the launcher sets up, at the last refresh: allowed, installed,
+// and not managed by the org's lock.
+let setUp: Tool[] = [];
+
 async function refreshTools(): Promise<void> {
   const status = await invoke<Record<string, ToolStatus>>("detect_tools", { models: currentModels });
+  setUp = TOOLS.filter((k) => status[k]?.allowed && status[k]?.installed && !status[k]?.managed);
   // Until the first answer, the list stays hidden: the org's settings and
   // what is installed decide which tiles show and how they look.
   $("p-open").classList.remove("pending");
@@ -556,7 +573,7 @@ async function refreshTools(): Promise<void> {
       const greyed = running.has(key) ? null : st.no_models;
       b.classList.toggle("nomodels", greyed !== null);
       // A machine-wide policy sets this tool up; the launcher just opens it.
-      sb.textContent = greyed ?? (st.managed ? "Managed by your organization" : (sb.dataset.d ?? ""));
+      sb.textContent = greyed ?? notices.get(key) ?? (st.managed ? "Managed by your organization" : (sb.dataset.d ?? ""));
     } else {
       b.dataset.missing = "1";
       b.classList.remove("nomodels");
@@ -565,6 +582,19 @@ async function refreshTools(): Promise<void> {
       sb.textContent = NOT_INSTALLED[key];
     }
   }
+}
+
+function showNotice(key: Tool, message: string): void {
+  notices.set(key, message);
+  toolTile(key).querySelector<HTMLElement>("[data-sb]")!.textContent = message;
+}
+
+// The org's own MCP servers that are new or changed since this person was
+// last told, each on the tiles it is written to. Once per change.
+async function showConnectorNotices(): Promise<void> {
+  if (!K.def) return;
+  const due = await invoke<{ tool: string; message: string }[]>("connector_notices", { setUp }).catch(() => []);
+  for (const n of due) if (isTool(n.tool)) showNotice(n.tool, n.message);
 }
 
 // The glass rect in screen points, where a launched app's window goes.
@@ -601,6 +631,7 @@ async function launchTool(b: HTMLButtonElement, key: Tool): Promise<void> {
   b.disabled = true;
   go.textContent = "OPENING…";
   // Cleared before the launch, not after: a notice sent during it must stay.
+  notices.delete(key);
   sb.textContent = sb.dataset.d ?? "";
   try {
     await invoke("launch_tool", { tool: key, rect: await glassRect(), models: currentModels ?? [] });
@@ -720,14 +751,11 @@ function init(): void {
     void refreshTools();
   });
   void listen<{ tool: string; message: string }>("tool-notice", (e) => {
-    if (!isTool(e.payload.tool)) return;
-    const sb = toolTile(e.payload.tool).querySelector<HTMLElement>("[data-sb]")!;
-    sb.textContent = e.payload.message;
+    if (isTool(e.payload.tool)) showNotice(e.payload.tool, e.payload.message);
   });
   void getCurrentWindow().onFocusChanged(({ payload: focused }) => {
     if (!focused || !K.def) return;
-    void refreshTools();
-    void syncPolicy(false);
+    void Promise.allSettled([refreshTools(), syncPolicy(false)]).then(showConnectorNotices);
   });
   void checkUpdate();
   setInterval(() => void checkUpdate(), 12 * 60 * 60 * 1000);
