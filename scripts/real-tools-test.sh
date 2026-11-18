@@ -36,6 +36,12 @@ record() { results+=("$1: $2"); }
 summarize() {
   local log="$1" name="$2"
   grep -E '^test result:' "$log" | sed 's/^/  /'
+  # A test that found a Claude Code lock says so and passes: say so here.
+  grep -E '^SKIPPED' "$log" | sed 's/^/  /'
+  if grep -q '^SKIPPED' "$log"; then
+    record "$name" "SKIPPED (a Claude Code lock is on this machine; see above)"
+    return
+  fi
   if grep -qE '^test result: FAILED|^error(\[|:)' "$log" || ! grep -q '^test result:' "$log"; then
     record "$name" "FAILED (log: $log)"
     grep -E '^error|panicked|^---- ' "$log" | head -20 | sed 's/^/  /'
@@ -52,7 +58,7 @@ run_mac() {
   note "Claude Code $(claude --version 2>/dev/null) at $(command -v claude)"
   ( cd "$repo/src-tauri" && "$cargo" test ) >"$logs/mac-unit.log" 2>&1
   note "Unit tests:"; summarize "$logs/mac-unit.log" "Mac unit tests"
-  ( cd "$repo/src-tauri" && "$cargo" test -- --ignored real_claude --test-threads=1 ) >"$logs/mac-real.log" 2>&1
+  ( cd "$repo/src-tauri" && "$cargo" test -- --ignored real_claude --test-threads=1 --nocapture ) >"$logs/mac-real.log" 2>&1
   note "Real Claude Code:"; summarize "$logs/mac-real.log" "Mac real Claude Code"
 }
 
@@ -82,8 +88,10 @@ run_windows() {
     *) note "  native claude.exe: no shell in either run" ;;
   esac
 
-  vm "cd /d $VM_REPO && git fetch -q origin && git checkout -q --detach $sha" >"$logs/win-checkout.log" 2>&1 \
-    || stop "the VM's checkout could not move to ${sha:0:7} (local changes there?); see $logs/win-checkout.log"
+  if ! vm "cd /d $VM_REPO && git fetch -q origin && git checkout -q --detach $sha" >"$logs/win-checkout.log" 2>&1; then
+    sed 's/^/  /' "$logs/win-checkout.log"
+    stop "the VM's checkout could not move to ${sha:0:7} (above). A PrlJob error is Parallels failing the call: run the script again."
+  fi
   note "VM checkout at ${sha:0:7} (detached)"
 
   vm "cd /d $VM_REPO && npm.cmd ci && npm.cmd run build" >"$logs/win-ui.log" 2>&1 \
@@ -93,7 +101,7 @@ run_windows() {
   local target="--manifest-path src-tauri\\Cargo.toml --target x86_64-pc-windows-msvc"
   vm "cd /d $VM_REPO && cargo test $target 2>&1" >"$logs/win-unit.log" 2>&1
   note "Unit tests:"; summarize "$logs/win-unit.log" "Windows unit tests"
-  vm "cd /d $VM_REPO && cargo test $target -- --ignored real_claude --test-threads=1 2>&1" >"$logs/win-real.log" 2>&1
+  vm "cd /d $VM_REPO && cargo test $target -- --ignored real_claude --test-threads=1 --nocapture 2>&1" >"$logs/win-real.log" 2>&1
   note "Real Claude Code:"; summarize "$logs/win-real.log" "Windows real Claude Code"
 }
 

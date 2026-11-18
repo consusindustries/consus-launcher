@@ -524,9 +524,24 @@ mod tests {
         home
     }
 
+    /// Whether a Claude Code lock (managed-settings.json) is on this
+    /// machine, by the launcher's own test. Under one Claude Code refuses
+    /// every server add ("not allowed by enterprise policy"), and the
+    /// launcher writes none, so the real-tool tests have nothing to show:
+    /// they say SKIPPED and which file to move aside.
+    fn real_locked(test: &str) -> bool {
+        let locked = claude_code_policy();
+        if locked {
+            eprintln!("SKIPPED {test}: a Claude Code lock is on this machine ({:?}); move it aside to run this test.", claude_code_policy_files());
+        }
+        locked
+    }
+
     /// One `claude mcp …` run in `home`'s launcher profile, as the launcher
-    /// runs it; its output when it succeeded.
-    fn real_run(home: &Path, direct: bool, args: &[&str]) -> Option<String> {
+    /// runs it: what it printed, for an assertion's message. Its exit code
+    /// says little (Claude Code 2.1.282 exits 0 when policy refuses an add),
+    /// so tests look at the state file.
+    fn real_run(home: &Path, direct: bool, args: &[&str]) -> String {
         let profile = claude_code::profile_dir(home);
         fs::create_dir_all(&profile).unwrap();
         let mut cmd = real_claude(direct).unwrap();
@@ -537,8 +552,9 @@ mod tests {
         }
         let quiet = crate::policy::policy().claude_code_env_static();
         cmd.envs(quiet.iter().filter_map(|(k, v)| Some((k, v.as_str()?))));
-        cmd.env("CLAUDE_CONFIG_DIR", &profile).args(args);
-        output_within(&mut cmd, Duration::from_secs(30))
+        cmd.env("CLAUDE_CONFIG_DIR", &profile).current_dir(&profile).args(args).stdin(Stdio::null());
+        let out = cmd.output().unwrap();
+        format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr))
     }
 
     fn real_servers(home: &Path) -> serde_json::Map<String, Value> {
@@ -549,6 +565,9 @@ mod tests {
     #[test]
     #[ignore]
     fn connectors_with_the_real_claude() {
+        if real_locked("connectors_with_the_real_claude") {
+            return;
+        }
         let home = real_home("connectors");
         let record = home.join("connectors.json");
         // A value with what cmd.exe would act on, in a field Claude Code
@@ -572,7 +591,8 @@ mod tests {
         assert!(next.steps.is_empty(), "the next launch runs nothing, though Claude Code dropped `note`: {:?}", next.steps);
 
         // A server of the person's own stays through a change and a removal.
-        assert!(real_run(&home, false, &["mcp", "add", "--transport", "http", "theirs", "https://example.com/mcp", "--scope", "user"]).is_some());
+        let said = real_run(&home, false, &["mcp", "add", "--transport", "http", "theirs", "https://example.com/mcp", "--scope", "user"]);
+        assert!(real_servers(&home).contains_key("theirs"), "the person's own server: {said}");
         let other = claude_code::connector_servers(&Target { connectors: vec![crate::models::slack("7654321.1234567")], ..Target::default() });
         sync_with(&real_claude, &home, &other, Some(&record)).unwrap();
         let servers = real_servers(&home);
@@ -591,15 +611,14 @@ mod tests {
     #[test]
     #[ignore]
     fn a_server_without_type_is_refused_by_the_real_claude() {
+        if real_locked("a_server_without_type_is_refused_by_the_real_claude") {
+            return;
+        }
         let home = real_home("no-type");
-        let _ = real_run(&home, true, &["mcp", "add-json", "untyped", r#"{"url":"https://mcp.example.com/mcp"}"#, "--scope", "user"]);
-        let _ = fs::create_dir_all(claude_code::profile_dir(&home));
-        let held = claude_code::read_object(&state_file(&home)).unwrap();
-        assert!(held.get("mcpServers").and_then(|m| m.get("untyped")).is_none(), "Claude Code took a server with no type: {held:?}");
-        assert!(
-            real_run(&home, true, &["mcp", "add-json", "typed", r#"{"type":"http","url":"https://mcp.example.com/mcp"}"#, "--scope", "user"]).is_some(),
-            "the same server with type http is taken"
-        );
+        let said = real_run(&home, true, &["mcp", "add-json", "untyped", r#"{"url":"https://mcp.example.com/mcp"}"#, "--scope", "user"]);
+        assert!(!real_servers(&home).contains_key("untyped"), "Claude Code took a server with no type: {said}");
+        let said = real_run(&home, true, &["mcp", "add-json", "typed", r#"{"type":"http","url":"https://mcp.example.com/mcp"}"#, "--scope", "user"]);
+        assert!(real_servers(&home).contains_key("typed"), "the same server with type http is taken: {said}");
         let _ = fs::remove_dir_all(&home);
     }
 
@@ -610,11 +629,14 @@ mod tests {
     #[test]
     #[ignore]
     fn variables_are_stored_as_written_by_the_real_claude() {
+        if real_locked("variables_are_stored_as_written_by_the_real_claude") {
+            return;
+        }
         let home = real_home("vars");
         let url = "https://mcp.example.com/a/$HOME/b/%USERPROFILE%/c/${HOME}";
         let entry = json!({ "type": "http", "url": url }).to_string();
-        assert!(real_run(&home, true, &["mcp", "add-json", "vars", &entry, "--scope", "user"]).is_some(), "add-json vars");
-        assert_eq!(real_servers(&home)["vars"]["url"], url, "stored as written");
+        let said = real_run(&home, true, &["mcp", "add-json", "vars", &entry, "--scope", "user"]);
+        assert_eq!(real_servers(&home).get("vars").map(|v| v["url"].clone()), Some(json!(url)), "stored as written: {said}");
         let _ = fs::remove_dir_all(&home);
     }
 }
