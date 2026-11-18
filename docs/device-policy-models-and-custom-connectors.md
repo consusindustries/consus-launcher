@@ -375,7 +375,10 @@ built-in ones. A failed add is the existing tile notice, naming the server.
    per-user npm prefix), and that an add run that way lands in the same state file.
 2. **Claude Desktop's start model.** Find out whether the picker starts on the first
    entry of `inferenceModels` or on the family default. The portal's help text for the
-   default follows the answer.
+   default follows the answer. Answered 2026-11-18 on the Windows VM (Claude Desktop
+   2.9939, under the portal's lock): it starts on the first entry; the default is not
+   moved up for it (decided the same day). The portal's help text says "Claude Desktop
+   starts on the first model in the order".
 3. **The remote transports each client accepts.** For Claude Code's `type` and Claude
    Desktop's `transport` in a managed entry: which values other than `http` work (`sse`,
    any other), by trying each. The allowed list in the gateway, here and in the portal
