@@ -13,7 +13,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock, PoisonError};
@@ -264,12 +264,16 @@ pub fn host(url: &str) -> &str {
 /// (`connectors.json`). No value from a blob is in it.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Record {
-    /// The names the launcher asked Claude Code to add. With the built-in
-    /// connectors' names and the names wanted now, the names it owns there:
-    /// one removed in the portal is removed from Claude Code, and a server
-    /// under any other name is never named.
+    /// The names the launcher asked Claude Code to add, each with the hash
+    /// (`blob_hash`) of the blob Claude Code was seen to hold from it, empty
+    /// until then. With the built-in connectors' names and the names wanted
+    /// now, the names it owns there: one removed in the portal is removed
+    /// from Claude Code, and a server under any other name is never named.
+    /// The hash is how a server counts as up to date: Claude Code keeps only
+    /// the fields it knows (2.1.326 drops the rest), so what it holds never
+    /// equals a blob with more.
     #[serde(default)]
-    pub claude_code: BTreeSet<String>,
+    pub claude_code: BTreeMap<String, String>,
     /// Per server, the hash (`seen_hash`) of what the person was last told
     /// about.
     #[serde(default)]
@@ -305,7 +309,7 @@ impl Record {
             }),
             Err(_) => Record::default(),
         };
-        r.claude_code.retain(|n| valid_name(n));
+        r.claude_code.retain(|n, _| valid_name(n));
         r
     }
 
@@ -385,10 +389,15 @@ pub fn due(servers: &[CustomServer], writable: impl Fn(Client) -> bool, record: 
 /// missing blob as null. A reordered or respaced document is no change; a
 /// blob added to a server is.
 pub fn seen_hash(s: &CustomServer) -> String {
+    blob_hash(&json!([s.name, s.claude_code, s.claude_desktop]))
+}
+
+/// 12 hex characters of the SHA-256 of `v` as compact JSON, object keys
+/// sorted at every level by this code, not by the JSON library's map order.
+pub fn blob_hash(v: &Value) -> String {
     let mut text = String::new();
-    canonical(&json!([s.name, s.claude_code, s.claude_desktop]), &mut text);
-    let digest = Sha256::digest(text.as_bytes());
-    crate::settings::short_hex(&digest, 6)
+    canonical(v, &mut text);
+    crate::settings::short_hex(&Sha256::digest(text.as_bytes()), 6)
 }
 
 fn canonical(v: &Value, out: &mut String) {
@@ -617,8 +626,8 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("consus-launcher-record-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("connectors.json");
-        fs::write(&path, r#"{ "claude_code": ["issues", "x&calc", "a b"], "seen": {} }"#).unwrap();
-        assert_eq!(Record::load(&path).claude_code, BTreeSet::from(["issues".to_string()]), "never on a command line");
+        fs::write(&path, r#"{ "claude_code": { "issues": "", "x&calc": "", "a b": "" }, "seen": {} }"#).unwrap();
+        assert_eq!(Record::load(&path).claude_code.into_keys().collect::<Vec<_>>(), ["issues"], "never on a command line");
         let _ = fs::remove_dir_all(&dir);
     }
 }

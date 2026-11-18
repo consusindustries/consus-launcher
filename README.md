@@ -181,6 +181,8 @@ npm run tauri build    # build the app and a .dmg locally
 cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
+`scripts/real-tools-test.sh` also runs the opt-in tests against the real Claude Code installed on this Mac and on a Windows VM (Parallels), on demand rather than in CI; its header says what it needs and when to run it.
+
 Dependencies are pinned to exact versions and `Cargo.lock` is committed. The UI is plain HTML, CSS, and TypeScript with no runtime packages beyond Tauri's own.
 
 ## Releases and SBOM

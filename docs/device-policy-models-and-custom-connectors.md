@@ -302,7 +302,7 @@ and a list of tools to block is not part of the entry in v1 (Out of scope).
 `connectors.json` in the launcher's own folder:
 
 ```json
-{ "claude_code": ["issues", "wiki"], "seen": { "issues": "3f9a1c0b7d2e", "wiki": "a41b…" } }
+{ "claude_code": { "issues": "9d04be71c2aa", "wiki": "" }, "seen": { "issues": "3f9a1c0b7d2e", "wiki": "a41b…" } }
 ```
 
 No value from a blob is in it.
@@ -314,6 +314,15 @@ No value from a blob is in it.
   hold, which costs one `remove` that answers "no server named". A recorded name that is
   no longer wanted is removed from Claude Code. A server in neither list is never named
   in any run.
+
+  Each name carries the hash (as for `seen`) of the blob Claude Code was last seen to
+  hold from it, empty until then. Claude Code keeps only the fields it knows (2.1.326
+  drops the rest, found by the real-tool test 2026-11-18), so what it holds never equals
+  a blob with more, and comparing the two would remove and re-add such a server at every
+  launch. A custom server therefore counts as up to date when Claude Code holds its name
+  and the recorded hash is this blob's. The hash is recorded only when every field
+  Claude Code kept is the blob's own, so an older copy that a failed remove left behind
+  is not taken for the new one. Built-in connectors keep the field-by-field comparison.
 - **`seen`:** per custom server, the first 12 hex characters of the SHA-256 of
   `[name, claude_code, claude_desktop]` written as compact JSON, with object keys sorted
   at every level and a missing blob as `null`. The launcher sorts the keys itself and
@@ -370,13 +379,23 @@ built-in ones. A failed add is the existing tile notice, naming the server.
 3. **The remote transports each client accepts.** For Claude Code's `type` and Claude
    Desktop's `transport` in a managed entry: which values other than `http` work (`sse`,
    any other), by trying each. The allowed list in the gateway, here and in the portal
-   is exactly the values that pass, and the fixture records them.
+   is exactly the values that pass, and the fixture records them. Done for Claude Code
+   2.1.326 on macOS (2026-11-18, `a_server_without_type_is_refused_by_the_real_claude`):
+   a server with only a URL is refused, one with `type: http` is taken.
 4. **`availableModels` order.** Confirm Claude Code's `/model` picker follows the order
    of `availableModels` (the current release). If it sorts on its own, the portal says
    the order applies to the other tools only.
 5. **Variable references.** Confirm on a real machine that Claude Code and Claude Desktop
    leave a server alone when nothing in it contains `${`, and note any other
-   substitution syntax either supports; anything found joins the refusal.
+   substitution syntax either supports; anything found joins the refusal. Claude Code
+   stores `$HOME`, `%USERPROFILE%` and `${HOME}` as written (2026-11-18,
+   `variables_are_stored_as_written_by_the_real_claude`); it replaces `${VAR}` and
+   `${VAR:-default}` only when it connects, per its documentation, and both start with
+   the refused `${`.
+
+`scripts/real-tools-test.sh` runs these against the Claude Code installed on this Mac
+and on the Windows VM, with the rest of the tests, whenever needed (its header says
+when).
 
 ## Documents customers audit
 

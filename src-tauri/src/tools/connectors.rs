@@ -5,6 +5,7 @@
 
 use super::*;
 use crate::custom;
+use std::collections::BTreeMap;
 
 /// The `claude` the launcher runs for `claude mcp`, ready for arguments.
 #[cfg(windows)]
@@ -73,7 +74,7 @@ const CONNECTORS_NOT_SET: &str =
 /// those it recorded adding, and those wanted now.
 fn owned_names(record: &custom::Record, wanted: &[(String, Value)]) -> Vec<String> {
     let mut owned: Vec<String> = crate::policy::policy().connector_keys("claude-code").into_iter().map(String::from).collect();
-    for name in record.claude_code.iter().chain(wanted.iter().map(|(n, _)| n)) {
+    for name in record.claude_code.keys().chain(wanted.iter().map(|(n, _)| n)) {
         if !owned.contains(name) {
             owned.push(name.clone());
         }
@@ -88,6 +89,11 @@ fn owned_names(record: &custom::Record, wanted: &[(String, Value)]) -> Vec<Strin
 /// to do, no run) and after (whether it worked). An error is for a notice,
 /// never a failed launch.
 pub(super) fn sync_claude_connectors(claude: &dyn Fn(bool) -> Result<Command, String>, home: &Path, wanted: &[(String, Value)]) -> Result<(), String> {
+    sync_with(claude, home, wanted, custom::record_path())
+}
+
+/// sync_claude_connectors with the record at `record`.
+fn sync_with(claude: &dyn Fn(bool) -> Result<Command, String>, home: &Path, wanted: &[(String, Value)], record: Option<&Path>) -> Result<(), String> {
     // The session's own switches (no traffic to Anthropic), the launcher's
     // own Claude session scrubbed out, and the launcher's profile. Claude
     // Code reads the folder it runs in as a project (its .claude and
@@ -122,15 +128,18 @@ pub(super) fn sync_claude_connectors(claude: &dyn Fn(bool) -> Result<Command, St
         let _ = output_within(&mut cmd, Duration::from_secs(20));
         Ok(())
     };
-    sync_steps(home, wanted, custom::record_path(), &mut run)
+    sync_steps(home, wanted, record, &mut run)
 }
 
 /// sync_claude_connectors with how a step runs left to `run`, and the
 /// record at `record` (none in a run without one). The custom names about
 /// to be added are recorded before any add runs, and a name is dropped once
 /// Claude Code holds nothing under it and it is no longer wanted, so a crash
-/// between the two costs one remove that finds nothing. Claude Code's state
-/// file is read once when nothing needs to change, twice when something did.
+/// between the two costs one remove that finds nothing. Once Claude Code is
+/// seen to hold a custom server from its blob, the blob's hash is recorded,
+/// and the server counts as up to date until the blob changes. Claude Code's
+/// state file is read once when nothing needs to change, twice when
+/// something did.
 fn sync_steps(
     home: &Path,
     wanted: &[(String, Value)],
@@ -141,15 +150,21 @@ fn sync_steps(
     let owned = owned_names(&rec, wanted);
     // Unreadable right now (a session midway through rewriting it): wait
     // for the next launch.
-    let Some(plan) = claude_code::mcp_plan(home, wanted, &owned) else {
+    let Some(plan) = claude_code::mcp_plan(home, wanted, &owned, &rec.claude_code) else {
         return Ok(());
     };
     let mut failed: Vec<String> = Vec::new();
     let after = if plan.steps.is_empty() {
         Some(plan)
     } else {
+        // Each name about to be added is the launcher's from now on, not yet
+        // confirmed: an empty hash until Claude Code is seen to hold it.
         if let Some(path) = record {
-            custom::update(path, |r| r.claude_code.extend(plan.steps.iter().filter(|s| s.admin_text).map(|s| s.name.clone())))?;
+            custom::update(path, |r| {
+                for s in plan.steps.iter().filter(|s| s.admin_text) {
+                    r.claude_code.insert(s.name.clone(), String::new());
+                }
+            })?;
         }
         for step in &plan.steps {
             if let Err(e) = run(step) {
@@ -158,18 +173,37 @@ fn sync_steps(
                 }
             }
         }
-        claude_code::mcp_plan(home, wanted, &owned)
+        claude_code::mcp_plan(home, wanted, &owned, &rec.claude_code)
     };
+    // A server this run's blob put there: every field Claude Code kept is
+    // the blob's own. That, and not an older copy a failed remove left, is
+    // what the recorded hash confirms.
+    let built_in = crate::policy::policy().connector_keys("claude-code");
+    let confirmed: Vec<(String, String)> = after
+        .iter()
+        .flat_map(|a| wanted.iter().filter_map(|(n, w)| Some((n, w, a.held.get(n)?))))
+        .filter(|(n, w, h)| !built_in.contains(&n.as_str()) && claude_code::holds(w, h))
+        .map(|(n, w, _)| (n.clone(), custom::blob_hash(w)))
+        .collect();
     if let (Some(after), Some(path)) = (&after, record) {
-        custom::update(path, |r| r.claude_code.retain(|n| after.held.contains(n) || wanted.iter().any(|(w, _)| w == n)))?;
+        custom::update(path, |r| {
+            r.claude_code.retain(|n, _| after.held.contains_key(n) || wanted.iter().any(|(w, _)| w == n));
+            for (name, hash) in &confirmed {
+                if let Some(h) = r.claude_code.get_mut(name) {
+                    *h = hash.clone();
+                }
+            }
+        })?;
     }
     if !failed.is_empty() {
         return Err(failed.join(" "));
     }
-    match after {
-        Some(p) if !p.steps.is_empty() => Err(CONNECTORS_NOT_SET.to_string()),
-        _ => Ok(()),
+    // What is left once the servers confirmed just now are counted as held.
+    let left = after.map_or(0, |a| a.steps.iter().filter(|s| !confirmed.iter().any(|(n, _)| *n == s.name)).count());
+    if left > 0 {
+        return Err(CONNECTORS_NOT_SET.to_string());
     }
+    Ok(())
 }
 
 /// sync_claude_connectors for a Claude Code launch: the org's connectors, or
@@ -202,7 +236,7 @@ pub(super) fn sign_out_connectors(app: &AppHandle, home: &Path) -> Result<(), St
 /// in the record at `record`.
 fn none_held(home: &Path, record: &Path) -> bool {
     let names = custom::Record::load(record).claude_code;
-    claude_code::mcp_plan(home, &[], &[]).is_some_and(|p| !p.held.iter().any(|h| names.contains(h)))
+    claude_code::mcp_plan(home, &[], &[], &BTreeMap::new()).is_some_and(|p| !p.held.keys().any(|h| names.contains_key(h)))
 }
 
 /// The one-time notices for the org's own servers (custom::due), as
@@ -234,7 +268,6 @@ pub(super) fn connector_notices(set_up: &[String]) -> Vec<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::BTreeSet;
 
     fn temp_home(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("consus-launcher-conn-{tag}-{}", std::process::id()));
@@ -248,7 +281,7 @@ mod tests {
     }
 
     fn held(home: &Path) -> Vec<String> {
-        claude_code::mcp_plan(home, &[], &[]).unwrap().held
+        claude_code::mcp_plan(home, &[], &[], &BTreeMap::new()).unwrap().held.into_iter().map(|(k, _)| k).collect()
     }
 
     /// Claude Code as the steps see it: adds and removes in its state file.
@@ -272,6 +305,10 @@ mod tests {
         }
     }
 
+    fn names(record: &Path) -> Vec<String> {
+        custom::Record::load(record).claude_code.into_keys().collect()
+    }
+
     fn custom_server(name: &str) -> (String, Value) {
         (name.to_string(), json!({ "type": "http", "url": format!("https://{name}.example.com/mcp") }))
     }
@@ -283,11 +320,46 @@ mod tests {
         let wanted = [custom_server("issues")];
         sync_steps(&home, &wanted, Some(&record), &mut fake_claude(&home)).unwrap();
         assert_eq!(held(&home), ["issues"]);
-        assert_eq!(custom::Record::load(&record).claude_code, BTreeSet::from(["issues".to_string()]));
+        assert_eq!(names(&record), ["issues"]);
         let raw = fs::read_to_string(&record).unwrap();
         assert!(!raw.contains("example.com"), "no value from a blob in the record: {raw}");
         let mut none = |_: &claude_code::Step| -> Result<(), String> { panic!("already held: no run") };
         sync_steps(&home, &wanted, Some(&record), &mut none).unwrap();
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn a_server_claude_code_trims_is_not_added_again() {
+        // Claude Code keeps only the fields it knows: a blob with more never
+        // equals what it holds, and must not be re-added at every launch.
+        let home = temp_home("trimmed");
+        let record = home.join("connectors.json");
+        let mut fake = fake_claude(&home);
+        let mut trims = |s: &claude_code::Step| {
+            fake(s)?;
+            let path = state_file(&home);
+            let mut state = claude_code::read_object(&path).unwrap();
+            if let Some(o) = state.get_mut("mcpServers").and_then(|m| m.get_mut(&s.name)).and_then(Value::as_object_mut) {
+                o.retain(|k, _| ["type", "url", "oauth"].contains(&k.as_str()));
+            }
+            fs::write(&path, Value::Object(state).to_string()).unwrap();
+            Ok(())
+        };
+        let (name, mut blob) = custom_server("issues");
+        blob["note"] = json!("kept by the portal, dropped by Claude Code");
+        let wanted = [(name, blob.clone())];
+        sync_steps(&home, &wanted, Some(&record), &mut trims).unwrap();
+        let mut none = |_: &claude_code::Step| -> Result<(), String> { panic!("already held as asked: no run") };
+        sync_steps(&home, &wanted, Some(&record), &mut none).unwrap();
+        // A change in the portal is still a change.
+        blob["url"] = json!("https://issues2.example.com/mcp");
+        let mut ran = 0;
+        let mut count = |s: &claude_code::Step| {
+            ran += 1;
+            trims(s)
+        };
+        sync_steps(&home, &[("issues".into(), blob)], Some(&record), &mut count).unwrap();
+        assert_eq!(ran, 2, "removed, then added as changed");
         let _ = fs::remove_dir_all(&home);
     }
 
@@ -298,7 +370,7 @@ mod tests {
         sync_steps(&home, &[custom_server("issues"), custom_server("wiki")], Some(&record), &mut fake_claude(&home)).unwrap();
         sync_steps(&home, &[custom_server("wiki")], Some(&record), &mut fake_claude(&home)).unwrap();
         assert_eq!(held(&home), ["wiki"]);
-        assert_eq!(custom::Record::load(&record).claude_code, BTreeSet::from(["wiki".to_string()]), "dropped once it is gone");
+        assert_eq!(names(&record), ["wiki"], "dropped once it is gone");
         let _ = fs::remove_dir_all(&home);
     }
 
@@ -356,7 +428,7 @@ mod tests {
         assert!(removed.is_err());
         custom::sign_out(&record, removed.is_ok()).unwrap();
         let left = custom::Record::load(&record);
-        assert_eq!(left.claude_code, BTreeSet::from(["issues".to_string()]), "the next run still removes it");
+        assert_eq!(left.claude_code.keys().collect::<Vec<_>>(), ["issues"], "the next run still removes it");
         assert!(left.seen.is_empty(), "what the person was told goes with the sign out");
         let _ = fs::remove_dir_all(&home);
     }
@@ -371,7 +443,7 @@ mod tests {
         let removed = sync_steps(&home, &[], Some(&record), &mut none);
         assert!(removed.is_ok(), "a launch waits quietly");
         custom::sign_out(&record, removed.is_ok() && none_held(&home, &record)).unwrap();
-        assert_eq!(custom::Record::load(&record).claude_code, BTreeSet::from(["issues".to_string()]), "kept for the next run");
+        assert_eq!(names(&record), ["issues"], "kept for the next run");
         let _ = fs::remove_dir_all(&home);
     }
 
@@ -425,43 +497,124 @@ mod tests {
         let _ = fs::remove_dir_all(&home);
     }
 
-    /// Against the real Claude Code on this machine (`claude` on PATH):
-    /// cargo test -- --ignored with_the_real_claude
+    // Against the real Claude Code on this machine, through the launcher's
+    // own way of running it: on Windows win.rs's claude_command (cmd.exe for
+    // npm's claude.cmd) and claude_command_direct (node.exe and the script,
+    // or claude.exe); elsewhere `claude` on PATH. Opt-in, and never in CI:
+    //   cargo test -- --ignored with_the_real_claude --test-threads=1
+    // scripts/real-tools-test.sh runs them on this Mac and the Windows VM.
+
+    #[cfg(windows)]
+    fn real_claude(direct: bool) -> Result<Command, String> {
+        if direct {
+            win::claude_command_direct()
+        } else {
+            win::claude_command().ok_or_else(|| "Claude Code was not found.".to_string())
+        }
+    }
+
+    #[cfg(not(windows))]
+    fn real_claude(_direct: bool) -> Result<Command, String> {
+        Ok(Command::new("claude"))
+    }
+
+    fn real_home(tag: &str) -> PathBuf {
+        let home = std::env::temp_dir().join(format!("consus-launcher-real-{tag}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&home);
+        home
+    }
+
+    /// One `claude mcp …` run in `home`'s launcher profile, as the launcher
+    /// runs it; its output when it succeeded.
+    fn real_run(home: &Path, direct: bool, args: &[&str]) -> Option<String> {
+        let profile = claude_code::profile_dir(home);
+        fs::create_dir_all(&profile).unwrap();
+        let mut cmd = real_claude(direct).unwrap();
+        for (k, _) in std::env::vars_os() {
+            if inherited_claude_var(&k.to_string_lossy().to_uppercase()) {
+                cmd.env_remove(k);
+            }
+        }
+        let quiet = crate::policy::policy().claude_code_env_static();
+        cmd.envs(quiet.iter().filter_map(|(k, v)| Some((k, v.as_str()?))));
+        cmd.env("CLAUDE_CONFIG_DIR", &profile).args(args);
+        output_within(&mut cmd, Duration::from_secs(30))
+    }
+
+    fn real_servers(home: &Path) -> serde_json::Map<String, Value> {
+        let state = claude_code::read_object(&state_file(home)).unwrap();
+        state.get("mcpServers").and_then(Value::as_object).cloned().unwrap_or_default()
+    }
+
     #[test]
     #[ignore]
     fn connectors_with_the_real_claude() {
-        let home = std::env::temp_dir().join(format!("consus-launcher-real-claude-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&home);
-        let claude = |_: bool| Ok(Command::new("claude"));
-        let state = || claude_code::read_object(&state_file(&home)).unwrap();
-        let on = Target {
-            connectors: vec![crate::models::slack("1234567.7654321")],
-            custom: vec![crate::models::CustomServer {
-                name: "issues".into(),
-                claude_code: Some(json!({ "type": "http", "url": "https://mcp.example.com/mcp", "oauth": { "clientId": "abc123", "callbackPort": 3119 }, "note": "a \"quoted\" value" })),
-                claude_desktop: None,
-            }],
-            ..Target::default()
+        let home = real_home("connectors");
+        let record = home.join("connectors.json");
+        // A value with what cmd.exe would act on, in a field Claude Code
+        // keeps: it must arrive as typed.
+        let client_id = "a\"quoted\"&piped|id";
+        let issues = crate::models::CustomServer {
+            name: "issues".into(),
+            claude_code: Some(json!({ "type": "http", "url": "https://mcp.example.com/mcp", "oauth": { "clientId": client_id, "callbackPort": 3119 }, "note": "dropped by Claude Code" })),
+            claude_desktop: None,
         };
+        let on = Target { connectors: vec![crate::models::slack("1234567.7654321")], custom: vec![issues], ..Target::default() };
         let wanted = claude_code::connector_servers(&on);
 
-        sync_claude_connectors(&claude, &home, &wanted).unwrap();
-        assert_eq!(state()["mcpServers"]["slack"], wanted[0].1, "Claude Code holds the entry as rendered");
-        assert_eq!(state()["mcpServers"]["issues"]["note"], "a \"quoted\" value", "a custom server, as given");
+        sync_with(&real_claude, &home, &wanted, Some(&record)).unwrap();
+        let servers = real_servers(&home);
+        assert_eq!(servers["slack"], wanted[0].1, "Slack as rendered, through the plain run");
+        assert_eq!(servers["issues"]["oauth"]["clientId"], client_id, "the org's server as given, never through a shell");
+        let rec = custom::Record::load(&record);
         let owned: Vec<String> = wanted.iter().map(|(n, _)| n.clone()).collect();
-        assert!(claude_code::mcp_steps(&home, &wanted, &owned).is_empty(), "the next launch runs nothing");
+        let next = claude_code::mcp_plan(&home, &wanted, &owned, &rec.claude_code).unwrap();
+        assert!(next.steps.is_empty(), "the next launch runs nothing, though Claude Code dropped `note`: {:?}", next.steps);
 
         // A server of the person's own stays through a change and a removal.
-        let mut theirs = Command::new("claude");
-        theirs.env("CLAUDE_CONFIG_DIR", claude_code::profile_dir(&home));
-        theirs.args(["mcp", "add-json", "theirs", r#"{"type":"http","url":"https://example.com/mcp"}"#, "--scope", "user"]);
-        assert!(theirs.output().unwrap().status.success());
+        assert!(real_run(&home, false, &["mcp", "add", "--transport", "http", "theirs", "https://example.com/mcp", "--scope", "user"]).is_some());
         let other = claude_code::connector_servers(&Target { connectors: vec![crate::models::slack("7654321.1234567")], ..Target::default() });
-        sync_claude_connectors(&claude, &home, &other).unwrap();
-        assert_eq!(state()["mcpServers"]["slack"]["oauth"]["clientId"], "7654321.1234567");
-        sync_claude_connectors(&claude, &home, &[]).unwrap();
-        let servers = state()["mcpServers"].as_object().cloned().unwrap();
+        sync_with(&real_claude, &home, &other, Some(&record)).unwrap();
+        let servers = real_servers(&home);
+        assert_eq!(servers["slack"]["oauth"]["clientId"], "7654321.1234567");
+        assert!(!servers.contains_key("issues"), "removed in the portal: removed here, by the record");
+        sync_with(&real_claude, &home, &[], Some(&record)).unwrap();
+        let servers = real_servers(&home);
         assert!(!servers.contains_key("slack") && servers.contains_key("theirs"), "{servers:?}");
+        assert!(custom::Record::load(&record).claude_code.is_empty());
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    /// Spec check 3: the rule that a Claude Code blob needs `type` rests on
+    /// Claude Code refusing a server with only a URL. If this fails, Claude
+    /// Code accepts it, and the rule is only stricter than it has to be.
+    #[test]
+    #[ignore]
+    fn a_server_without_type_is_refused_by_the_real_claude() {
+        let home = real_home("no-type");
+        let _ = real_run(&home, true, &["mcp", "add-json", "untyped", r#"{"url":"https://mcp.example.com/mcp"}"#, "--scope", "user"]);
+        let _ = fs::create_dir_all(claude_code::profile_dir(&home));
+        let held = claude_code::read_object(&state_file(&home)).unwrap();
+        assert!(held.get("mcpServers").and_then(|m| m.get("untyped")).is_none(), "Claude Code took a server with no type: {held:?}");
+        assert!(
+            real_run(&home, true, &["mcp", "add-json", "typed", r#"{"type":"http","url":"https://mcp.example.com/mcp"}"#, "--scope", "user"]).is_some(),
+            "the same server with type http is taken"
+        );
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    /// Spec check 5, the part a run can see: Claude Code stores every form
+    /// of variable as written (`${VAR}`, refused in a custom server, is
+    /// replaced only when it connects, per Claude Code's docs, which name
+    /// `${VAR}` and `${VAR:-default}` as the only forms).
+    #[test]
+    #[ignore]
+    fn variables_are_stored_as_written_by_the_real_claude() {
+        let home = real_home("vars");
+        let url = "https://mcp.example.com/a/$HOME/b/%USERPROFILE%/c/${HOME}";
+        let entry = json!({ "type": "http", "url": url }).to_string();
+        assert!(real_run(&home, true, &["mcp", "add-json", "vars", &entry, "--scope", "user"]).is_some(), "add-json vars");
+        assert_eq!(real_servers(&home)["vars"]["url"], url, "stored as written");
         let _ = fs::remove_dir_all(&home);
     }
 }

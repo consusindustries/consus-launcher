@@ -33,6 +33,7 @@
 // which the portal's deployment page generates.
 
 use serde_json::{json, Map, Value};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -375,7 +376,7 @@ pub struct Step {
 /// mcp_plan's steps alone.
 #[cfg(test)]
 pub fn mcp_steps(home: &Path, wanted: &[(String, Value)], owned: &[String]) -> Vec<Step> {
-    mcp_plan(home, wanted, owned).map(|p| p.steps).unwrap_or_default()
+    mcp_plan(home, wanted, owned, &BTreeMap::new()).map(|p| p.steps).unwrap_or_default()
 }
 
 /// The `claude` runs that make the servers Claude Code holds under the
@@ -383,19 +384,24 @@ pub fn mcp_steps(home: &Path, wanted: &[(String, Value)], owned: &[String]) -> V
 /// of its state file.
 pub struct Plan {
     pub steps: Vec<Step>,
-    pub held: Vec<String>,
+    /// Every server Claude Code holds, by name, as it stored it.
+    pub held: Map<String, Value>,
 }
 
 /// The plan for the launcher's names (`owned`: the built-in connectors'
 /// names, those the launcher recorded adding, and those wanted now) to hold
 /// what `wanted` says: a remove for each name that holds something else,
 /// then an add for each wanted one that is not there as it should be. A
-/// server under any other name is never named. No steps when they already
-/// match, so a launch costs no run. None while the state file cannot be
+/// server under any other name is never named. A held server matches when it
+/// carries every field the launcher rendered (`holds`), or, for one the org
+/// wrote, when `confirmed` has the hash of this very blob: Claude Code keeps
+/// only the fields it knows, so the comparison alone would re-add such a
+/// server at every launch. No steps when they already match, so a launch
+/// costs no run. None while the state file cannot be
 /// read (a running session midway through rewriting it): nothing is done
 /// this time, since removing and re-adding under a running session is worse
 /// than waiting for the next launch.
-pub fn mcp_plan(home: &Path, wanted: &[(String, Value)], owned: &[String]) -> Option<Plan> {
+pub fn mcp_plan(home: &Path, wanted: &[(String, Value)], owned: &[String], confirmed: &BTreeMap<String, String>) -> Option<Plan> {
     let state = read_object(&state_path(home)).ok()?;
     let built_in = crate::policy::policy().connector_keys("claude-code");
     let held = |name: &str| state.get("mcpServers").and_then(|m| m.get(name));
@@ -408,6 +414,7 @@ pub fn mcp_plan(home: &Path, wanted: &[(String, Value)], owned: &[String]) -> Op
         match (have, want) {
             (None, None) => continue,
             (Some(h), Some(w)) if holds(h, w) => continue,
+            (Some(_), Some(w)) if confirmed.get(name).is_some_and(|c| *c == crate::custom::blob_hash(w)) => continue,
             _ => {}
         }
         if have.is_some() {
@@ -417,7 +424,7 @@ pub fn mcp_plan(home: &Path, wanted: &[(String, Value)], owned: &[String]) -> Op
             adds.push(Step { name: name.into(), args: add_args(name, v), admin_text: !built_in.contains(&name) });
         }
     }
-    let held = state.get("mcpServers").and_then(Value::as_object).map(|m| m.keys().cloned().collect()).unwrap_or_default();
+    let held = state.get("mcpServers").and_then(Value::as_object).cloned().unwrap_or_default();
     Some(Plan { steps: removes.into_iter().chain(adds).collect(), held })
 }
 
@@ -428,7 +435,7 @@ fn scoped(args: &[&str]) -> Vec<String> {
 /// Whether what Claude Code holds carries everything the launcher rendered,
 /// with the same values. A field Claude Code adds of its own (another
 /// version may default one) is not a difference worth a remove and add.
-fn holds(have: &Value, want: &Value) -> bool {
+pub fn holds(have: &Value, want: &Value) -> bool {
     match (have, want) {
         (Value::Object(h), Value::Object(w)) => w.iter().all(|(k, v)| h.get(k).is_some_and(|x| holds(x, v))),
         _ => have == want,
