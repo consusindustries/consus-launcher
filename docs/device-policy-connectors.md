@@ -8,6 +8,9 @@ organization registered, no secret. The gateway's half is
 file is the launcher's: one more slot read from the document, two writers, and the policy
 document section both the launcher and the portal render from. Ships as 1.4.0.*
 
+*1.6.0 adds a `custom` kind, the org's own MCP servers as JSON, and Claude Code's owned
+names grow by a record: [`device-policy-models-and-custom-connectors.md`](device-policy-models-and-custom-connectors.md).*
+
 ## What changes, in three sentences
 
 The org's device policy can now name a connector: for Slack, the client ID of the Slack app

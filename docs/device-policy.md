@@ -10,6 +10,10 @@ launcher's half. It follows the handoff's guiding rule: the launcher stores one 
 writes each tool's config, and launches the tool. This adds one read, and one rule the
 read makes necessary (a tool with no models is greyed out).*
 
+*Later fields: `connectors` (1.4.0, [`device-policy-connectors.md`](device-policy-connectors.md)),
+and `models` and the `custom` connector kind (1.6.0,
+[`device-policy-models-and-custom-connectors.md`](device-policy-models-and-custom-connectors.md)).*
+
 ## What changes, in three sentences
 
 Today the launcher learns the org's settings only from a file IT pushes with device

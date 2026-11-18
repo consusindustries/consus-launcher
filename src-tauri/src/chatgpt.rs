@@ -36,11 +36,25 @@ pub(crate) const RESPONSES_MODELS: [&str; 5] = ["gpt-5.6-terra", "gpt-5.6-sol", 
 /// model this key can use at the target level, as a bare id
 /// ("gpt-5.6-terra:itar").
 pub fn select_model(models_json: &Value, t: &Target) -> Option<String> {
+    served(models_json, t).into_iter().next()
+}
+
+/// The Responses-served models this key has at the level, in preference
+/// order, as bare ids.
+fn served(models_json: &Value, t: &Target) -> Vec<String> {
     let ids = models::ids(models_json);
-    RESPONSES_MODELS.iter().find_map(|base| {
-        let want = format!("{base}:{}", t.level);
-        ids.iter().find(|id| **id == want).map(|id| id.to_string())
-    })
+    RESPONSES_MODELS.iter().map(|base| format!("{base}:{}", t.level)).filter(|id| ids.contains(&id.as_str())).collect()
+}
+
+/// What ChatGPT and Codex start on: the org's start model among the
+/// Responses-served models this key has (its default, else the first of
+/// its order), else `select_model`'s preference. A list that places none of
+/// them changes nothing here. Pi and Factory fall back on `select_model`
+/// itself, which never reads the org's order.
+pub fn start_model(models_json: &Value, t: &Target) -> Option<String> {
+    let served = served(models_json, t);
+    let order = models::ordered(served.clone(), t.models.as_ref());
+    models::start(&order, t.models.as_ref()).or(served.first()).cloned()
 }
 
 fn no_models_message(t: &Target) -> String {
@@ -147,7 +161,7 @@ pub fn write_config(home: &Path, models_json: &Value, t: &Target, catalog: Optio
 /// the config.toml at `path`; with `helper`, the provider also runs it for
 /// the key.
 pub fn write_config_at(path: &Path, models_json: &Value, extra: &Table, t: &Target, helper: Option<&Path>) -> Result<(), String> {
-    let model = select_model(models_json, t).ok_or_else(|| no_models_message(t))?;
+    let model = start_model(models_json, t).ok_or_else(|| no_models_message(t))?;
 
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir).map_err(|e| e.to_string())?;
@@ -487,5 +501,23 @@ followUpQueueMode = "steer"
         assert!(!left.contains("auth") && !left.contains("consus"), "{left}");
         assert!(left.contains("notify"), "the user's own keys stay");
         let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn the_order_picks_the_start_model_among_responses_models() {
+        let m = json!([{ "id": "consus/gpt-5.6-terra:itar" }, { "id": "consus/gpt-5.6-sol:itar" }, { "id": "consus/gpt-4.1:itar" }]);
+        let with = |list: &[&str], default: Option<&str>| Target { models: Some(models::order(list, default)), ..Target::default() };
+        assert_eq!(start_model(&m, &Target::default()).as_deref(), Some("gpt-5.6-terra:itar"), "no order: the preference");
+        assert_eq!(start_model(&m, &with(&["gpt-5.6-sol"], None)).as_deref(), Some("gpt-5.6-sol:itar"), "the first of the order");
+        assert_eq!(start_model(&m, &with(&["gpt-5.6-sol", "gpt-5.6-terra"], Some("gpt-5.6-terra"))).as_deref(), Some("gpt-5.6-terra:itar"));
+        assert_eq!(start_model(&m, &with(&["gpt-4.1"], Some("gpt-4.1"))).as_deref(), Some("gpt-5.6-terra:itar"), "not a Responses model");
+        assert_eq!(select_model(&m, &with(&["gpt-5.6-sol"], None)).as_deref(), Some("gpt-5.6-terra:itar"), "Pi's and Factory's fallback never reads it");
+    }
+
+    #[test]
+    fn a_claude_only_list_leaves_chatgpt_as_it_was() {
+        let m = json!([{ "id": "consus/gpt-5.6-terra:itar" }, { "id": "consus/gpt-5.6-sol:itar" }, { "id": "consus/claude-opus-5:itar" }]);
+        let t = Target { models: Some(models::order(&["claude-opus-5"], Some("claude-opus-5"))), ..Target::default() };
+        assert_eq!(start_model(&m, &t), start_model(&m, &Target::default()));
     }
 }

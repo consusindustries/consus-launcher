@@ -25,8 +25,12 @@
 //                    from the machine: off (default) or on
 //   UpdateNotice     (device management and this computer only)
 //   (none)           [connectors] the MCP servers the org turned on, e.g.
-//                    [{ "kind": "slack", "client_id": "…" }]; the document
-//                    only (device management's path is the lock files)
+//                    [{ "kind": "slack", "client_id": "…" }], and the ones it
+//                    wrote itself ({ "kind": "custom", … }, custom.rs); the
+//                    document only (device management's path is the lock
+//                    files)
+//   (none)           [models] the order tools list models in and the one
+//                    they start on; the document only
 //
 // A value that is present but invalid is an error, never a silent default:
 // falling back to api.consus.io would quietly bypass an org's proxy. The
@@ -42,7 +46,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{OnceLock, PoisonError, RwLock};
 
-use crate::models::{valid_level, Target, DEFAULT_ENDPOINT, DEFAULT_LEVEL};
+use crate::custom;
+use crate::models::{valid_level, ModelChoice, Target, DEFAULT_ENDPOINT, DEFAULT_LEVEL};
 
 pub const DOMAIN: &str = "io.consus.launcher";
 
@@ -93,6 +98,8 @@ struct Raw {
     web_access: Option<Value>,
     /// The document's only: the checked entries, as a list.
     connectors: Option<Value>,
+    /// The document's only: the org's model order, checked.
+    models: Option<Value>,
     managed: bool,
 }
 
@@ -230,12 +237,15 @@ fn parse(raw: Raw) -> Result<Settings, String> {
             Some(keys)
         }
     };
+    let (connectors, custom) = split_connectors(raw.connectors.as_ref());
     Ok(Settings {
         target: Target {
             endpoint,
             level,
             web_access: flag(raw.web_access, "WebAccess")?.unwrap_or(false),
-            connectors: connectors(raw.connectors.as_ref()),
+            connectors,
+            custom,
+            models: raw.models.as_ref().and_then(|v| ModelChoice::read(v).ok()),
         },
         tools,
         org_name: string(raw.org_name, "OrgName", true)?,
@@ -411,12 +421,13 @@ pub struct Sources {
     pub org_name: Source,
     pub web_access: Source,
     pub connectors: Source,
+    pub models: Source,
 }
 
 impl Sources {
     /// Whether any value came from `s`.
     fn any(&self, s: Source) -> bool {
-        [self.endpoint, self.level, self.tools, self.org_name, self.web_access, self.connectors].contains(&s)
+        [self.endpoint, self.level, self.tools, self.org_name, self.web_access, self.connectors, self.models].contains(&s)
     }
 }
 
@@ -436,6 +447,7 @@ fn merge(mdm: &Raw, doc: &Raw, local: &Raw) -> (Raw, Sources) {
     let (org_name, s_org_name) = pick(|r| &r.org_name);
     let (web_access, s_web_access) = pick(|r| &r.web_access);
     let (connectors, s_connectors) = pick(|r| &r.connectors);
+    let (models, s_models) = pick(|r| &r.models);
     let raw = Raw {
         endpoint,
         level,
@@ -443,6 +455,7 @@ fn merge(mdm: &Raw, doc: &Raw, local: &Raw) -> (Raw, Sources) {
         org_name,
         web_access,
         connectors,
+        models,
         update_notice: mdm.update_notice.clone().or_else(|| local.update_notice.clone()),
         managed: mdm.managed,
     };
@@ -453,6 +466,7 @@ fn merge(mdm: &Raw, doc: &Raw, local: &Raw) -> (Raw, Sources) {
         org_name: s_org_name,
         web_access: s_web_access,
         connectors: s_connectors,
+        models: s_models,
     };
     (raw, sources)
 }
@@ -471,6 +485,7 @@ struct Document {
     org_name: Option<Value>,
     endpoint: Option<Value>,
     connectors: Option<Value>,
+    models: Option<Value>,
 }
 
 /// The document's values this launcher can use, ready for the merge, and
@@ -523,45 +538,86 @@ fn check_document(doc: &Document, fetched_from: &str, mdm: &Raw) -> (Raw, bool) 
     if let Some(v) = &doc.connectors {
         raw.connectors = checked_connectors(v);
     }
+    // The order only orders: one this launcher cannot read leaves each tool
+    // its own, which loosens nothing, so it never hides the tools.
+    if let Some(v) = &doc.models {
+        match ModelChoice::read(v) {
+            Ok(_) => raw.models = Some(v.clone()),
+            Err(e) => eprintln!("device policy: models not used ({e})"),
+        }
+    }
     (raw, outdated)
 }
 
-/// The document's connector entries this launcher can use. An entry it
-/// cannot (a kind a newer portal offers, a bad client ID) is skipped with a
-/// line that names the kind, never the value; the rest applies. A later
-/// entry of a kind already taken is skipped too (the gateway refuses those).
+/// The document's connector entries this launcher can use, built-in and
+/// custom, in one checked list. An entry it cannot use (a kind a newer
+/// portal offers, a bad client ID, a custom server that fails custom.rs) is
+/// skipped with a line that names the kind or the server, never a value; the
+/// rest applies.
 fn checked_connectors(v: &Value) -> Option<Value> {
     let Some(entries) = v.as_array() else {
         eprintln!("device policy: connectors not used (not a list)");
         return None;
     };
-    let policy = crate::policy::policy();
-    let mut kept: Vec<Value> = Vec::new();
-    for entry in entries {
-        match policy.connector_from(entry) {
-            Ok(c) if kept.iter().any(|k| k["kind"] == c.kind.as_str()) => {
-                eprintln!("device policy: connector {} not used (listed twice)", c.kind);
-            }
-            Ok(c) => {
-                let mut o = serde_json::Map::new();
-                o.insert("kind".into(), Value::String(c.kind));
-                o.extend(c.fields.into_iter().map(|(k, v)| (k, Value::String(v))));
-                kept.push(Value::Object(o));
-            }
-            Err(e) => eprintln!("device policy: connector not used ({e})"),
-        }
+    let (kept, refused) = check_connectors(entries);
+    for r in refused {
+        eprintln!("device policy: connector not used ({}: {})", r.code, r.message);
     }
     // Nothing usable is not a value from the portal: the Keys tab's header
     // and source should not claim one.
     (!kept.is_empty()).then_some(Value::Array(kept))
 }
 
-/// The connectors in a checked list.
-fn connectors(v: Option<&Value>) -> Vec<crate::models::Connector> {
+/// What checked_connectors keeps, and why it skipped the rest. A list past
+/// the gateway's limits keeps its first entries. One entry per built-in kind
+/// (the gateway refuses a second); custom entries are told apart by name.
+fn check_connectors(entries: &[Value]) -> (Vec<Value>, Vec<custom::Refusal>) {
     let policy = crate::policy::policy();
-    v.and_then(Value::as_array)
-        .map(|a| a.iter().filter_map(|e| policy.connector_from(e).ok()).collect())
-        .unwrap_or_default()
+    let mut custom = custom::Check::new();
+    let mut kept: Vec<Value> = Vec::new();
+    let mut refused = Vec::new();
+    for (i, entry) in entries.iter().enumerate() {
+        let checked = if i >= custom::CONNECTORS_MAX {
+            Err(custom::refuse("connectors_shape", format!("an entry past the first {}", custom::CONNECTORS_MAX)))
+        } else if entry.get("kind").and_then(Value::as_str) == Some(custom::CUSTOM_KIND) {
+            custom.entry(entry).map(|c| c.to_value())
+        } else {
+            match policy.connector_from(entry) {
+                Ok(c) if kept.iter().any(|k| k["kind"] == c.kind.as_str()) => {
+                    Err(custom::refuse("connector_duplicate", format!("{} listed twice", c.kind)))
+                }
+                Ok(c) => {
+                    let mut o = serde_json::Map::new();
+                    o.insert("kind".into(), Value::String(c.kind));
+                    o.extend(c.fields.into_iter().map(|(k, v)| (k, Value::String(v))));
+                    Ok(Value::Object(o))
+                }
+                // A kind this launcher does not know, or a slot that is not
+                // valid (the gateway's codes for those differ by kind).
+                Err(e) => Err(custom::refuse("connector_kind", e)),
+            }
+        };
+        match checked {
+            Ok(v) => kept.push(v),
+            Err(r) => refused.push(r),
+        }
+    }
+    (kept, refused)
+}
+
+/// A checked list (check_connectors' output), read once: the built-in
+/// connectors and the org's own servers.
+fn split_connectors(v: Option<&Value>) -> (Vec<crate::models::Connector>, Vec<crate::models::CustomServer>) {
+    let policy = crate::policy::policy();
+    let (mut built_in, mut own) = (Vec::new(), Vec::new());
+    for e in v.and_then(Value::as_array).into_iter().flatten() {
+        if e.get("kind").and_then(Value::as_str) == Some(custom::CUSTOM_KIND) {
+            own.extend(crate::models::CustomServer::from_checked(e));
+        } else {
+            built_in.extend(policy.connector_from(e).ok());
+        }
+    }
+    (built_in, own)
 }
 
 /// The last document read, as the cache file holds it.
@@ -589,7 +645,12 @@ pub fn init(config_dir: PathBuf) {
 /// The first 16 hex characters of the key's SHA-256: enough to tell keys
 /// apart, not enough to be the key.
 pub fn key_hash(key: &str) -> String {
-    Sha256::digest(key.as_bytes()).iter().take(8).map(|b| format!("{b:02x}")).collect()
+    short_hex(&Sha256::digest(key.as_bytes()), 8)
+}
+
+/// The first `bytes` bytes of a digest, as hex.
+pub fn short_hex(digest: &[u8], bytes: usize) -> String {
+    digest.iter().take(bytes).map(|b| format!("{b:02x}")).collect()
 }
 
 /// The cache, if it was read with `key`. One read with another key, or that
@@ -606,13 +667,13 @@ fn read_cache(path: &Path, key: Option<&str>) -> Option<Cached> {
     cached
 }
 
-/// A temp file renamed over the cache, so an interrupted write never leaves
-/// half a document.
-fn write_cache(path: &Path, cached: &Cached) -> Result<(), String> {
+/// A temp file renamed over `path`, so an interrupted write never leaves
+/// half a file: the cache here, the connector record in custom.rs.
+pub fn write_json_atomically(path: &Path, value: &impl Serialize) -> Result<(), String> {
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
-    let text = serde_json::to_string_pretty(cached).map_err(|e| e.to_string())?;
+    let text = serde_json::to_string_pretty(value).map_err(|e| e.to_string())?;
     let tmp = path.with_extension("json.tmp");
     fs::write(&tmp, text + "\n").and_then(|_| fs::rename(&tmp, path)).map_err(|e| {
         let _ = fs::remove_file(&tmp);
@@ -772,7 +833,7 @@ pub fn store(c: Cached) -> bool {
         return false;
     }
     if let Some(path) = CACHE_PATH.get() {
-        if let Err(e) = write_cache(path, &c) {
+        if let Err(e) = write_json_atomically(path, &c) {
             eprintln!("device policy: could not save ({e})");
         }
     }
@@ -806,8 +867,11 @@ pub struct Values {
     /// Launcher keys of the tools shown; None is every tool but Factory.
     pub tools: Option<Vec<String>>,
     pub web_access: bool,
-    /// The connectors turned on, by name ("Slack").
+    /// The connectors turned on, by name ("Slack"), then the org's own by
+    /// name and host ("issues (mcp.example.com)").
     pub connectors: Vec<String>,
+    /// The org's model order, or None for each tool's own.
+    pub models: Option<ModelChoice>,
 }
 
 #[derive(Serialize)]
@@ -852,7 +916,9 @@ impl Loaded {
                     .connectors
                     .iter()
                     .map(|c| crate::policy::policy().connector_name(&c.kind).to_string())
+                    .chain(s.target.custom.iter().map(|c| format!("{} ({})", c.name, c.host())))
                     .collect(),
+                models: s.target.models.clone(),
             }),
             portal_updated_at: self.doc.as_ref().and_then(|c| c.document.get("updated_at")?.as_str().map(String::from)),
         }
@@ -871,7 +937,7 @@ mod tests {
     use serde_json::json;
 
     fn raw(endpoint: Option<Value>, level: Option<Value>, tools: Option<Value>) -> Raw {
-        Raw { endpoint, level, tools, org_name: None, update_notice: None, web_access: None, connectors: None, managed: true }
+        Raw { endpoint, level, tools, managed: true, ..Raw::default() }
     }
 
     /// The launcher as it would load with these sources and this document,
@@ -886,6 +952,77 @@ mod tests {
         let mut r = Raw { managed: true, ..Raw::default() };
         f(&mut r);
         r
+    }
+
+    #[test]
+    fn a_models_value_it_cannot_read_is_dropped_not_fatal() {
+        let with = |models: Value| {
+            let l = loaded(Raw::default(), Raw::default(), Some(json!({ "models": models, "web_access": true })), DEFAULT_ENDPOINT);
+            let s = l.settings.clone().expect("the tools stay usable");
+            (s.target.models, l.sources.models, s.target.web_access)
+        };
+        let order = ModelChoice { list: vec!["claude-sonnet-5".into(), "claude-opus-5".into()], default: Some("claude-sonnet-5".into()) };
+        let (m, source, _) = with(json!({ "list": ["claude-sonnet-5", "claude-opus-5"], "default": "claude-sonnet-5" }));
+        assert_eq!((m, source), (Some(order), Source::Portal));
+        for bad in [json!("sonnet"), json!({}), json!({ "list": [] }), json!({ "default": "x" })] {
+            let (m, source, web) = with(bad.clone());
+            assert_eq!((m, source, web), (None, Source::Default, true), "{bad}: dropped, the rest applies");
+        }
+        let (m, source, _) = with(Value::Null);
+        assert_eq!((m, source), (None, Source::Default), "null is not set");
+    }
+
+    #[test]
+    fn unknown_keys_in_models_are_ignored() {
+        let l = loaded(Raw::default(), Raw::default(), Some(json!({ "models": { "list": ["a"], "pin": true } })), DEFAULT_ENDPOINT);
+        let m = l.settings.unwrap().target.models.unwrap();
+        assert_eq!((m.list, m.default), (vec!["a".to_string()], None));
+    }
+
+    #[test]
+    fn every_shared_connector_case_is_kept_or_refused() {
+        let doc: Value = serde_json::from_str(include_str!("../../policy/connector-cases.json")).unwrap();
+        for case in doc["cases"].as_array().unwrap() {
+            let id = case["id"].as_str().unwrap();
+            let entries = case["connectors"].as_array().unwrap();
+            let (kept, refused) = check_connectors(entries);
+            if case["outcome"] == "accepted" {
+                assert_eq!((kept.len(), refused.len()), (entries.len(), 0), "{id}: {refused:?}");
+            } else {
+                // The gateway refuses the whole list; the launcher drops the
+                // entry that breaks the rule, for the same reason.
+                assert!(kept.len() < entries.len(), "{id}");
+                assert!(refused.iter().any(|r| r.code == case["reason"]), "{id}: {refused:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn custom_entries_skip_the_slot_checks() {
+        let doc = json!({ "connectors": [
+            { "kind": "slack", "client_id": "1234567.7654321" },
+            { "kind": "custom", "name": "issues", "claude_code": { "type": "http", "url": "https://mcp.example.com/mcp" } }
+        ] });
+        let l = loaded(Raw::default(), Raw::default(), Some(doc), DEFAULT_ENDPOINT);
+        let t = l.settings.clone().unwrap().target;
+        assert_eq!(t.connectors, vec![crate::models::slack("1234567.7654321")], "a custom entry is not a built-in one");
+        assert_eq!(t.custom.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), ["issues"]);
+        assert_eq!(l.sources.connectors, Source::Portal, "one source for both kinds");
+        assert_eq!(l.view().values.unwrap().connectors, ["Slack", "issues (mcp.example.com)"]);
+    }
+
+    #[test]
+    fn two_custom_entries_are_not_listed_twice() {
+        let server = |name: &str| json!({ "kind": "custom", "name": name, "claude_code": { "type": "http", "url": "https://mcp.example.com/mcp" } });
+        let (kept, refused) = check_connectors(&[server("issues"), server("wiki")]);
+        assert_eq!((kept.len(), refused.len()), (2, 0), "{refused:?}");
+    }
+
+    #[test]
+    fn an_entry_with_neither_blob_is_skipped() {
+        let (kept, refused) = check_connectors(&[json!({ "kind": "custom", "name": "issues", "claude_code": null })]);
+        assert!(kept.is_empty());
+        assert_eq!(refused[0].code, "connector_blob");
     }
 
     #[test]
@@ -949,7 +1086,8 @@ mod tests {
                 tools: Source::Portal,
                 org_name: Source::Portal,
                 web_access: Source::Portal,
-                connectors: Source::Default
+                connectors: Source::Default,
+                models: Source::Default
             }
         );
         let v = l.view();
@@ -1108,11 +1246,11 @@ mod tests {
             fetched_from: DEFAULT_ENDPOINT.into(),
             key_hash: key_hash("key-a"),
         };
-        write_cache(&path, &c).unwrap();
+        write_json_atomically(&path, &c).unwrap();
         assert_eq!(read_cache(&path, Some("key-a")), Some(c.clone()), "kept whole, unknown fields included");
         assert_eq!(read_cache(&path, Some("key-b")), None);
         assert!(!path.exists(), "another key's copy is deleted");
-        write_cache(&path, &c).unwrap();
+        write_json_atomically(&path, &c).unwrap();
         assert_eq!(read_cache(&path, None), None, "no key, no copy");
         assert!(path.exists(), "but kept: the keychain read may fail for a moment");
         fs::write(&path, "{ not json").unwrap();
