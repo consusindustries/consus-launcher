@@ -1,0 +1,532 @@
+{
+  "owner": "consus-launcher/policy/model-choice-cases.json",
+  "spec": "consus-launcher docs/device-policy-models-and-custom-connectors.md, \"Model order\"; consus-key-portal specs/launcher-settings-page.md",
+  "about": "Shared cases for the model order. Each case is one tool's candidates (what the key can use at the level, in the tool's own order), the org's choice (null is automatic), and what must follow: the order the tool lists, the model it starts on by the choice alone (null: the tool's own rule), and, when given, Claude Code's slots. A choice places a tool's models when some candidate's base is in its list; a choice that places none of them is no choice for that tool. When it places some, the order is the placed candidates in list order, then the rest in the tool's own order, and the start model is the default when the tool has it, else the first of the order. Claude Code's model is the start model, else (no choice) the first opus, else the first sonnet, else the first. Its opus and sonnet aliases are the first of each tier in the order, falling back to its model. Its background model ignores the order: the preference list, else the first model in the tool's own order that is not claude-sonnet-5, else the first. context_window is 1000000 when the model is a 5-series model (the gateway reports no window for these candidates), else null. The launcher repo owns this file and the portal vendors it. Change the rule here first, then in both.",
+  "cases": [
+    {
+      "id": "no_choice_changes_nothing",
+      "candidates": [
+        {
+          "base": "claude-opus-5",
+          "maker": "anthropic",
+          "tier": "opus"
+        },
+        {
+          "base": "claude-sonnet-5",
+          "maker": "anthropic",
+          "tier": "sonnet"
+        },
+        {
+          "base": "claude-haiku-4-5",
+          "maker": "anthropic",
+          "tier": "haiku"
+        }
+      ],
+      "choice": null,
+      "expect": {
+        "order": [
+          "claude-opus-5",
+          "claude-sonnet-5",
+          "claude-haiku-4-5"
+        ],
+        "start": null,
+        "claude_code": {
+          "model": "claude-opus-5",
+          "opus": "claude-opus-5",
+          "sonnet": "claude-sonnet-5",
+          "background": "claude-haiku-4-5",
+          "context_window": 1000000
+        }
+      }
+    },
+    {
+      "id": "the_list_orders_and_the_default_starts",
+      "candidates": [
+        {
+          "base": "claude-opus-5",
+          "maker": "anthropic",
+          "tier": "opus"
+        },
+        {
+          "base": "claude-sonnet-5",
+          "maker": "anthropic",
+          "tier": "sonnet"
+        },
+        {
+          "base": "claude-haiku-4-5",
+          "maker": "anthropic",
+          "tier": "haiku"
+        }
+      ],
+      "choice": {
+        "list": [
+          "claude-sonnet-5",
+          "claude-opus-5",
+          "claude-haiku-4-5"
+        ],
+        "default": "claude-sonnet-5"
+      },
+      "expect": {
+        "order": [
+          "claude-sonnet-5",
+          "claude-opus-5",
+          "claude-haiku-4-5"
+        ],
+        "start": "claude-sonnet-5",
+        "claude_code": {
+          "model": "claude-sonnet-5",
+          "opus": "claude-opus-5",
+          "sonnet": "claude-sonnet-5",
+          "background": "claude-haiku-4-5",
+          "context_window": 1000000
+        }
+      }
+    },
+    {
+      "id": "models_the_list_does_not_hold_follow_in_the_tools_order",
+      "candidates": [
+        {
+          "base": "claude-opus-5",
+          "maker": "anthropic",
+          "tier": "opus"
+        },
+        {
+          "base": "claude-sonnet-5",
+          "maker": "anthropic",
+          "tier": "sonnet"
+        },
+        {
+          "base": "claude-opus-4-8",
+          "maker": "anthropic",
+          "tier": "opus"
+        },
+        {
+          "base": "claude-haiku-4-5",
+          "maker": "anthropic",
+          "tier": "haiku"
+        }
+      ],
+      "choice": {
+        "list": [
+          "claude-haiku-4-5"
+        ],
+        "default": null
+      },
+      "expect": {
+        "order": [
+          "claude-haiku-4-5",
+          "claude-opus-5",
+          "claude-sonnet-5",
+          "claude-opus-4-8"
+        ],
+        "start": "claude-haiku-4-5",
+        "claude_code": {
+          "model": "claude-haiku-4-5",
+          "opus": "claude-opus-5",
+          "sonnet": "claude-sonnet-5",
+          "background": "claude-haiku-4-5",
+          "context_window": null
+        }
+      }
+    },
+    {
+      "id": "a_tool_none_of_whose_models_are_listed_keeps_its_order",
+      "candidates": [
+        {
+          "base": "claude-opus-5",
+          "maker": "anthropic",
+          "tier": "opus"
+        },
+        {
+          "base": "claude-sonnet-5",
+          "maker": "anthropic",
+          "tier": "sonnet"
+        }
+      ],
+      "choice": {
+        "list": [
+          "gpt-5.6-sol",
+          "gpt-5.6-terra"
+        ],
+        "default": "gpt-5.6-sol"
+      },
+      "expect": {
+        "order": [
+          "claude-opus-5",
+          "claude-sonnet-5"
+        ],
+        "start": null,
+        "claude_code": {
+          "model": "claude-opus-5",
+          "opus": "claude-opus-5",
+          "sonnet": "claude-sonnet-5",
+          "background": "claude-opus-5",
+          "context_window": 1000000
+        }
+      }
+    },
+    {
+      "id": "ids_the_key_lacks_are_skipped",
+      "candidates": [
+        {
+          "base": "claude-opus-5",
+          "maker": "anthropic",
+          "tier": "opus"
+        },
+        {
+          "base": "claude-sonnet-5",
+          "maker": "anthropic",
+          "tier": "sonnet"
+        }
+      ],
+      "choice": {
+        "list": [
+          "claude-opus-9",
+          "claude-sonnet-5",
+          "claude-opus-5"
+        ],
+        "default": "claude-opus-9"
+      },
+      "expect": {
+        "order": [
+          "claude-sonnet-5",
+          "claude-opus-5"
+        ],
+        "start": "claude-sonnet-5",
+        "claude_code": {
+          "model": "claude-sonnet-5",
+          "opus": "claude-opus-5",
+          "sonnet": "claude-sonnet-5",
+          "background": "claude-opus-5",
+          "context_window": 1000000
+        }
+      }
+    },
+    {
+      "id": "the_first_opus_in_the_order_is_the_opus_alias",
+      "candidates": [
+        {
+          "base": "claude-opus-5",
+          "maker": "anthropic",
+          "tier": "opus"
+        },
+        {
+          "base": "claude-sonnet-5",
+          "maker": "anthropic",
+          "tier": "sonnet"
+        },
+        {
+          "base": "claude-opus-4-8",
+          "maker": "anthropic",
+          "tier": "opus"
+        }
+      ],
+      "choice": {
+        "list": [
+          "claude-opus-4-8",
+          "claude-opus-5",
+          "claude-sonnet-5"
+        ],
+        "default": null
+      },
+      "expect": {
+        "order": [
+          "claude-opus-4-8",
+          "claude-opus-5",
+          "claude-sonnet-5"
+        ],
+        "start": "claude-opus-4-8",
+        "claude_code": {
+          "model": "claude-opus-4-8",
+          "opus": "claude-opus-4-8",
+          "sonnet": "claude-sonnet-5",
+          "background": "claude-opus-5",
+          "context_window": null
+        }
+      }
+    },
+    {
+      "id": "the_background_model_ignores_the_order",
+      "candidates": [
+        {
+          "base": "claude-opus-5",
+          "maker": "anthropic",
+          "tier": "opus"
+        },
+        {
+          "base": "claude-sonnet-5",
+          "maker": "anthropic",
+          "tier": "sonnet"
+        },
+        {
+          "base": "claude-opus-4-8",
+          "maker": "anthropic",
+          "tier": "opus"
+        }
+      ],
+      "choice": {
+        "list": [
+          "claude-sonnet-5",
+          "claude-opus-4-8",
+          "claude-opus-5"
+        ],
+        "default": "claude-sonnet-5"
+      },
+      "expect": {
+        "order": [
+          "claude-sonnet-5",
+          "claude-opus-4-8",
+          "claude-opus-5"
+        ],
+        "start": "claude-sonnet-5",
+        "claude_code": {
+          "model": "claude-sonnet-5",
+          "opus": "claude-opus-4-8",
+          "sonnet": "claude-sonnet-5",
+          "background": "claude-opus-5",
+          "context_window": 1000000
+        }
+      }
+    },
+    {
+      "id": "the_preference_list_picks_the_background_model",
+      "candidates": [
+        {
+          "base": "claude-opus-5",
+          "maker": "anthropic",
+          "tier": "opus"
+        },
+        {
+          "base": "claude-sonnet-4-6",
+          "maker": "anthropic",
+          "tier": "sonnet"
+        },
+        {
+          "base": "claude-sonnet-4-5",
+          "maker": "anthropic",
+          "tier": "sonnet"
+        }
+      ],
+      "choice": {
+        "list": [
+          "claude-sonnet-4-6",
+          "claude-sonnet-4-5",
+          "claude-opus-5"
+        ],
+        "default": null
+      },
+      "expect": {
+        "order": [
+          "claude-sonnet-4-6",
+          "claude-sonnet-4-5",
+          "claude-opus-5"
+        ],
+        "start": "claude-sonnet-4-6",
+        "claude_code": {
+          "model": "claude-sonnet-4-6",
+          "opus": "claude-opus-5",
+          "sonnet": "claude-sonnet-4-6",
+          "background": "claude-sonnet-4-5",
+          "context_window": null
+        }
+      }
+    },
+    {
+      "id": "sonnet_5_is_never_the_background_model",
+      "candidates": [
+        {
+          "base": "claude-sonnet-5",
+          "maker": "anthropic",
+          "tier": "sonnet"
+        },
+        {
+          "base": "claude-opus-5",
+          "maker": "anthropic",
+          "tier": "opus"
+        }
+      ],
+      "choice": {
+        "list": [
+          "claude-sonnet-5",
+          "claude-opus-5"
+        ],
+        "default": "claude-sonnet-5"
+      },
+      "expect": {
+        "order": [
+          "claude-sonnet-5",
+          "claude-opus-5"
+        ],
+        "start": "claude-sonnet-5",
+        "claude_code": {
+          "model": "claude-sonnet-5",
+          "opus": "claude-opus-5",
+          "sonnet": "claude-sonnet-5",
+          "background": "claude-opus-5",
+          "context_window": 1000000
+        }
+      }
+    },
+    {
+      "id": "the_context_window_follows_the_start_model",
+      "candidates": [
+        {
+          "base": "claude-opus-5",
+          "maker": "anthropic",
+          "tier": "opus"
+        },
+        {
+          "base": "claude-sonnet-4-5",
+          "maker": "anthropic",
+          "tier": "sonnet"
+        }
+      ],
+      "choice": {
+        "list": [
+          "claude-sonnet-4-5",
+          "claude-opus-5"
+        ],
+        "default": "claude-sonnet-4-5"
+      },
+      "expect": {
+        "order": [
+          "claude-sonnet-4-5",
+          "claude-opus-5"
+        ],
+        "start": "claude-sonnet-4-5",
+        "claude_code": {
+          "model": "claude-sonnet-4-5",
+          "opus": "claude-opus-5",
+          "sonnet": "claude-sonnet-4-5",
+          "background": "claude-sonnet-4-5",
+          "context_window": null
+        }
+      }
+    },
+    {
+      "id": "one_list_across_makers",
+      "candidates": [
+        {
+          "base": "claude-opus-5",
+          "maker": "anthropic",
+          "tier": "opus"
+        },
+        {
+          "base": "gpt-5.6-sol",
+          "maker": "openai"
+        },
+        {
+          "base": "gemini-3-1-pro",
+          "maker": "google"
+        }
+      ],
+      "choice": {
+        "list": [
+          "gemini-3-1-pro",
+          "gpt-5.6-sol",
+          "claude-opus-5"
+        ],
+        "default": "gpt-5.6-sol"
+      },
+      "expect": {
+        "order": [
+          "gemini-3-1-pro",
+          "gpt-5.6-sol",
+          "claude-opus-5"
+        ],
+        "start": "gpt-5.6-sol"
+      }
+    },
+    {
+      "id": "a_default_the_tool_cannot_use_starts_the_first_listed",
+      "candidates": [
+        {
+          "base": "gpt-5.6-sol",
+          "maker": "openai"
+        },
+        {
+          "base": "gpt-5.6-terra",
+          "maker": "openai"
+        }
+      ],
+      "choice": {
+        "list": [
+          "claude-opus-5",
+          "gpt-5.6-terra",
+          "gpt-5.6-sol"
+        ],
+        "default": "claude-opus-5"
+      },
+      "expect": {
+        "order": [
+          "gpt-5.6-terra",
+          "gpt-5.6-sol"
+        ],
+        "start": "gpt-5.6-terra"
+      }
+    },
+    {
+      "id": "a_choice_without_a_default_starts_on_the_first_listed",
+      "candidates": [
+        {
+          "base": "claude-opus-5",
+          "maker": "anthropic",
+          "tier": "opus"
+        },
+        {
+          "base": "claude-sonnet-5",
+          "maker": "anthropic",
+          "tier": "sonnet"
+        }
+      ],
+      "choice": {
+        "list": [
+          "claude-sonnet-5",
+          "claude-opus-5"
+        ],
+        "default": null
+      },
+      "expect": {
+        "order": [
+          "claude-sonnet-5",
+          "claude-opus-5"
+        ],
+        "start": "claude-sonnet-5",
+        "claude_code": {
+          "model": "claude-sonnet-5",
+          "opus": "claude-opus-5",
+          "sonnet": "claude-sonnet-5",
+          "background": "claude-opus-5",
+          "context_window": 1000000
+        }
+      }
+    },
+    {
+      "id": "a_claude_only_list_leaves_a_gpt_tool_as_it_is",
+      "candidates": [
+        {
+          "base": "gpt-5.6-terra",
+          "maker": "openai"
+        },
+        {
+          "base": "gpt-5.6-sol",
+          "maker": "openai"
+        }
+      ],
+      "choice": {
+        "list": [
+          "claude-sonnet-5",
+          "claude-opus-5"
+        ],
+        "default": "claude-sonnet-5"
+      },
+      "expect": {
+        "order": [
+          "gpt-5.6-terra",
+          "gpt-5.6-sol"
+        ],
+        "start": null
+      }
+    }
+  ]
+}

@@ -1,0 +1,1480 @@
+{
+ "owner": "consus-launcher/policy/connector-cases.json",
+ "spec": "gov_open_router specs/device-policy-models-and-custom-connectors.md",
+ "about": "Shared cases for the custom connector rule. The gateway, the launcher and the portal each validate every case's connectors list and must reach the outcome given. The gateway also asserts the reason code (first failure wins); the others may assert only accepted or refused. The launcher repo owns this file; the others carry copies. Change the rule here first, then in all three. NaN, Infinity and unpaired surrogates (\"\\ud800\") are refused too (connector_blob) but cannot be written in a valid JSON file, so each suite tests them itself.",
+ "transports": {
+  "claude_code": [
+   "http"
+  ],
+  "claude_desktop": [
+   "http"
+  ]
+ },
+ "transport_keys": [
+  "type",
+  "transport"
+ ],
+ "required_transport_keys": {
+  "claude_code": "type"
+ },
+ "command_keys": [
+  "command",
+  "args",
+  "env",
+  "headersHelper"
+ ],
+ "secret_keys": [
+  "headers",
+  "clientSecret"
+ ],
+ "variable_marker": "${",
+ "blob_max_bytes": 4096,
+ "blob_max_depth": 8,
+ "custom_max": 16,
+ "connectors_max": 24,
+ "url_max": 256,
+ "cases": [
+  {
+   "id": "claude_code_blob_only",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "issues",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "oauth": {
+       "clientId": "abc123",
+       "callbackPort": 3119
+      }
+     }
+    }
+   ],
+   "outcome": "accepted"
+  },
+  {
+   "id": "claude_desktop_blob_only",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "issues",
+     "claude_desktop": {
+      "name": "Issues",
+      "transport": "http",
+      "url": "https://mcp.example.com/mcp",
+      "oauth": {
+       "clientId": "abc123",
+       "callbackHost": "localhost"
+      }
+     }
+    }
+   ],
+   "outcome": "accepted"
+  },
+  {
+   "id": "both_blobs",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "issues",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "oauth": {
+       "clientId": "abc123",
+       "callbackPort": 3119
+      }
+     },
+     "claude_desktop": {
+      "name": "Issues",
+      "transport": "http",
+      "url": "https://mcp.example.com/mcp",
+      "oauth": {
+       "clientId": "abc123",
+       "callbackHost": "localhost"
+      }
+     }
+    }
+   ],
+   "outcome": "accepted"
+  },
+  {
+   "id": "claude_code_without_type",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "issues",
+     "claude_code": {
+      "url": "https://mcp.example.com/mcp"
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_transport"
+  },
+  {
+   "id": "slack_and_customs_together",
+   "connectors": [
+    {
+     "kind": "slack",
+     "client_id": "8044899004343.12576865136610"
+    },
+    {
+     "kind": "custom",
+     "name": "issues",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "oauth": {
+       "clientId": "abc123",
+       "callbackPort": 3119
+      }
+     }
+    },
+    {
+     "kind": "custom",
+     "name": "wiki",
+     "claude_desktop": {
+      "name": "Issues",
+      "transport": "http",
+      "url": "https://mcp.example.com/mcp",
+      "oauth": {
+       "clientId": "abc123",
+       "callbackHost": "localhost"
+      }
+     }
+    }
+   ],
+   "outcome": "accepted"
+  },
+  {
+   "id": "sixteen_customs",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "s0",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "oauth": {
+       "clientId": "abc123",
+       "callbackPort": 3119
+      }
+     }
+    },
+    {
+     "kind": "custom",
+     "name": "s1",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "oauth": {
+       "clientId": "abc123",
+       "callbackPort": 3119
+      }
+     }
+    },
+    {
+     "kind": "custom",
+     "name": "s2",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "oauth": {
+       "clientId": "abc123",
+       "callbackPort": 3119
+      }
+     }
+    },
+    {
+     "kind": "custom",
+     "name": "s3",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "oauth": {
+       "clientId": "abc123",
+       "callbackPort": 3119
+      }
+     }
+    },
+    {
+     "kind": "custom",
+     "name": "s4",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "oauth": {
+       "clientId": "abc123",
+       "callbackPort": 3119
+      }
+     }
+    },
+    {
+     "kind": "custom",
+     "name": "s5",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "oauth": {
+       "clientId": "abc123",
+       "callbackPort": 3119
+      }
+     }
+    },
+    {
+     "kind": "custom",
+     "name": "s6",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "oauth": {
+       "clientId": "abc123",
+       "callbackPort": 3119
+      }
+     }
+    },
+    {
+     "kind": "custom",
+     "name": "s7",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "oauth": {
+       "clientId": "abc123",
+       "callbackPort": 3119
+      }
+     }
+    },
+    {
+     "kind": "custom",
+     "name": "s8",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "oauth": {
+       "clientId": "abc123",
+       "callbackPort": 3119
+      }
+     }
+    },
+    {
+     "kind": "custom",
+     "name": "s9",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "oauth": {
+       "clientId": "abc123",
+       "callbackPort": 3119
+      }
+     }
+    },
+    {
+     "kind": "custom",
+     "name": "s10",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "oauth": {
+       "clientId": "abc123",
+       "callbackPort": 3119
+      }
+     }
+    },
+    {
+     "kind": "custom",
+     "name": "s11",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "oauth": {
+       "clientId": "abc123",
+       "callbackPort": 3119
+      }
+     }
+    },
+    {
+     "kind": "custom",
+     "name": "s12",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "oauth": {
+       "clientId": "abc123",
+       "callbackPort": 3119
+      }
+     }
+    },
+    {
+     "kind": "custom",
+     "name": "s13",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "oauth": {
+       "clientId": "abc123",
+       "callbackPort": 3119
+      }
+     }
+    },
+    {
+     "kind": "custom",
+     "name": "s14",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "oauth": {
+       "clientId": "abc123",
+       "callbackPort": 3119
+      }
+     }
+    },
+    {
+     "kind": "custom",
+     "name": "s15",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "oauth": {
+       "clientId": "abc123",
+       "callbackPort": 3119
+      }
+     }
+    }
+   ],
+   "outcome": "accepted"
+  },
+  {
+   "id": "name_64_chars",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "oauth": {
+       "clientId": "abc123",
+       "callbackPort": 3119
+      }
+     }
+    }
+   ],
+   "outcome": "accepted"
+  },
+  {
+   "id": "http_to_localhost",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "issues",
+     "claude_code": {
+      "type": "http",
+      "url": "http://localhost:8080/mcp"
+     }
+    }
+   ],
+   "outcome": "accepted"
+  },
+  {
+   "id": "http_to_127_0_0_1",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "issues",
+     "claude_code": {
+      "type": "http",
+      "url": "http://127.0.0.1:8080/mcp"
+     }
+    }
+   ],
+   "outcome": "accepted"
+  },
+  {
+   "id": "url_256_chars",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "issues",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+     }
+    }
+   ],
+   "outcome": "accepted"
+  },
+  {
+   "id": "depth_8",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "issues",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "x": {
+       "x": {
+        "x": {
+         "x": {
+          "x": {
+           "x": {
+            "x": {}
+           }
+          }
+         }
+        }
+       }
+      }
+     }
+    }
+   ],
+   "outcome": "accepted"
+  },
+  {
+   "id": "blob_4096_bytes",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "issues",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "pad": "pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp"
+     }
+    }
+   ],
+   "outcome": "accepted"
+  },
+  {
+   "id": "dollar_without_brace",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "issues",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "note": "costs $5 {not a var}"
+     }
+    }
+   ],
+   "outcome": "accepted"
+  },
+  {
+   "id": "unknown_blob_keys_pass_through",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "issues",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "oauth": {
+       "clientId": "abc123",
+       "callbackPort": 3119
+      },
+      "futureKey": {
+       "a": [
+        1,
+        2.5,
+        true,
+        null
+       ]
+      }
+     }
+    }
+   ],
+   "outcome": "accepted"
+  },
+  {
+   "id": "name_missing",
+   "connectors": [
+    {
+     "kind": "custom",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "oauth": {
+       "clientId": "abc123",
+       "callbackPort": 3119
+      }
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_name"
+  },
+  {
+   "id": "name_not_a_string",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": 7,
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "oauth": {
+       "clientId": "abc123",
+       "callbackPort": 3119
+      }
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_name"
+  },
+  {
+   "id": "name_with_space",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "my server",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "oauth": {
+       "clientId": "abc123",
+       "callbackPort": 3119
+      }
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_name"
+  },
+  {
+   "id": "name_65_chars",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "oauth": {
+       "clientId": "abc123",
+       "callbackPort": 3119
+      }
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_name"
+  },
+  {
+   "id": "name_duplicate_any_case",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "Issues",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "oauth": {
+       "clientId": "abc123",
+       "callbackPort": 3119
+      }
+     }
+    },
+    {
+     "kind": "custom",
+     "name": "issues",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "oauth": {
+       "clientId": "abc123",
+       "callbackPort": 3119
+      }
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_name"
+  },
+  {
+   "id": "name_is_builtin_kind",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "Slack",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "oauth": {
+       "clientId": "abc123",
+       "callbackPort": 3119
+      }
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_name"
+  },
+  {
+   "id": "unknown_entry_key",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "issues",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "oauth": {
+       "clientId": "abc123",
+       "callbackPort": 3119
+      }
+     },
+     "url": "https://mcp.example.com/mcp"
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_field"
+  },
+  {
+   "id": "neither_blob",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "issues"
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_blob"
+  },
+  {
+   "id": "blob_not_an_object",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "issues",
+     "claude_code": "{\"url\":\"https://mcp.example.com/mcp\"}"
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_blob"
+  },
+  {
+   "id": "blob_4097_bytes",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "issues",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "pad": "ppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp"
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_blob"
+  },
+  {
+   "id": "depth_9",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "issues",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "x": {
+       "x": {
+        "x": {
+         "x": {
+          "x": {
+           "x": {
+            "x": {
+             "x": {}
+            }
+           }
+          }
+         }
+        }
+       }
+      }
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_blob"
+  },
+  {
+   "id": "seventeen_customs",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "s0",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "oauth": {
+       "clientId": "abc123",
+       "callbackPort": 3119
+      }
+     }
+    },
+    {
+     "kind": "custom",
+     "name": "s1",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "oauth": {
+       "clientId": "abc123",
+       "callbackPort": 3119
+      }
+     }
+    },
+    {
+     "kind": "custom",
+     "name": "s2",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "oauth": {
+       "clientId": "abc123",
+       "callbackPort": 3119
+      }
+     }
+    },
+    {
+     "kind": "custom",
+     "name": "s3",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "oauth": {
+       "clientId": "abc123",
+       "callbackPort": 3119
+      }
+     }
+    },
+    {
+     "kind": "custom",
+     "name": "s4",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "oauth": {
+       "clientId": "abc123",
+       "callbackPort": 3119
+      }
+     }
+    },
+    {
+     "kind": "custom",
+     "name": "s5",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "oauth": {
+       "clientId": "abc123",
+       "callbackPort": 3119
+      }
+     }
+    },
+    {
+     "kind": "custom",
+     "name": "s6",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "oauth": {
+       "clientId": "abc123",
+       "callbackPort": 3119
+      }
+     }
+    },
+    {
+     "kind": "custom",
+     "name": "s7",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "oauth": {
+       "clientId": "abc123",
+       "callbackPort": 3119
+      }
+     }
+    },
+    {
+     "kind": "custom",
+     "name": "s8",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "oauth": {
+       "clientId": "abc123",
+       "callbackPort": 3119
+      }
+     }
+    },
+    {
+     "kind": "custom",
+     "name": "s9",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "oauth": {
+       "clientId": "abc123",
+       "callbackPort": 3119
+      }
+     }
+    },
+    {
+     "kind": "custom",
+     "name": "s10",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "oauth": {
+       "clientId": "abc123",
+       "callbackPort": 3119
+      }
+     }
+    },
+    {
+     "kind": "custom",
+     "name": "s11",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "oauth": {
+       "clientId": "abc123",
+       "callbackPort": 3119
+      }
+     }
+    },
+    {
+     "kind": "custom",
+     "name": "s12",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "oauth": {
+       "clientId": "abc123",
+       "callbackPort": 3119
+      }
+     }
+    },
+    {
+     "kind": "custom",
+     "name": "s13",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "oauth": {
+       "clientId": "abc123",
+       "callbackPort": 3119
+      }
+     }
+    },
+    {
+     "kind": "custom",
+     "name": "s14",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "oauth": {
+       "clientId": "abc123",
+       "callbackPort": 3119
+      }
+     }
+    },
+    {
+     "kind": "custom",
+     "name": "s15",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "oauth": {
+       "clientId": "abc123",
+       "callbackPort": 3119
+      }
+     }
+    },
+    {
+     "kind": "custom",
+     "name": "s16",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "oauth": {
+       "clientId": "abc123",
+       "callbackPort": 3119
+      }
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connectors_shape"
+  },
+  {
+   "id": "command",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "issues",
+     "claude_code": {
+      "url": "https://mcp.example.com/mcp",
+      "command": "npx"
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_command"
+  },
+  {
+   "id": "args",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "issues",
+     "claude_code": {
+      "url": "https://mcp.example.com/mcp",
+      "args": [
+       "-y",
+       "x"
+      ]
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_command"
+  },
+  {
+   "id": "env",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "issues",
+     "claude_code": {
+      "url": "https://mcp.example.com/mcp",
+      "env": {
+       "A": "b"
+      }
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_command"
+  },
+  {
+   "id": "headers_helper",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "issues",
+     "claude_code": {
+      "url": "https://mcp.example.com/mcp",
+      "headersHelper": "/bin/sh x"
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_command"
+  },
+  {
+   "id": "command_wins_over_headers",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "issues",
+     "claude_code": {
+      "url": "https://mcp.example.com/mcp",
+      "command": "npx",
+      "headers": {
+       "A": "b"
+      }
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_command"
+  },
+  {
+   "id": "type_stdio",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "issues",
+     "claude_code": {
+      "type": "stdio",
+      "url": "https://mcp.example.com/mcp"
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_transport"
+  },
+  {
+   "id": "transport_stdio",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "issues",
+     "claude_desktop": {
+      "transport": "stdio",
+      "url": "https://mcp.example.com/mcp"
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_transport"
+  },
+  {
+   "id": "type_not_on_list",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "issues",
+     "claude_code": {
+      "type": "ws",
+      "url": "https://mcp.example.com/mcp"
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_transport"
+  },
+  {
+   "id": "transport_key_in_claude_code_blob",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "issues",
+     "claude_code": {
+      "transport": "stdio",
+      "url": "https://mcp.example.com/mcp"
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_transport"
+  },
+  {
+   "id": "type_not_a_string",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "issues",
+     "claude_code": {
+      "type": [
+       "http"
+      ],
+      "url": "https://mcp.example.com/mcp"
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_transport"
+  },
+  {
+   "id": "headers_top_level",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "issues",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "oauth": {
+       "clientId": "abc123",
+       "callbackPort": 3119
+      },
+      "headers": {
+       "Authorization": "Bearer abc"
+      }
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_secret"
+  },
+  {
+   "id": "headers_nested",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "issues",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "oauth": {
+       "clientId": "abc123",
+       "callbackPort": 3119
+      },
+      "extra": {
+       "headers": {
+        "X": "y"
+       }
+      }
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_secret"
+  },
+  {
+   "id": "client_secret_in_oauth",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "issues",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "oauth": {
+       "clientId": "abc123",
+       "clientSecret": "abc"
+      }
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_secret"
+  },
+  {
+   "id": "variable_in_url",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "issues",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/${HOME}"
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_variable"
+  },
+  {
+   "id": "variable_in_nested_value",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "issues",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "oauth": {
+       "clientId": "${X}"
+      }
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_variable"
+  },
+  {
+   "id": "variable_in_list_value",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "issues",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "oauth": {
+       "clientId": "abc123",
+       "callbackPort": 3119
+      },
+      "scopes": [
+       "read",
+       "${TOKEN}"
+      ]
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_variable"
+  },
+  {
+   "id": "variable_in_key",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "issues",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "oauth": {
+       "clientId": "abc123",
+       "callbackPort": 3119
+      },
+      "${X}": 1
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_variable"
+  },
+  {
+   "id": "url_missing",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "issues",
+     "claude_code": {
+      "type": "http"
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_url"
+  },
+  {
+   "id": "url_not_a_string",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "issues",
+     "claude_code": {
+      "type": "http",
+      "url": 5
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_url"
+  },
+  {
+   "id": "url_plain_http_not_local",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "issues",
+     "claude_code": {
+      "type": "http",
+      "url": "http://mcp.example.com/mcp"
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_url"
+  },
+  {
+   "id": "url_with_password",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "issues",
+     "claude_code": {
+      "type": "http",
+      "url": "https://u:p@mcp.example.com/mcp"
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_url"
+  },
+  {
+   "id": "url_with_query",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "issues",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp?token=abc"
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_url"
+  },
+  {
+   "id": "url_with_fragment",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "issues",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp#x"
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_url"
+  },
+  {
+   "id": "url_257_chars",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "issues",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_url"
+  },
+  {
+   "id": "url_bad_port",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "issues",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com:99999/mcp"
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_url"
+  },
+  {
+   "id": "url_bad_host",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "issues",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp_example.com/mcp"
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_url"
+  },
+  {
+   "id": "url_scheme_ftp",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "issues",
+     "claude_code": {
+      "type": "http",
+      "url": "ftp://mcp.example.com/mcp"
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_url"
+  },
+  {
+   "id": "second_blob_checked",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "issues",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "oauth": {
+       "clientId": "abc123",
+       "callbackPort": 3119
+      }
+     },
+     "claude_desktop": {
+      "transport": "http",
+      "url": "https://mcp.example.com/mcp",
+      "command": "x"
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_command"
+  },
+  {
+   "id": "two_slack_entries",
+   "connectors": [
+    {
+     "kind": "slack",
+     "client_id": "8044899004343.12576865136610"
+    },
+    {
+     "kind": "slack",
+     "client_id": "8044899004343.12576865136610"
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_duplicate"
+  },
+  {
+   "id": "client_secret_snake_case",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "issues",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "oauth": {
+       "clientId": "abc123",
+       "client_secret": "abc"
+      }
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_secret"
+  },
+  {
+   "id": "client_secret_kebab_upper",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "issues",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "oauth": {
+       "clientId": "abc123",
+       "Client-Secret": "abc"
+      }
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_secret"
+  },
+  {
+   "id": "headers_any_case",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "issues",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "oauth": {
+       "clientId": "abc123",
+       "callbackPort": 3119
+      },
+      "Headers": {
+       "X": "y"
+      }
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_secret"
+  },
+  {
+   "id": "claude_desktop_without_transport",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "issues",
+     "claude_desktop": {
+      "url": "https://mcp.example.com/mcp"
+     }
+    }
+   ],
+   "outcome": "accepted"
+  }
+ ],
+ "secret_keys_match": "without regard to case, '_' or '-'"
+}
