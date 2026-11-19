@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "launcher": "1.6.0",
-  "about": "What a locked-down tool looks like on a machine that uses the Consus Launcher. The launcher embeds this file and renders it into each tool's user-space settings; the Consus portal renders the same values into the device-management lock files. Values only. How a value reaches the disk (merging, helper links, model discovery) lives in code. A key an app does not know is ignored by that app version. Keys are nested objects; a renderer that needs dotted paths flattens them. A tool with `extends` takes every field it does not set from the tool it extends.",
+  "about": "What a locked-down tool looks like on a machine that uses the Consus Launcher. The launcher embeds this file and renders it into each tool's user-space settings; the Consus portal renders the same values into the device-management lock files. Values only. How a value reaches the disk (merging, helper links, model discovery) lives in code. A key an app does not know is ignored by that app version. Keys are nested objects; a renderer that needs dotted paths flattens them. The exception is `vscode`: its keys are literal VS Code setting names, which contain dots, and no renderer nests or flattens them. A tool with `extends` takes every field it does not set from the tool it extends.",
   "slots": {
     "endpoint": {
       "kind": "url",
@@ -364,6 +364,41 @@
         "shell": "None / any host (Factory's sandbox, macOS)",
         "leaves_machine": "Sign-in, feature flags, and token counts per turn to Factory",
         "lock": "Factory's machine-wide `settings.json` from the portal"
+      }
+    },
+    "vscode": {
+      "name": "VS Code",
+      "file": "chatLanguageModels.json and settings.json in the launcher's own VS Code folder (--user-data-dir ~/.vscode-consus-gateway/data). The launcher writes the Consus Gateway model group from the gateway's model list, and sets chat.defaultModel (a model id) and chat.utilityModel and chat.utilitySmallModel (customendpoint/<model id>) from it, next to the keys below. The person pastes the key into VS Code once (Update API Key); VS Code keeps it. macOS and Windows.",
+      "settings": {
+        "telemetry.telemetryLevel": "off",
+        "update.mode": "none",
+        "extensions.autoUpdate": false,
+        "extensions.autoCheckUpdates": false,
+        "workbench.startupEditor": "none",
+        "window.openWithoutArgumentsInNewWindow": "off",
+        "chat.byokUtilityModelDefault": "mainAgent",
+        "chat.titleBar.signIn.enabled": false,
+        "chat.welcomePage.signIn.enabled": false,
+        "chat.defaultToCopilotHarness": false,
+        "chat.editor.preferCopilotHarness": false
+      },
+      "by_web_access": {
+        "off": {
+          "chat.agent.networkFilter": true,
+          "chat.agent.sandbox.network.allowedDomains": []
+        },
+        "on": {
+          "chat.agent.networkFilter": false
+        }
+      },
+      "lock": null,
+      "readme": {
+        "telemetry": "Off: telemetry, VS Code and extension updates",
+        "web_search": "No such tool",
+        "web_fetch": "None / any host",
+        "shell": "Not restricted: VS Code's terminal has no sandbox",
+        "leaves_machine": "Update and extension marketplace checks to Microsoft",
+        "lock": "No lock yet"
       }
     }
   },

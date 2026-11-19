@@ -32,13 +32,13 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
 
 /// A helper command that must not flash a console window over the app.
-fn hidden(program: impl AsRef<OsStr>) -> Command {
+pub(super) fn hidden(program: impl AsRef<OsStr>) -> Command {
     let mut c = Command::new(program);
     c.creation_flags(CREATE_NO_WINDOW).stdin(Stdio::null());
     c
 }
 
-fn env_dir(var: &str) -> Option<PathBuf> {
+pub(super) fn env_dir(var: &str) -> Option<PathBuf> {
     std::env::var_os(var).map(PathBuf::from)
 }
 
@@ -127,7 +127,7 @@ fn terminal_cli(t: Tool) -> Option<PathBuf> {
         Tool::Code => cli("claude"),
         Tool::Codex => cli("codex").or_else(chatgpt_codex),
         Tool::Pi => cli("pi"),
-        Tool::Desktop | Tool::ChatGpt | Tool::Factory => None,
+        Tool::Desktop | Tool::ChatGpt | Tool::Factory | Tool::VsCode => None,
     }
 }
 
@@ -178,7 +178,8 @@ fn icon(t: Tool) -> Option<String> {
         Tool::Code | Tool::Codex => png("Microsoft.WindowsTerminal", "Square44x44Logo.targetsize-256.png")
             .map(|b| format!("data:image/png;base64,{}", b64(&b))),
         Tool::Pi => Some(format!("data:image/svg+xml;base64,{}", b64(PI_ICON.as_bytes()))),
-        Tool::Factory => None,
+        // VS Code's comes from its own install (tools/vscode.rs).
+        Tool::Factory | Tool::VsCode => None,
     };
     ICONS.lock().unwrap().insert(k, made.clone());
     made
@@ -201,6 +202,8 @@ pub fn status(t: Tool) -> (bool, Option<String>) {
         Tool::Code | Tool::Codex | Tool::Pi => terminal_cli(t).is_some(),
         // macOS only until its Windows release; tools.rs never offers it here.
         Tool::Factory => false,
+        // Found by tools/vscode.rs; detect_tools never asks here.
+        Tool::VsCode => false,
     };
     (installed, icon(t))
 }
@@ -230,7 +233,7 @@ fn all_pids() -> Vec<u32> {
         .collect()
 }
 
-fn alive(pid: u32) -> bool {
+pub(super) fn alive(pid: u32) -> bool {
     hidden("tasklist")
         .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
         .output()
@@ -390,6 +393,7 @@ pub fn launch(app: AppHandle, t: Tool, models: &Value, target: &Target) -> Resul
     let console = matches!(t, Tool::Code | Tool::Codex | Tool::Pi);
     let mut cmd = match t {
         Tool::Factory => return Err("Factory is not available on Windows yet.".into()),
+        Tool::VsCode => return Err("VS Code is opened by tools/vscode.rs.".into()),
         Tool::Desktop => {
             let exe = claude_desktop_exe().ok_or("Claude is not installed.")?;
             if claude_desktop_policy() {

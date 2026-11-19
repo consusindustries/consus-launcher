@@ -64,6 +64,17 @@ pub(crate) const PI_SCRUB: Scrub = Scrub {
 /// Anything that could point droid at another home, org source, or
 /// Factory's own key (FACTORY_API_KEY).
 pub(crate) const FACTORY_SCRUB: Scrub = Scrub { prefixes: &["FACTORY"], suffixes: &[], exact: &[] };
+/// What VS Code, a GUI app, must not inherit: another Claude or Codex
+/// session's variables, which its terminal would hand on to every command,
+/// and the variables that change how the binary starts (ELECTRON_RUN_AS_NODE
+/// makes it refuse --user-data-dir; VSCODE_* come from a VS Code the
+/// launcher itself was started from), and the user's own CONSUS_API_KEY,
+/// which the agent's terminal should not see.
+pub(crate) const VSCODE_SCRUB: Scrub = Scrub {
+    prefixes: &["CLAUDE", "ANTHROPIC", "OPENAI", "CODEX", "VSCODE_"],
+    suffixes: &[],
+    exact: &["ELECTRON_RUN_AS_NODE", "CONSUS_API_KEY"],
+};
 
 /// What the version check found for the droid binary last checked. It holds
 /// until that binary changes (an update). No answer is kept only for this run
@@ -247,7 +258,7 @@ pub(super) fn terminal_script(app: &AppHandle, t: Tool, models: &Value, target: 
             };
             Ok(factory_script(&work, &profile, org.as_deref(), bin, &cli))
         }
-        Tool::Desktop | Tool::ChatGpt => Err(format!("{} is not a terminal tool.", name(t))),
+        Tool::Desktop | Tool::ChatGpt | Tool::VsCode => Err(format!("{} is not a terminal tool.", name(t))),
     }
 }
 

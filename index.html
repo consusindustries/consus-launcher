@@ -21,6 +21,19 @@
     <div class="body">
       <div class="glass" id="glass">
         <div class="empty" id="empty"><b>Connect, then pick a tool.</b><span>It opens here, configured for Consus. No setup.</span></div>
+        <div class="steps" id="vscodeSteps" hidden>
+          <b>Give VS Code your key</b>
+          <span class="when">First time, or after a new key:</span>
+          <ol>
+            <li>In VS Code, click the model name in the chat box, then <strong>Manage Models...</strong></li>
+            <li>Right-click the Consus model and pick <strong>Update API Key</strong>.</li>
+            <li><button class="cta" id="vscodeCopy">COPY KEY</button> then paste it there and press Enter.</li>
+            <li>Start a new chat.</li>
+          </ol>
+          <span class="copied" id="vscodeCopied" aria-live="polite"></span>
+          <span class="warn">Do not sign in to GitHub in this VS Code.</span>
+          <button class="mini" id="vscodeDone">DONE</button>
+        </div>
       </div>
 
       <aside class="panel">
@@ -55,6 +68,7 @@
           <button class="tool" data-app="codex"><span class="ic">&gt;_</span><span><div class="nm">Codex</div><div class="sb" data-sb="codex">Terminal agent</div></span><span class="go">OPEN</span></button>
           <button class="tool" data-app="pi"><span class="ic">π</span><span><div class="nm">Pi</div><div class="sb" data-sb="pi">Terminal agent</div></span><span class="go">OPEN</span></button>
           <button class="tool" data-app="factory"><span class="ic">F</span><span><div class="nm">Factory</div><div class="sb" data-sb="factory">Terminal agent</div></span><span class="go">OPEN</span></button>
+          <button class="tool" data-app="vscode"><span class="ic">VS</span><span><div class="nm">VS Code</div><div class="sb" data-sb="vscode">Its own VS Code. Do not sign in to GitHub there.</div></span><span class="go">OPEN</span></button>
           <p class="note" id="whoNote"></p>
         </div>
 

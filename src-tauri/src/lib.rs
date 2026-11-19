@@ -1,5 +1,6 @@
 mod chatgpt;
 mod claude_code;
+mod clipboard;
 mod codex;
 mod config;
 mod custom;
@@ -12,6 +13,7 @@ mod portal;
 mod settings;
 mod signin;
 mod tools;
+mod vscode;
 
 use std::sync::Mutex;
 use tauri::Manager;
@@ -76,12 +78,14 @@ pub fn run() {
             tools::connector_notices,
             tools::launch_tool,
             tools::remove_tool_configs,
+            tools::vscode::vscode_copy_key,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {
             if let tauri::RunEvent::Exit = event {
                 tools::terminate_children(app);
+                clipboard::clear_pending();
             }
         });
 }
