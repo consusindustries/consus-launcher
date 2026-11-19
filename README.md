@@ -192,6 +192,7 @@ Release builds are made only in GitHub Actions ([`release.yml`](.github/workflow
 - `Consus-Launcher-<version>-universal.dmg` and `.pkg` (macOS), and `Consus-Launcher-<version>-windows-x64.msi` and `-windows-arm64.msi` (Windows), signed as described under "Install"
 - `consus-launcher-rust.cdx.json` and `consus-launcher-npm.cdx.json`: CycloneDX SBOMs for the Rust crates and the npm packages in the app
 - `consus-launcher-policy-<version>.json`: the policy document, every setting this version writes (see "One policy document" under "For IT admins" above)
+- `consus-launcher-connector-cases-<version>.json` and `consus-launcher-model-choice-cases-<version>.json`: the test cases the gateway, the Consus portal and the launcher share for custom connectors and the model order
 - `SHA256SUMS.txt`
 
 Signing and notarization run in that same workflow once the Apple secrets are set; the secret names are listed at the top of `release.yml`. Run the workflow by hand (Actions, Release, Run workflow) to try signing before tagging.
