@@ -382,7 +382,9 @@
         "chat.titleBar.signIn.enabled": false,
         "chat.welcomePage.signIn.enabled": false,
         "chat.sessionSync.enabled": false,
-        "chat.agent.sandbox.allowUnsandboxedCommands": false
+        "chat.agent.sandbox.allowUnsandboxedCommands": false,
+        "chat.agent.sandbox.credentials.authenticategh": false,
+        "chat.agent.sandbox.credentials.authenticategit": false
       },
       "by_web_access": {
         "off": {

@@ -31,8 +31,9 @@ signals a VS Code it did not start.
 - **VS Code does not ask for the key.** With no stored key it sends an empty key, and
   the gateway answers 403. The key is set through VS Code's own menu, and the model
   then answers (1.147.0, macOS and Windows):
-  1. Click the model name in the chat box, then "Manage Models...".
-  2. Right-click the model row (or the gear at its end) and pick "Update API Key".
+  1. Click the model name in the chat box, then the "+" at the top of the list, which
+     opens Language Models (in 1.147 this replaced "Manage Models...").
+  2. Right-click a Consus model row (or the gear at its end) and pick "Update API Key".
   3. Paste, press Enter.
   4. Start a new chat.
 - **After "Update API Key"**, VS Code stores the key in its secret storage and rewrites
@@ -43,7 +44,12 @@ signals a VS Code it did not start.
   and leaves VS Code's trust prompt on: trusting the folder is the first step shown.
   VS Code remembers it.
 - **A chat with no Consus model selected** (for example "Auto") asks for a GitHub
-  sign-in. So the launcher always sets the default model.
+  sign-in. So the launcher always sets the default model. In 1.147 the Copilot session
+  type also asks when a chat starts before the Consus models have loaded (the first
+  seconds after VS Code opens, or just after "Update API Key"), or in a chat restored
+  with a model that is no longer listed. A new chat then works, so the steps panel says
+  to start a new chat instead of signing in. The status bar's "Sign In" (the Copilot
+  account item) has no setting to hide it; a person can hide it with a right-click.
 - **VS Code shares some state across all its instances**:
   `~/.vscode-shared/sharedStorage/state.vscdb` holds the recently opened list and the
   folder trust list. No secrets. A folder trusted in one instance is trusted in the other.
@@ -158,6 +164,11 @@ nested keys. The values are provisional until the checks below.
     `extensions.autoCheckUpdates: false`, `workbench.startupEditor: none`,
     `window.openWithoutArgumentsInNewWindow: off`, `chat.sessionSync.enabled: false`,
     `chat.agent.sandbox.allowUnsandboxedCommands: false`.
+  - `chat.agent.sandbox.credentials.authenticategh: false`,
+    `chat.agent.sandbox.credentials.authenticategit: false`: the sandbox's proxy does not
+    add GitHub or git credentials to the agent's requests. VS Code 1.147 also offers to
+    install a "Sandbox trusted CA" for that proxy; it is optional, and the person should
+    not install it.
   - `chat.byokUtilityModelDefault: mainAgent`: titles and summaries use the chat's own
     model, not Copilot's, when no utility model resolves.
   - `chat.titleBar.signIn.enabled: false`, `chat.welcomePage.signIn.enabled: false`: no
