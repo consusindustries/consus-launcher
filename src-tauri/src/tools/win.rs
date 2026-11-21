@@ -194,6 +194,12 @@ pub fn claude_desktop_policy() -> bool {
     })
 }
 
+/// Whether a registry policy key holds `value`, as the portal's lock
+/// script writes it.
+pub fn has_policy(key: &str, value: &str) -> bool {
+    hidden("reg").args(["query", key, "/v", value]).output().is_ok_and(|o| o.status.success())
+}
+
 /// Installed, and the tile's icon.
 pub fn status(t: Tool) -> (bool, Option<String>) {
     let installed = match t {

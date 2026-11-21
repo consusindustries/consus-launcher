@@ -445,19 +445,48 @@ fn sets_connection(doc: &serde_json::Map<String, Value>) -> bool {
 /// (a configuration profile), which the app obeys over any local config.
 #[cfg(target_os = "macos")]
 fn claude_desktop_policy() -> bool {
-    let file = "com.anthropic.claudefordesktop.plist";
+    managed_pref("com.anthropic.claudefordesktop", "inferenceProvider")
+}
+
+/// Whether a configuration profile sets `key` in a preferences domain, for
+/// the machine or for this user.
+#[cfg(target_os = "macos")]
+fn managed_pref(domain: &str, key: &str) -> bool {
+    let file = format!("{domain}.plist");
     let base = Path::new("/Library/Managed Preferences");
-    let mut plists = vec![base.join(file)];
+    let mut plists = vec![base.join(&file)];
     if let Ok(user) = std::env::var("USER") {
-        plists.push(base.join(user).join(file));
+        plists.push(base.join(user).join(&file));
     }
     plists.iter().filter(|p| p.exists()).any(|p| {
         Command::new("plutil")
-            .args(["-extract", "inferenceProvider", "raw", "-o", "-"])
+            .args(["-extract", key, "raw", "-o", "-"])
             .arg(p)
             .output()
             .is_ok_and(|o| o.status.success())
     })
+}
+
+/// The policy every VS Code lock from the portal sets, whichever web-access
+/// variant it was rendered with.
+const VSCODE_LOCK_KEY: &str = "ChatAgentNetworkFilter";
+
+/// Whether the organization's VS Code lock (managed policies) is on this
+/// machine. It changes only the tile's label: the launcher still writes its
+/// own instance's files, which policies cannot carry (docs/vscode.md).
+#[cfg(target_os = "macos")]
+fn vscode_policy() -> bool {
+    managed_pref(crate::policy::policy().vscode_lock().0, VSCODE_LOCK_KEY)
+}
+
+#[cfg(windows)]
+fn vscode_policy() -> bool {
+    win::has_policy(crate::policy::policy().vscode_lock().1, VSCODE_LOCK_KEY)
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
+fn vscode_policy() -> bool {
+    false
 }
 
 #[cfg(windows)]
@@ -485,7 +514,8 @@ fn org_policy(t: Tool) -> bool {
         Tool::Code => claude_code_policy(),
         Tool::Desktop => claude_desktop_policy(),
         Tool::Factory => factory_policy(),
-        Tool::ChatGpt | Tool::Codex | Tool::Pi | Tool::VsCode => false,
+        Tool::VsCode => vscode_policy(),
+        Tool::ChatGpt | Tool::Codex | Tool::Pi => false,
     }
 }
 
@@ -535,7 +565,7 @@ pub async fn detect_tools(app: AppHandle, models: Option<Value>) -> HashMap<Stri
                 // Too old a VS Code greys the tile with the reason, as a
                 // missing model does.
                 let (installed, icon, too_old) = vscode::status(&app);
-                ToolStatus { allowed, managed: false, installed, icon, no_models: too_old }
+                ToolStatus { allowed, managed: installed && org_policy(t), installed, icon, no_models: too_old }
             } else if !cfg!(target_os = "macos") {
                 let (installed, icon) = other_status(t);
                 ToolStatus { allowed, managed: installed && org_policy(t), installed, icon, no_models: None }
@@ -562,8 +592,10 @@ pub async fn detect_tools(app: AppHandle, models: Option<Value>) -> HashMap<Stri
                 ToolStatus { allowed, managed: installed && org_policy(t), installed, icon, no_models: None }
             };
             // Only an installed tool the launcher sets up uses the key's
-            // models; one the org's own policy sets up does not.
-            if let Some(s) = settings.as_ref().filter(|_| status.installed && !status.managed && status.no_models.is_none()) {
+            // models; one the org's own policy sets up does not, except VS
+            // Code, whose models the launcher writes under the lock too.
+            let sets_up = !status.managed || t == Tool::VsCode;
+            if let Some(s) = settings.as_ref().filter(|_| status.installed && sets_up && status.no_models.is_none()) {
                 status.no_models = no_models(t, &models, &s.target);
             }
             (key(t).to_string(), status)
@@ -1380,6 +1412,12 @@ mod tests {
         for banned in ["running_pids", "pids_in", "ask_to_quit", "quit_and_wait", "osascript", "place_window", "com.microsoft.VSCode", "pgrep", "\"Code\""] {
             assert!(!code.contains(banned), "tools/vscode.rs must not use {banned}");
         }
+        // Under the lock the launcher still writes VS Code's files: the
+        // launch never asks whether the lock is there.
+        for lock_check in ["org_policy", "vscode_policy", "managed_pref"] {
+            assert!(!code.contains(lock_check), "VS Code's launch writes its files under a lock too; it must not consult {lock_check}");
+        }
+        assert!(include_str!("../../policy/launcher-policy.json").contains(VSCODE_LOCK_KEY), "the lock the portal renders sets the key the launcher looks for");
     }
 
     #[test]

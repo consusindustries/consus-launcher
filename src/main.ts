@@ -652,7 +652,8 @@ async function launchTool(b: HTMLButtonElement, key: Tool): Promise<void> {
 }
 
 // VS Code cannot take the key from the launcher, so every time it opens the
-// steps to paste it are shown, with the key one click away. Copied from
+// steps to paste it are shown, with the key one click away. In the side
+// panel, under the tiles: a window in the glass would cover them there. Copied from
 // Rust, never through this page; cleared from the clipboard after two
 // minutes.
 function showVsCodeSteps(): void {

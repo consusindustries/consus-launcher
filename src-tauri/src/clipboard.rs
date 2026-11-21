@@ -21,8 +21,10 @@ const CLEAR_AFTER: Duration = Duration::from_secs(120);
 static PENDING: Mutex<Option<u64>> = Mutex::new(None);
 
 /// Puts `secret` on the clipboard and clears it after two minutes if it is
-/// still the launcher's copy.
-pub fn copy_secret(secret: &str) -> Result<(), String> {
+/// still the launcher's copy. `owner` is the launcher's window handle on
+/// Windows, which owns the entry (0 elsewhere).
+pub fn copy_secret(secret: &str, owner: isize) -> Result<(), String> {
+    os::set_owner(owner);
     let token = os::copy(secret)?;
     *PENDING.lock().unwrap() = Some(token);
     thread::spawn(move || {
@@ -57,6 +59,8 @@ mod os {
     /// carrying this type.
     const CONCEALED: &str = "org.nspasteboard.ConcealedType";
 
+    pub fn set_owner(_: isize) {}
+
     pub fn copy(secret: &str) -> Result<u64, String> {
         let pb = NSPasteboard::generalPasteboard();
         pb.clearContents();
@@ -79,6 +83,7 @@ mod os {
 
 #[cfg(windows)]
 mod os {
+    use std::sync::atomic::{AtomicIsize, Ordering};
     use std::thread;
     use std::time::Duration;
     use windows_sys::Win32::Foundation::GlobalFree;
@@ -88,11 +93,23 @@ mod os {
     use windows_sys::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
     use windows_sys::Win32::System::Ole::CF_UNICODETEXT;
 
+    /// The launcher's window. Opened with no owner, EmptyClipboard leaves
+    /// the clipboard ownerless, and Windows documents that SetClipboardData
+    /// can then fail.
+    static OWNER: AtomicIsize = AtomicIsize::new(0);
+
+    pub fn set_owner(owner: isize) {
+        if owner != 0 {
+            OWNER.store(owner, Ordering::Relaxed);
+        }
+    }
+
     /// Another program can hold the clipboard open for a moment.
     fn open() -> Result<(), String> {
+        let owner = OWNER.load(Ordering::Relaxed) as *mut core::ffi::c_void;
         for _ in 0..10 {
-            // SAFETY: no owner window; closed by the caller.
-            if unsafe { OpenClipboard(std::ptr::null_mut()) } != 0 {
+            // SAFETY: the launcher's own window, or none; closed by the caller.
+            if unsafe { OpenClipboard(owner) } != 0 {
                 return Ok(());
             }
             thread::sleep(Duration::from_millis(50));
@@ -170,6 +187,8 @@ mod os {
 
 #[cfg(not(any(target_os = "macos", windows)))]
 mod os {
+    pub fn set_owner(_: isize) {}
+
     pub fn copy(_: &str) -> Result<u64, String> {
         Err("Copying the key is not supported on this platform.".into())
     }

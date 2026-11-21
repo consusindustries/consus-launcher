@@ -179,13 +179,16 @@ fn model_settings(models_json: &Value, t: &Target, list: &[(String, models::Deta
         .or_else(|| first("opus"))
         .or_else(|| crate::chatgpt::select_model(models_json, t).filter(|id| ids.contains(&id.as_str())))
         .unwrap_or_else(|| ids[0].to_string());
-    // chat.defaultModel matches a model's id; the utility settings take
-    // "<vendor>/<id>" (VS Code 1.147's workbench).
+    // chat.defaultModel matches a model's id as the session type registers
+    // it: in the Copilot type, VS Code's default and the one the launcher
+    // keeps, that is "<vendor>/<group>/<id>" (VS Code 1.147, Windows,
+    // 2026-11-19). A Local chat does not match it and starts on the first
+    // Consus model instead. The utility settings take "<vendor>/<id>".
     let utility = |id: Option<String>| json!(format!("{VENDOR}/{}", id.unwrap_or_else(|| main.clone())));
     let mut out = Map::new();
     out.insert("chat.utilityModel".into(), utility(first("sonnet")));
     out.insert("chat.utilitySmallModel".into(), utility(first("haiku")));
-    out.insert("chat.defaultModel".into(), json!(main));
+    out.insert("chat.defaultModel".into(), json!(format!("{VENDOR}/{GROUP}/{main}")));
     out
 }
 
@@ -201,7 +204,7 @@ pub fn write_config(home: &Path, models_json: &Value, t: &Target) -> Result<(), 
     let mpath = models_path(home);
     let spath = settings_path(home);
     let mut groups = read_array(&mpath)?;
-    let mut sdoc = read_object(&spath)?;
+    let mut sdoc = read_object(&spath).map_err(unmergeable)?;
 
     let kept = groups.iter().find(|g| is_ours(g)).and_then(|g| g.get("apiKey")).filter(|k| k.is_string()).cloned();
     let mine = group(&list, t, kept);
@@ -222,12 +225,22 @@ pub fn write_config(home: &Path, models_json: &Value, t: &Target) -> Result<(), 
     write_object(&spath, sdoc)
 }
 
+/// What the person can act on when settings.json does not parse: VS Code
+/// accepts comments and trailing commas there; the launcher merges plain
+/// JSON only, and never rewrites a file it cannot read whole.
+fn unmergeable(e: String) -> String {
+    format!(
+        "VS Code's settings in ~/.vscode-consus-gateway could not be read, so the launcher left them alone. Remove any comments or trailing commas from that settings.json (VS Code: Preferences: Open User Settings (JSON)) and try again. ({e})"
+    )
+}
+
 /// The state database, before VS Code first starts in this folder. Never
 /// opened for writing once it exists, so VS Code's own file is not touched.
-pub fn write_state(home: &Path) -> Result<(), String> {
+/// True when it was written now: a new instance.
+pub fn write_state(home: &Path) -> Result<bool, String> {
     let path = state_path(home);
     if path.exists() {
-        return Ok(());
+        return Ok(false);
     }
     let dir = path.parent().expect("state.vscdb has a folder");
     fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
@@ -238,8 +251,8 @@ pub fn write_state(home: &Path) -> Result<(), String> {
     let linked = written.and_then(|_| fs::hard_link(&tmp, &path));
     let _ = fs::remove_file(&tmp);
     match linked {
-        Ok(()) => Ok(()),
-        Err(_) if path.exists() => Ok(()),
+        Ok(()) => Ok(true),
+        Err(_) if path.exists() => Ok(false),
         Err(e) => Err(format!("{}: {e}", path.display())),
     }
 }
@@ -259,7 +272,7 @@ pub fn remove_config(home: &Path) -> Result<(), String> {
     }
     let spath = settings_path(home);
     if spath.exists() {
-        let mut doc = read_object(&spath)?;
+        let mut doc = read_object(&spath).map_err(unmergeable)?;
         let before = doc.len();
         for k in owned() {
             doc.remove(&k);
@@ -329,7 +342,7 @@ mod tests {
         assert!(gpt.get("thinking").is_none() && gpt.get("supportsReasoningEffort").is_none() && gpt.get("reasoningEffortFormat").is_none());
 
         let s = read(&settings_path(&home));
-        assert_eq!(s["chat.defaultModel"], "claude-opus-5-5:itar");
+        assert_eq!(s["chat.defaultModel"], "customendpoint/Consus Gateway/claude-opus-5-5:itar");
         assert_eq!(s["chat.utilityModel"], "customendpoint/claude-sonnet-5-5:itar");
         assert_eq!(s["chat.utilitySmallModel"], "customendpoint/claude-haiku-5-5:itar");
         assert_eq!(s["telemetry.telemetryLevel"], "off");
@@ -355,7 +368,7 @@ mod tests {
         assert_eq!(ours(&home)["models"].as_array().unwrap().len(), 4);
         let s = read(&settings_path(&home));
         assert_eq!(s["editor.fontSize"], 15);
-        assert_eq!(s["chat.defaultModel"], "claude-opus-5-5:itar");
+        assert_eq!(s["chat.defaultModel"], "customendpoint/Consus Gateway/claude-opus-5-5:itar");
 
         remove_config(&home).unwrap();
         assert_eq!(read(&models_path(&home)), json!([{ "name": "Local", "vendor": "ollama" }]));
@@ -375,7 +388,10 @@ mod tests {
                 (models_path(&home), settings_path(&home))
             };
             fs::write(&bad_path, bad).unwrap();
-            assert!(write_config(&home, &models(), &Target::default()).is_err());
+            let err = write_config(&home, &models(), &Target::default()).unwrap_err();
+            if which == "settings" {
+                assert!(err.contains("Remove any comments or trailing commas"), "{err}");
+            }
             assert_eq!(fs::read_to_string(&bad_path).unwrap(), bad);
             assert!(!other.exists(), "{which}: the other file is not written either");
             assert!(remove_config(&home).is_err());
@@ -410,7 +426,7 @@ mod tests {
         let ids: Vec<&str> = g["models"].as_array().unwrap().iter().map(|m| m["id"].as_str().unwrap()).collect();
         assert_eq!(ids[..2], ["gpt-4.1:itar", "claude-haiku-5-5:itar"]);
         assert_eq!(g["models"][0]["url"], "https://ai-proxy.acme.example/v1");
-        assert_eq!(read(&settings_path(&home))["chat.defaultModel"], "claude-haiku-5-5:itar");
+        assert_eq!(read(&settings_path(&home))["chat.defaultModel"], "customendpoint/Consus Gateway/claude-haiku-5-5:itar");
 
         let none = json!([{ "id": "consus/gpt-5.4:il5+itar" }]);
         assert_eq!(write_config(&home, &none, &Target::default()).unwrap_err(), "No ITAR models for VS Code are available to this key.");
@@ -423,7 +439,7 @@ mod tests {
         let home = temp_home("no-claude");
         write_config(&home, &json!([{ "id": "consus/gpt-4.1:itar", "owned_by": "openai" }]), &Target::default()).unwrap();
         let s = read(&settings_path(&home));
-        assert_eq!(s["chat.defaultModel"], "gpt-4.1:itar");
+        assert_eq!(s["chat.defaultModel"], "customendpoint/Consus Gateway/gpt-4.1:itar");
         assert_eq!(s["chat.utilityModel"], "customendpoint/gpt-4.1:itar");
         assert_eq!(s["chat.utilitySmallModel"], "customendpoint/gpt-4.1:itar");
         let _ = fs::remove_dir_all(&home);
@@ -434,10 +450,10 @@ mod tests {
         assert!(STATE_DB.starts_with(b"SQLite format 3\0"));
         assert!(STATE_DB.windows(39).any(|w| w == b"builtinChatExtensionEnablementMigration"));
         let home = temp_home("state");
-        write_state(&home).unwrap();
+        assert!(write_state(&home).unwrap(), "a new instance");
         assert_eq!(fs::read(state_path(&home)).unwrap(), STATE_DB);
         fs::write(state_path(&home), b"VS Code's own").unwrap();
-        write_state(&home).unwrap();
+        assert!(!write_state(&home).unwrap());
         assert_eq!(fs::read(state_path(&home)).unwrap(), b"VS Code's own");
         assert_eq!(fs::read_dir(state_path(&home).parent().unwrap()).unwrap().count(), 1, "no temp file left");
         let _ = fs::remove_dir_all(&home);

@@ -368,37 +368,61 @@
     },
     "vscode": {
       "name": "VS Code",
-      "file": "chatLanguageModels.json and settings.json in the launcher's own VS Code folder (--user-data-dir ~/.vscode-consus-gateway/data). The launcher writes the Consus Gateway model group from the gateway's model list, and sets chat.defaultModel (a model id) and chat.utilityModel and chat.utilitySmallModel (customendpoint/<model id>) from it, next to the keys below. The person pastes the key into VS Code once (Update API Key); VS Code keeps it. macOS and Windows.",
+      "file": "chatLanguageModels.json and settings.json in the launcher's own VS Code folder (--user-data-dir ~/.vscode-consus-gateway/data). The launcher writes the Consus Gateway model group from the gateway's model list, and sets chat.defaultModel (customendpoint/Consus Gateway/<model id>) and chat.utilityModel and chat.utilitySmallModel (customendpoint/<model id>) from it, next to the keys below. The person pastes the key into VS Code once (Update API Key); VS Code keeps it. The lock is VS Code's managed policies: every key below that policy_names maps, under its policy name, plus lock_only.required. It applies to every VS Code on the machine, and under it the launcher still writes its files, because policies cannot carry the model list. macOS and Windows.",
       "settings": {
         "telemetry.telemetryLevel": "off",
+        "telemetry.feedback.enabled": false,
         "update.mode": "none",
         "extensions.autoUpdate": false,
         "extensions.autoCheckUpdates": false,
         "workbench.startupEditor": "none",
+        "workbench.welcomePage.experimentalOnboarding": false,
         "window.openWithoutArgumentsInNewWindow": "off",
         "chat.byokUtilityModelDefault": "mainAgent",
         "chat.titleBar.signIn.enabled": false,
         "chat.welcomePage.signIn.enabled": false,
-        "chat.defaultToCopilotHarness": false,
-        "chat.editor.preferCopilotHarness": false
+        "chat.sessionSync.enabled": false,
+        "chat.agent.sandbox.allowUnsandboxedCommands": false
       },
       "by_web_access": {
         "off": {
           "chat.agent.networkFilter": true,
-          "chat.agent.sandbox.network.allowedDomains": []
+          "chat.agent.sandbox.network.allowedDomains": [],
+          "chat.agent.sandbox.enabled": "on",
+          "chat.agent.sandbox.network.allowNetwork": false
         },
         "on": {
-          "chat.agent.networkFilter": false
+          "chat.agent.networkFilter": false,
+          "chat.agent.sandbox.enabled": "off"
         }
       },
-      "lock": null,
+      "policy_names": {
+        "telemetry.telemetryLevel": "TelemetryLevel",
+        "chat.agent.networkFilter": "ChatAgentNetworkFilter",
+        "chat.agent.sandbox.network.allowedDomains": "ChatAgentAllowedNetworkDomains",
+        "chat.agent.sandbox.enabled": "ChatAgentSandboxEnabled",
+        "chat.agent.sandbox.network.allowNetwork": "ChatAgentSandboxAllowNetwork"
+      },
+      "lock_only": {
+        "required": {
+          "ChatAgentSandboxAllowUnsandboxedCommands": false,
+          "CopilotSessionSync": false,
+          "EnableFeedback": false
+        }
+      },
+      "lock": {
+        "kind": "mdm-profile",
+        "domain": "com.microsoft.VSCode",
+        "windows_key": "HKLM\\SOFTWARE\\Policies\\Microsoft\\VSCode",
+        "note": "Native value types on macOS, as in VS Code's own sample profile (Contents/Resources/app/policies/com.microsoft.VSCode.mobileconfig): ChatAgentAllowedNetworkDomains is a string holding a JSON array, ChatAgentSandboxEnabled the string on or off, the rest booleans or strings as their settings. Machine-wide: it applies to every VS Code on the machine, including the person's own. UpdateMode, ExtensionsAutoUpdate and AllowedExtensions are left out on purpose, so the person's own VS Code still updates."
+      },
       "readme": {
-        "telemetry": "Off: telemetry, VS Code and extension updates",
+        "telemetry": "Off: telemetry, feedback, VS Code and extension updates",
         "web_search": "No such tool",
         "web_fetch": "None / any host",
-        "shell": "Not restricted: VS Code's terminal has no sandbox",
+        "shell": "None / any host (VS Code's agent sandbox)",
         "leaves_machine": "Update and extension marketplace checks to Microsoft",
-        "lock": "No lock yet"
+        "lock": "VS Code's managed policies from the portal; machine-wide"
       }
     }
   },
