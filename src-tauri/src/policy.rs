@@ -92,6 +92,10 @@ pub struct Tool {
     pub env_slot_keys: BTreeMap<String, String>,
     #[serde(default)]
     pub by_web_access: BTreeMap<String, Map<String, Value>>,
+    /// VS Code: a setting name to the managed-policy name that locks it.
+    /// The portal's lock renderer reads it; the launcher's writer does not.
+    #[serde(default)]
+    pub policy_names: BTreeMap<String, String>,
     #[serde(default)]
     pub lock_only: LockOnly,
     pub lock: Option<Lock>,
@@ -245,6 +249,24 @@ impl Policy {
     /// Factory's keys that follow the org's web-access setting (its sandbox).
     pub fn factory_variant(&self, web_access: bool) -> Map<String, Value> {
         self.web("factory", web_access).clone()
+    }
+
+    /// VS Code's fixed settings.json keys, literal setting names.
+    pub fn vscode_static(&self) -> Map<String, Value> {
+        self.tool("vscode").settings.clone()
+    }
+
+    /// VS Code's keys that follow the org's web-access setting.
+    pub fn vscode_variant(&self, web_access: bool) -> Map<String, Value> {
+        self.web("vscode", web_access).clone()
+    }
+
+    /// Where VS Code's managed policies live: the macOS preferences domain
+    /// and the Windows registry key. Their presence makes the tile read as
+    /// managed; the launcher still writes its own files under them.
+    pub fn vscode_lock(&self) -> (&str, &str) {
+        let l = self.tool("vscode").lock.as_ref().expect("vscode has a lock");
+        (l.domain.as_deref().expect("vscode's lock has a domain"), l.windows_key.as_deref().expect("vscode's lock has a windows_key"))
     }
 
     /// The keys droid enforces only from org settings, with the endpoint
@@ -407,7 +429,7 @@ mod tests {
         assert_eq!(p.schema, 1);
         assert_eq!(p.launcher, env!("CARGO_PKG_VERSION"), "bump policy.launcher with the version");
         let ids: Vec<&str> = p.tools.keys().map(String::as_str).collect();
-        assert_eq!(ids, ["chatgpt-desktop", "claude-code", "claude-desktop", "codex-cli", "factory", "pi"]);
+        assert_eq!(ids, ["chatgpt-desktop", "claude-code", "claude-desktop", "codex-cli", "factory", "pi", "vscode"]);
         for (id, t) in &p.tools {
             assert!(!t.name.is_empty(), "{id} has a name");
             if let Some(base) = &t.extends {
@@ -518,7 +540,7 @@ mod tests {
         let mut out = String::from(
             "| | Inference | Vendor telemetry and updates | Web search | Web fetch, off / on | Agent shell network, off / on | What still leaves the machine | Lock it for the user |\n|---|---|---|---|---|---|---|---|\n",
         );
-        for id in ["claude-desktop", "claude-code", "chatgpt-desktop", "codex-cli", "pi", "factory"] {
+        for id in ["claude-desktop", "claude-code", "chatgpt-desktop", "codex-cli", "pi", "factory", "vscode"] {
             let t = p.tool(id);
             let r = &t.readme;
             out.push_str(&format!(
@@ -693,5 +715,38 @@ mod tests {
         assert!(!p.codex_network_access(false) && p.codex_network_access(true));
         assert_eq!(p.pi_env(), [("PI_SKIP_VERSION_CHECK".to_string(), "1".to_string()), ("PI_TELEMETRY".to_string(), "0".to_string())], "sorted by name");
         assert_eq!(leaf_paths(&serde_json::json!({ "a": { "b": 1, "c": {} }, "d": [] })), ["a.b", "a.c", "d"]);
+    }
+
+    #[test]
+    fn vscodes_keys_are_literal_setting_names() {
+        let p = policy();
+        let t = p.tool("vscode");
+        assert!(t.slot_keys.is_empty(), "no slots in v1.7.0: the model settings are computed in code");
+        assert_eq!(p.vscode_lock(), ("com.microsoft.VSCode", "HKLM\\SOFTWARE\\Policies\\Microsoft\\VSCode"));
+        assert_eq!(t.lock.as_ref().unwrap().kind, "mdm-profile");
+        // Every mapped setting is one the launcher writes, under a policy
+        // name (PascalCase, no dots); lock_only is already in policy names.
+        let written: Vec<String> = p.vscode_static().into_iter().chain(p.vscode_variant(false)).chain(p.vscode_variant(true)).map(|(k, _)| k).collect();
+        let pascal = |n: &str| n.chars().next().is_some_and(|c| c.is_ascii_uppercase()) && n.chars().all(|c| c.is_ascii_alphanumeric());
+        for (setting, name) in &t.policy_names {
+            assert!(written.contains(setting), "policy_names maps {setting}, which the launcher never writes");
+            assert!(pascal(name), "{setting}: {name} is a policy name");
+        }
+        assert!(t.lock_only.required.keys().all(|k| pascal(k)));
+        for left_out in ["UpdateMode", "ExtensionsAutoUpdate", "AllowedExtensions"] {
+            assert!(!t.policy_names.values().any(|n| n == left_out) && !t.lock_only.required.contains_key(left_out), "{left_out} would reach the person's own VS Code");
+        }
+        assert!(policy().tools.iter().filter(|(id, _)| *id != "vscode").all(|(_, t)| t.policy_names.is_empty()));
+        let all = p.vscode_static().into_iter().chain(p.vscode_variant(false)).chain(p.vscode_variant(true));
+        for (k, v) in all {
+            assert!(k.contains('.'), "{k}: a VS Code setting name");
+            assert!(!v.is_object(), "{k}: flat, never nested");
+        }
+        assert_eq!(p.vscode_static()["telemetry.telemetryLevel"], "off");
+        assert_eq!(p.vscode_variant(false)["chat.agent.networkFilter"], true);
+        assert_eq!(p.vscode_variant(true)["chat.agent.networkFilter"], false);
+        assert_eq!(p.vscode_variant(false)["chat.agent.sandbox.enabled"], "on");
+        assert_eq!(p.vscode_variant(false)["chat.agent.sandbox.network.allowNetwork"], false);
+        assert_eq!(p.vscode_variant(true)["chat.agent.sandbox.enabled"], "off");
     }
 }

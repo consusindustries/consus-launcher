@@ -5,8 +5,8 @@ import { listen } from "@tauri-apps/api/event";
 
 const PORTAL_URL = "https://portal.consus.io";
 // Tools the launcher detects, configures, and launches.
-type Tool = "desktop" | "chatgpt" | "code" | "codex" | "pi" | "factory";
-const TOOLS: Tool[] = ["desktop", "chatgpt", "code", "codex", "pi", "factory"];
+type Tool = "desktop" | "chatgpt" | "code" | "codex" | "pi" | "factory" | "vscode";
+const TOOLS: Tool[] = ["desktop", "chatgpt", "code", "codex", "pi", "factory", "vscode"];
 const DOWNLOAD: Record<Tool, string> = {
   desktop: "https://claude.ai/download",
   chatgpt: "https://openai.com/chatgpt/download/",
@@ -14,6 +14,7 @@ const DOWNLOAD: Record<Tool, string> = {
   codex: "https://developers.openai.com/codex",
   pi: "https://pi.dev",
   factory: "https://factory.ai",
+  vscode: "https://code.visualstudio.com/download",
 };
 const NOT_INSTALLED: Record<Tool, string> = {
   desktop: "Not installed · get it from claude.ai/download",
@@ -22,6 +23,7 @@ const NOT_INSTALLED: Record<Tool, string> = {
   codex: "Not installed · get it from developers.openai.com/codex",
   pi: "Not installed · get it from pi.dev",
   factory: "Not installed · get it from factory.ai",
+  vscode: "Not installed · get it from code.visualstudio.com",
 };
 const isTool = (k: string): k is Tool => (TOOLS as string[]).includes(k);
 // Tools the launcher has running right now; more than one can be up.
@@ -163,7 +165,7 @@ function renderSettings(s: SettingsView): void {
   const v = s.values;
   const rows: [Field, string, string][] = v
     ? [
-        ["tools", "Tools", v.tools ? v.tools.map(toolName).join(", ") || "None" : "All but Factory"],
+        ["tools", "Tools", v.tools ? v.tools.map(toolName).join(", ") || "None" : "All but Factory and VS Code"],
         ["level", "Compliance", v.level],
         ["web_access", "Web access", v.web_access ? "On" : "Off"],
         ["connectors", "Connectors", v.connectors.join(", ") || "None"],
@@ -326,6 +328,7 @@ async function resetAll(): Promise<void> {
   $("signinErr").textContent = r.message + removal;
   cur = null;
   $("empty").style.display = "";
+  $("vscodeSteps").hidden = true;
   document.querySelectorAll<HTMLElement>(".tool").forEach((x) => {
     x.classList.remove("on");
     x.querySelector(".go")!.textContent = "OPEN";
@@ -637,12 +640,38 @@ async function launchTool(b: HTMLButtonElement, key: Tool): Promise<void> {
     await invoke("launch_tool", { tool: key, rect: await glassRect(), models: currentModels ?? [] });
     running.add(key);
     activateTile(b, key);
+    // The steps belong to VS Code; another tool's window takes the glass.
+    $("vscodeSteps").hidden = key !== "vscode";
+    if (key === "vscode") showVsCodeSteps();
   } catch (err) {
     go.textContent = "OPEN";
     sb.textContent = String(err);
   } finally {
     b.disabled = false;
   }
+}
+
+// VS Code cannot take the key from the launcher, so every time it opens the
+// steps to paste it are shown, with the key one click away. In the side
+// panel, under the tiles: a window in the glass would cover them there. Copied from
+// Rust, never through this page; cleared from the clipboard after two
+// minutes.
+function showVsCodeSteps(): void {
+  $("vscodeCopied").textContent = "";
+  $("vscodeSteps").hidden = false;
+}
+
+function wireVsCodeSteps(): void {
+  $("vscodeCopy").addEventListener("click", () => {
+    const note = $("vscodeCopied");
+    invoke("vscode_copy_key").then(
+      () => (note.textContent = "Copied. It is cleared from the clipboard in two minutes."),
+      (err) => (note.textContent = String(err)),
+    );
+  });
+  $("vscodeDone").addEventListener("click", () => {
+    $("vscodeSteps").hidden = true;
+  });
 }
 
 function wireTools(): void {
@@ -735,10 +764,12 @@ function init(): void {
   wireConnect();
   wireKeysTab();
   wireTools();
+  wireVsCodeSteps();
   wireTabs();
   void listen<string>("tool-exited", (e) => {
     if (!isTool(e.payload)) return;
     running.delete(e.payload);
+    if (e.payload === "vscode") $("vscodeSteps").hidden = true;
     const b = toolTile(e.payload);
     b.classList.remove("on");
     b.querySelector(".go")!.textContent = "OPEN";

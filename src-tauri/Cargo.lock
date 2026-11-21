@@ -530,6 +530,8 @@ dependencies = [
  "base64 0.23.1",
  "getrandom 0.4.3",
  "keyring",
+ "objc2-app-kit",
+ "objc2-foundation",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
@@ -538,6 +540,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-opener",
  "toml_edit 0.25.15+spec-1.1.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

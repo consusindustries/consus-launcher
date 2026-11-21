@@ -18,6 +18,7 @@ use crate::models::Target;
 
 mod connectors;
 mod terminal;
+pub(crate) mod vscode;
 #[cfg(windows)]
 mod win;
 use connectors::{launch_claude_connectors, remove_claude_connectors, sign_out_connectors};
@@ -103,9 +104,10 @@ pub enum Tool {
     Codex,
     Pi,
     Factory,
+    VsCode,
 }
 
-const TOOLS: [Tool; 6] = [Tool::Desktop, Tool::ChatGpt, Tool::Code, Tool::Codex, Tool::Pi, Tool::Factory];
+const TOOLS: [Tool; 7] = [Tool::Desktop, Tool::ChatGpt, Tool::Code, Tool::Codex, Tool::Pi, Tool::Factory, Tool::VsCode];
 
 fn key(t: Tool) -> &'static str {
     match t {
@@ -115,6 +117,7 @@ fn key(t: Tool) -> &'static str {
         Tool::Codex => "codex",
         Tool::Pi => "pi",
         Tool::Factory => "factory",
+        Tool::VsCode => "vscode",
     }
 }
 
@@ -126,6 +129,7 @@ fn name(t: Tool) -> &'static str {
         Tool::Codex => "Codex",
         Tool::Pi => "Pi",
         Tool::Factory => "Factory",
+        Tool::VsCode => "VS Code",
     }
 }
 
@@ -139,7 +143,10 @@ fn offered(t: Tool) -> bool {
     !(cfg!(windows) && t == Tool::Factory)
 }
 
-/// A GUI app in a bundle. A tool without one runs in Terminal.
+/// A GUI app in a bundle that the launcher may quit and place by name. A
+/// tool without one runs in Terminal, or is VS Code (tools/vscode.rs),
+/// which is never found or quit by name: the user's own VS Code is the
+/// same app.
 #[derive(Clone, Copy)]
 struct AppSpec {
     app_name: &'static str,
@@ -162,7 +169,7 @@ fn app_spec(t: Tool) -> Option<AppSpec> {
             bundle: "com.openai.codex",
             process: "ChatGPT",
         }),
-        Tool::Code | Tool::Codex | Tool::Pi | Tool::Factory => None,
+        Tool::Code | Tool::Codex | Tool::Pi | Tool::Factory | Tool::VsCode => None,
     }
 }
 
@@ -188,11 +195,16 @@ pub struct Rect {
 
 /// The app bundle, system-wide or per-user, whichever exists.
 fn app_path(app: &AppHandle, s: &AppSpec) -> Option<PathBuf> {
-    let system = Path::new("/Applications").join(s.app_name);
+    bundle_path(app, s.app_name)
+}
+
+/// A bundle by its name, in /Applications or ~/Applications.
+fn bundle_path(app: &AppHandle, app_name: &str) -> Option<PathBuf> {
+    let system = Path::new("/Applications").join(app_name);
     if system.exists() {
         return Some(system);
     }
-    let user = app.path().home_dir().ok()?.join("Applications").join(s.app_name);
+    let user = app.path().home_dir().ok()?.join("Applications").join(app_name);
     user.exists().then_some(user)
 }
 
@@ -433,19 +445,48 @@ fn sets_connection(doc: &serde_json::Map<String, Value>) -> bool {
 /// (a configuration profile), which the app obeys over any local config.
 #[cfg(target_os = "macos")]
 fn claude_desktop_policy() -> bool {
-    let file = "com.anthropic.claudefordesktop.plist";
+    managed_pref("com.anthropic.claudefordesktop", "inferenceProvider")
+}
+
+/// Whether a configuration profile sets `key` in a preferences domain, for
+/// the machine or for this user.
+#[cfg(target_os = "macos")]
+fn managed_pref(domain: &str, key: &str) -> bool {
+    let file = format!("{domain}.plist");
     let base = Path::new("/Library/Managed Preferences");
-    let mut plists = vec![base.join(file)];
+    let mut plists = vec![base.join(&file)];
     if let Ok(user) = std::env::var("USER") {
-        plists.push(base.join(user).join(file));
+        plists.push(base.join(user).join(&file));
     }
     plists.iter().filter(|p| p.exists()).any(|p| {
         Command::new("plutil")
-            .args(["-extract", "inferenceProvider", "raw", "-o", "-"])
+            .args(["-extract", key, "raw", "-o", "-"])
             .arg(p)
             .output()
             .is_ok_and(|o| o.status.success())
     })
+}
+
+/// The policy every VS Code lock from the portal sets, whichever web-access
+/// variant it was rendered with.
+const VSCODE_LOCK_KEY: &str = "ChatAgentNetworkFilter";
+
+/// Whether the organization's VS Code lock (managed policies) is on this
+/// machine. It changes only the tile's label: the launcher still writes its
+/// own instance's files, which policies cannot carry (docs/vscode.md).
+#[cfg(target_os = "macos")]
+fn vscode_policy() -> bool {
+    managed_pref(crate::policy::policy().vscode_lock().0, VSCODE_LOCK_KEY)
+}
+
+#[cfg(windows)]
+fn vscode_policy() -> bool {
+    win::has_policy(crate::policy::policy().vscode_lock().1, VSCODE_LOCK_KEY)
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
+fn vscode_policy() -> bool {
+    false
 }
 
 #[cfg(windows)]
@@ -473,6 +514,7 @@ fn org_policy(t: Tool) -> bool {
         Tool::Code => claude_code_policy(),
         Tool::Desktop => claude_desktop_policy(),
         Tool::Factory => factory_policy(),
+        Tool::VsCode => vscode_policy(),
         Tool::ChatGpt | Tool::Codex | Tool::Pi => false,
     }
 }
@@ -504,6 +546,7 @@ fn no_models(t: Tool, models: &Value, target: &Target) -> Option<String> {
         Tool::ChatGpt | Tool::Codex => chatgpt::no_models(models, target),
         Tool::Pi => pi::no_models(models, target),
         Tool::Factory => factory::no_models(models, target),
+        Tool::VsCode => crate::vscode::no_models(models, target),
     }
 }
 
@@ -518,6 +561,11 @@ pub async fn detect_tools(app: AppHandle, models: Option<Value>) -> HashMap<Stri
             let allowed = offered(t) && settings.as_ref().is_some_and(|s| s.allows(key(t)));
             let mut status = if !allowed {
                 ToolStatus { allowed, managed: false, installed: false, icon: None, no_models: None }
+            } else if t == Tool::VsCode {
+                // Too old a VS Code greys the tile with the reason, as a
+                // missing model does.
+                let (installed, icon, too_old) = vscode::status(&app);
+                ToolStatus { allowed, managed: installed && org_policy(t), installed, icon, no_models: too_old }
             } else if !cfg!(target_os = "macos") {
                 let (installed, icon) = other_status(t);
                 ToolStatus { allowed, managed: installed && org_policy(t), installed, icon, no_models: None }
@@ -544,8 +592,10 @@ pub async fn detect_tools(app: AppHandle, models: Option<Value>) -> HashMap<Stri
                 ToolStatus { allowed, managed: installed && org_policy(t), installed, icon, no_models: None }
             };
             // Only an installed tool the launcher sets up uses the key's
-            // models; one the org's own policy sets up does not.
-            if let Some(s) = settings.as_ref().filter(|_| status.installed && !status.managed) {
+            // models; one the org's own policy sets up does not, except VS
+            // Code, whose models the launcher writes under the lock too.
+            let sets_up = !status.managed || t == Tool::VsCode;
+            if let Some(s) = settings.as_ref().filter(|_| status.installed && sets_up && status.no_models.is_none()) {
                 status.no_models = no_models(t, &models, &s.target);
             }
             (key(t).to_string(), status)
@@ -724,8 +774,16 @@ fn ours(app: &AppHandle, t: Tool) -> Vec<Running> {
 /// dropped, the backdrop lifts if nothing else is running, and the UI hears.
 /// `wait` returns the pid the entry ended with (see follow_handoff).
 fn track(app: &AppHandle, entry: Running, wait: impl FnOnce() -> u32 + Send + 'static) {
+    track_with(app, entry, true, wait)
+}
+
+/// `track`, for a window the launcher does not place in its glass (VS
+/// Code): no backdrop, so the launcher can still come to the front over it.
+fn track_with(app: &AppHandle, entry: Running, backdrop: bool, wait: impl FnOnce() -> u32 + Send + 'static) {
     app.state::<Children>().0.lock().unwrap().push(entry.clone());
-    set_backdrop(app, true);
+    if backdrop {
+        set_backdrop(app, true);
+    }
     let handle = app.clone();
     thread::spawn(move || {
         let last = wait();
@@ -733,7 +791,8 @@ fn track(app: &AppHandle, entry: Running, wait: impl FnOnce() -> u32 + Send + 's
             let children = handle.state::<Children>();
             let mut c = children.0.lock().unwrap();
             c.retain(|r| !(r.pid == last && r.terminal == entry.terminal));
-            c.len()
+            // VS Code never sets the backdrop, so it does not hold it.
+            c.iter().filter(|r| r.tool != Tool::VsCode).count()
         };
         if remaining == 0 {
             set_backdrop(&handle, false);
@@ -797,7 +856,7 @@ fn launch_app(app: AppHandle, t: Tool, s: AppSpec, rect: Rect, models: &Value, t
             chatgpt::write_config(&home, models, target, catalog.as_deref(), &helper)?;
             env = Some(("CONSUS_API_KEY", k));
         }
-        Tool::Code | Tool::Codex | Tool::Pi | Tool::Factory => return Err(format!("{} is not a desktop app.", name(t))),
+        Tool::Code | Tool::Codex | Tool::Pi | Tool::Factory | Tool::VsCode => return Err(format!("{} is not a desktop app.", name(t))),
     }
 
     // The app's own output is not the launcher's to read or keep.
@@ -889,7 +948,7 @@ fn terminal_process(t: Tool) -> Option<&'static str> {
         Tool::Codex => Some("codex"),
         Tool::Pi => Some("pi"),
         Tool::Factory => Some("droid"),
-        Tool::Desktop | Tool::ChatGpt => None,
+        Tool::Desktop | Tool::ChatGpt | Tool::VsCode => None,
     }
 }
 
@@ -964,6 +1023,10 @@ pub async fn launch_tool(app: AppHandle, tool: String, rect: Rect, models: Value
     if !settings.allows(key(t)) {
         return Err(format!("Your organization has not enabled {} in the launcher.", name(t)));
     }
+    if t == Tool::VsCode {
+        let _ = rect;
+        return vscode::launch(app, &models, &settings.target);
+    }
     if !cfg!(target_os = "macos") {
         let _ = rect;
         return other_launch(app, t, &models, &settings.target);
@@ -989,6 +1052,7 @@ fn remove_config(home: &Path, catalog: &Path, t: Tool) -> Result<(), String> {
         Tool::Codex => codex::remove_config(home),
         Tool::Pi => pi::remove_config(home),
         Tool::Factory => factory::remove_config(home),
+        Tool::VsCode => crate::vscode::remove_config(home),
     }
 }
 
@@ -1019,7 +1083,15 @@ pub async fn remove_tool_configs(app: AppHandle) -> Result<(), String> {
             // launcher's settings is closed first, as a launch does. One
             // that will not close still loses the settings now, and the
             // reason is reported so the person can close it.
-            let closed = if holds_launcher_config(&home, t) { quit_app(t) } else { Ok(()) };
+            // VS Code: only the instance this launcher started, by its pid.
+            let closed = if t == Tool::VsCode {
+                vscode::quit_ours(&app);
+                Ok(())
+            } else if holds_launcher_config(&home, t) {
+                quit_app(t)
+            } else {
+                Ok(())
+            };
             remove_config(&home, &catalog, t).and(closed)
         })
         .chain([sign_out_connectors(&app, &home)])
@@ -1032,7 +1104,7 @@ fn holds_launcher_config(home: &Path, t: Tool) -> bool {
     match t {
         Tool::Desktop => config::has_claude_desktop(home),
         Tool::ChatGpt => chatgpt::has_config(home),
-        Tool::Code | Tool::Codex | Tool::Pi | Tool::Factory => false,
+        Tool::Code | Tool::Codex | Tool::Pi | Tool::Factory | Tool::VsCode => false,
     }
 }
 
@@ -1108,10 +1180,12 @@ fn other_quit(_: Tool) -> Result<(), String> {
 /// they ignore that. Apps the user opened themselves are left alone, and
 /// so is every claude session the launcher did not start.
 pub fn terminate_children(app: &AppHandle) {
+    // VS Code by its own pid-only path, never by bundle or name.
+    vscode::quit_ours(app);
     let mine: Vec<Running> = {
         let children = app.state::<Children>();
         let guard = children.0.lock().unwrap();
-        guard.iter().cloned().collect()
+        guard.iter().filter(|r| r.tool != Tool::VsCode).cloned().collect()
     };
     if !cfg!(target_os = "macos") {
         other_terminate(&mine);
@@ -1243,7 +1317,7 @@ mod tests {
             assert!(no_models(tool, &none, &t).is_some_and(|m| m.contains("ITAR")), "{}", key(tool));
         }
         assert_eq!(no_models(Tool::Pi, &none, &t).as_deref(), Some("No ITAR models for Pi are available to this key."));
-        assert!(turned_off(&allowing(None)) == [Tool::Factory], "greyed tools keep their settings; Factory is opt-in");
+        assert!(turned_off(&allowing(None)) == [Tool::Factory, Tool::VsCode], "greyed tools keep their settings; Factory and VS Code are opt-in");
         let claude = json!([{ "id": "consus/claude-opus-5:itar" }]);
         assert_eq!(no_models(Tool::Desktop, &claude, &t), None);
         assert!(no_models(Tool::ChatGpt, &claude, &t).is_some(), "a Claude model is no use to ChatGPT");
@@ -1258,10 +1332,10 @@ mod tests {
 
     #[test]
     fn only_the_tools_left_out_are_turned_off() {
-        assert!(turned_off(&allowing(None)) == [Tool::Factory], "with no list, every tool but the opt-in one");
+        assert!(turned_off(&allowing(None)) == [Tool::Factory, Tool::VsCode], "with no list, every tool but the opt-in ones");
         assert!(turned_off(&allowing(Some(TOOLS.map(key).to_vec()))).is_empty());
         let off: Vec<&str> = turned_off(&allowing(Some(vec!["code", "codex"]))).into_iter().map(key).collect();
-        assert_eq!(off, ["desktop", "chatgpt", "pi", "factory"]);
+        assert_eq!(off, ["desktop", "chatgpt", "pi", "factory", "vscode"]);
     }
 
     #[test]
@@ -1285,6 +1359,7 @@ mod tests {
         codex::write_config(&home, &models, None, &t).unwrap();
         pi::write_config(&home, &helper, &models, &t).unwrap();
         factory::write_config(&home, &helper, &models, &t).unwrap();
+        crate::vscode::write_config(&home, &models, &t).unwrap();
         let entries = || fs::read_dir(&desktop_entry).map_or(0, |d| d.filter(|e| e.as_ref().unwrap().file_name() != "_meta.json").count());
         let pi_models = || fs::read_to_string(home.join(".pi-consus-gateway/models.json")).unwrap();
         if desktop {
@@ -1304,6 +1379,8 @@ mod tests {
         let droid = fs::read_to_string(home.join(".factory-consus-gateway/.factory/settings.json")).unwrap();
         assert!(!droid.contains("custom:consus-"), "Factory's models are gone: {droid}");
         assert!(!home.join(".factory-consus-gateway/.factory/consus-org-settings.json").exists());
+        let vsc = fs::read_to_string(home.join(".vscode-consus-gateway/data/User/chatLanguageModels.json")).unwrap();
+        assert!(!vsc.contains("Consus Gateway"), "VS Code's group is gone: {vsc}");
         assert!(fs::read_to_string(home.join(".claude-consus-gateway/settings.json")).unwrap().contains("apiKeyHelper"));
         assert!(fs::read_to_string(home.join(".codex-consus-gateway/config.toml")).unwrap().contains("consus"));
         let _ = fs::remove_dir_all(&home);
@@ -1324,6 +1401,23 @@ mod tests {
         // Again, as at every start: the links are simply replaced.
         write_helpers_in(&dir).unwrap();
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn vs_code_is_never_found_quit_or_placed_by_name() {
+        assert!(app_spec(Tool::VsCode).is_none(), "an AppSpec would let launch_app and terminate_children quit the user's VS Code");
+        assert!(terminal_process(Tool::VsCode).is_none());
+        let src = include_str!("tools/vscode.rs");
+        let code = src.split("#[cfg(test)]").next().unwrap();
+        for banned in ["running_pids", "pids_in", "ask_to_quit", "quit_and_wait", "osascript", "place_window", "com.microsoft.VSCode", "pgrep", "\"Code\""] {
+            assert!(!code.contains(banned), "tools/vscode.rs must not use {banned}");
+        }
+        // Under the lock the launcher still writes VS Code's files: the
+        // launch never asks whether the lock is there.
+        for lock_check in ["org_policy", "vscode_policy", "managed_pref"] {
+            assert!(!code.contains(lock_check), "VS Code's launch writes its files under a lock too; it must not consult {lock_check}");
+        }
+        assert!(include_str!("../../policy/launcher-policy.json").contains(VSCODE_LOCK_KEY), "the lock the portal renders sets the key the launcher looks for");
     }
 
     #[test]
