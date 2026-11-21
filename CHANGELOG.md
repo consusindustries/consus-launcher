@@ -2,6 +2,14 @@
 
 What changed in each release. Each release's GitHub page shows its section.
 
+## v1.7.0 (2026-11-21)
+
+- VS Code, the seventh tool, on macOS and Windows, off unless your organization turns it on (`vscode` in `Tools`, or in the Consus portal). The launcher opens VS Code as a separate instance with its own folder, `~/.vscode-consus-gateway`, set up with the Consus models your key can use and your organization's default model; your own VS Code settings, extensions and sign-ins are never touched. Nothing is downloaded: VS Code's chat ships inside VS Code (1.147 or later).
+- VS Code cannot take a key from another program, so each time it opens the launcher shows the steps to give it the key once, and a Copy key button. The key goes on the clipboard only when you click it, is hidden from clipboard history, and is cleared after two minutes. This is the one tool where the key crosses the clipboard.
+- Web access off holds in VS Code too: its fetch tool is refused, and the commands its agent runs go through VS Code's agent sandbox with no network.
+- For IT: the policy document has VS Code's managed policies (telemetry, the agent's network filter and sandbox), which the Consus portal renders into a lock. The lock is machine-wide, so it also applies to people's own VS Code; it leaves updates and extensions alone. Under it the launcher still writes its own instance's files, because policies cannot carry the model list.
+- A launcher before 1.7.0 skips `vscode`, so a tool list naming only `vscode` shows no tool there.
+
 ## v1.6.0 (2026-11-18)
 
 - Model order: your organization's admin can set, in the Consus portal, the order every tool lists models in and the model it starts on. It never hides a model or adds one; a model the admin did not place comes after the ordered ones, and a tool none of whose models are in the order stays as it was. In Claude Code it also decides what `opus` and `sonnet` mean; in Pi, a start model the admin names replaces your own pick. The Keys tab shows the order.
