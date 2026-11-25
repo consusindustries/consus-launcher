@@ -2,6 +2,14 @@
 
 What changed in each release. Each release's GitHub page shows its section.
 
+## v1.8.0 (unreleased)
+
+- Your organization's own connectors can now be one of Claude Desktop's own servers, such as Microsoft 365, set once by an admin in the Consus portal. The launcher writes it into Claude Desktop at every launch, so it no longer has to be typed in again after each one. Such a connector has no URL: it names the server (`"server": "microsoft365"`) and is written exactly as saved. It is for Claude Desktop only.
+- A connector that goes only to Claude Desktop may have single spaces in its name ("Microsoft 365"). A connector that also goes to Claude Code keeps the old rule: letters, digits, `-` and `_`.
+- The tile's one-time notice and the Keys tab show the server a connector names where it has no URL: "Microsoft 365 (microsoft365)".
+- The checks are otherwise unchanged: no command to run, no headers or secrets, no variable references. The launcher keeps no list of Claude Desktop's servers; which ones can be chosen is decided in the portal.
+- A launcher before 1.8.0 skips a connector of this kind, and one with a space in its name, and writes the rest. Nothing is shown; update the launcher to get it.
+
 ## v1.7.0 (2026-11-21)
 
 - VS Code, the seventh tool, on macOS and Windows, off unless your organization turns it on (`vscode` in `Tools`, or in the Consus portal). The launcher opens VS Code as a separate instance with its own folder, `~/.vscode-consus-gateway`, set up with the Consus models your key can use and your organization's default model; your own VS Code settings, extensions and sign-ins are never touched. Nothing is downloaded: VS Code's chat ships inside VS Code (1.147 or later).

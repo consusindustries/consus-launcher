@@ -215,7 +215,13 @@ bad host character, a path ending in `/v1` accepted and unchanged), so the launc
 URL check is shown to match the gateway's. This repository owns the file: the launcher's
 tests read it, the portal vendors it beside the policy document, and the gateway's tests
 carry a copy. A change to the rule changes the fixture here first, and all three suites
-follow. The launcher's tests check "refused"; the gateway's check the code.
+follow. The launcher's tests check the code too, as the gateway's do
+(`every_shared_connector_case_is_kept_or_refused`).
+
+**Widened in 1.8.0.** A Claude Desktop blob may name one of Claude Desktop's own servers
+with `server` and no url, and an entry with no Claude Code part may have single spaces in
+its name. See `docs/connectors-registry-launcher.md`. Where this file says "remote servers
+only" or gives the name rule, that file is the current one.
 
 The format, the same in all three copies (the gateway wrote it first, 2026-11-16):
 
@@ -341,7 +347,8 @@ When the document carries a custom server whose hash is not in `seen` (new, or c
 the launcher shows one notice the next time its window is in front, on the tile of each
 tool the server is written to (a person who only uses Claude Desktop sees it there): "Your organization
 added the connector issues (mcp.example.com)." or "…changed the connector…". It names
-the server and the host of its URL, nothing else. The hash is recorded when the notice is
+the server and the host of its URL, nothing else (from 1.8.0, the Claude Desktop server
+it names where it has no URL: "Microsoft 365 (microsoft365)"). The hash is recorded when the notice is
 shown, so it appears once per person per change. A server that fails the check gets no
 notice and no entry; the log line says why.
 
@@ -363,8 +370,8 @@ The notice is about what the launcher writes, so it follows the tools without a 
 A tile's notice stays through the launcher's refreshes and is cleared when that tool is
 next opened, as the existing tile notices are.
 
-The Keys tab's connector list names custom servers by their `name` and host, after the
-built-in ones. A failed add is the existing tile notice, naming the server.
+The Keys tab's connector list names custom servers by their `name` and host (from 1.8.0, the
+Claude Desktop server one names where it has no URL), after the built-in ones. A failed add is the existing tile notice, naming the server.
 
 ## Checks before the build
 

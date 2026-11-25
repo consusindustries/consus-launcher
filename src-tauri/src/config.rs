@@ -563,6 +563,29 @@ mod tests {
     }
 
     #[test]
+    fn a_claude_desktop_server_is_written_as_given() {
+        let models = json!([{ "id": "consus/claude-sonnet-5:itar" }]);
+        let (home, lib) = library("desktop-server", r#"{ "appliedId": null, "entries": [] }"#);
+        let blob = json!({ "name": "M365", "server": "microsoft365", "tenantId": "t", "scope": "Mail.Read", "oauth": { "mode": "user" } });
+        let t = Target {
+            connectors: vec![crate::models::slack("1234567.7654321")],
+            custom: vec![custom("Microsoft 365", blob.clone())],
+            ..Target::default()
+        };
+        write_claude_desktop(&home, Path::new("/x/helper"), &models, &t).unwrap();
+        let entry: Value = serde_json::from_str(&fs::read_to_string(lib.join(format!("{ENTRY_ID}.json"))).unwrap()).unwrap();
+        let servers = entry["managedMcpServers"].as_array().cloned().unwrap();
+        assert_eq!(servers[0]["name"], "Slack");
+        let mut given = blob;
+        given["name"] = json!("Microsoft 365");
+        assert_eq!(servers[1], given, "the entry's name, spaces kept; nothing added");
+        for added in ["url", "transport", "command"] {
+            assert!(servers[1].get(added).is_none(), "{added}: Claude Desktop drops a server entry that has one");
+        }
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
     fn a_blob_without_a_name_gets_the_entrys() {
         let c = custom("issues", json!({ "transport": "http", "url": "https://mcp.example.com/mcp" }));
         assert_eq!(c.desktop_entry().unwrap()["name"], "issues");

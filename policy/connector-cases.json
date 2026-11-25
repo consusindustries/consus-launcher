@@ -33,6 +33,7 @@
  "custom_max": 16,
  "connectors_max": 24,
  "url_max": 256,
+ "server_key": "server",
  "cases": [
   {
    "id": "claude_code_blob_only",
@@ -1474,6 +1475,499 @@
     }
    ],
    "outcome": "accepted"
+  },
+  {
+   "id": "server_with_spaced_name",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "Microsoft 365",
+     "claude_desktop": {
+      "name": "Microsoft 365",
+      "server": "microsoft365",
+      "oauth": {
+       "mode": "user"
+      },
+      "asSelection": "default",
+      "tenantId": "00000000-0000-0000-0000-000000000000",
+      "clientId": "11111111-1111-1111-1111-111111111111",
+      "scope": "Mail.Read Calendars.Read Files.Read.All",
+      "azureCloud": "global",
+      "toolPolicy": {
+       "sharepoint_search": "ask"
+      }
+     }
+    }
+   ],
+   "outcome": "accepted"
+  },
+  {
+   "id": "server_with_plain_name",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "m365",
+     "claude_desktop": {
+      "server": "microsoft365"
+     }
+    }
+   ],
+   "outcome": "accepted"
+  },
+  {
+   "id": "spaced_name_desktop_only_remote",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "my server",
+     "claude_desktop": {
+      "transport": "http",
+      "url": "https://mcp.example.com/mcp"
+     }
+    }
+   ],
+   "outcome": "accepted"
+  },
+  {
+   "id": "spaced_name_claude_code_null",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "Microsoft 365",
+     "claude_code": null,
+     "claude_desktop": {
+      "server": "microsoft365"
+     }
+    }
+   ],
+   "outcome": "accepted"
+  },
+  {
+   "id": "spaced_name_64_chars",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+     "claude_desktop": {
+      "server": "microsoft365"
+     }
+    }
+   ],
+   "outcome": "accepted"
+  },
+  {
+   "id": "server_beside_remote_claude_code",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "m365",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp"
+     },
+     "claude_desktop": {
+      "server": "microsoft365"
+     }
+    }
+   ],
+   "outcome": "accepted"
+  },
+  {
+   "id": "server_with_url",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "m365",
+     "claude_desktop": {
+      "server": "microsoft365",
+      "url": "https://mcp.example.com/mcp"
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_server"
+  },
+  {
+   "id": "server_with_transport",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "m365",
+     "claude_desktop": {
+      "server": "microsoft365",
+      "transport": "http"
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_server"
+  },
+  {
+   "id": "server_with_type",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "m365",
+     "claude_desktop": {
+      "server": "microsoft365",
+      "type": "http"
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_server"
+  },
+  {
+   "id": "server_in_claude_code_blob",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "m365",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "server": "microsoft365"
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_server"
+  },
+  {
+   "id": "server_in_claude_code_blob_without_type",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "m365",
+     "claude_code": {
+      "url": "https://mcp.example.com/mcp",
+      "server": "microsoft365"
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_server"
+  },
+  {
+   "id": "server_empty",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "m365",
+     "claude_desktop": {
+      "server": ""
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_server"
+  },
+  {
+   "id": "server_not_a_string",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "m365",
+     "claude_desktop": {
+      "server": 7
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_server"
+  },
+  {
+   "id": "server_null",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "m365",
+     "claude_desktop": {
+      "server": null
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_server"
+  },
+  {
+   "id": "server_65_chars",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "m365",
+     "claude_desktop": {
+      "server": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_server"
+  },
+  {
+   "id": "server_with_space",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "m365",
+     "claude_desktop": {
+      "server": "microsoft 365"
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_server"
+  },
+  {
+   "id": "server_with_dot",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "m365",
+     "claude_desktop": {
+      "server": "microsoft.365"
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_server"
+  },
+  {
+   "id": "server_wins_over_headers",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "m365",
+     "claude_desktop": {
+      "server": "microsoft365",
+      "url": "https://mcp.example.com/mcp",
+      "headers": {
+       "Authorization": "Bearer abc"
+      }
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_server"
+  },
+  {
+   "id": "command_wins_over_server",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "m365",
+     "claude_desktop": {
+      "server": "microsoft365",
+      "command": "npx"
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_command"
+  },
+  {
+   "id": "server_with_headers",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "m365",
+     "claude_desktop": {
+      "server": "microsoft365",
+      "headers": {
+       "Authorization": "Bearer abc"
+      }
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_secret"
+  },
+  {
+   "id": "server_with_nested_client_secret",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "m365",
+     "claude_desktop": {
+      "server": "microsoft365",
+      "oauth": {
+       "clientSecret": "abc"
+      }
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_secret"
+  },
+  {
+   "id": "server_with_variable",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "m365",
+     "claude_desktop": {
+      "server": "microsoft365",
+      "tenantId": "${TENANT}"
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_variable"
+  },
+  {
+   "id": "server_blob_4097_bytes",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "m365",
+     "claude_desktop": {
+      "server": "microsoft365",
+      "scope": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_blob"
+  },
+  {
+   "id": "spaced_name_with_both_blobs",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "my server",
+     "claude_code": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp"
+     },
+     "claude_desktop": {
+      "transport": "http",
+      "url": "https://mcp.example.com/mcp"
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_name"
+  },
+  {
+   "id": "spaced_name_claude_code_not_an_object",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "Microsoft 365",
+     "claude_code": 7,
+     "claude_desktop": {
+      "server": "microsoft365"
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_name"
+  },
+  {
+   "id": "spaced_name_wins_over_url",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "my server",
+     "claude_code": {
+      "type": "http",
+      "url": "ftp://mcp.example.com/mcp"
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_name"
+  },
+  {
+   "id": "name_leading_space",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": " Microsoft 365",
+     "claude_desktop": {
+      "server": "microsoft365"
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_name"
+  },
+  {
+   "id": "name_trailing_space",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "Microsoft 365 ",
+     "claude_desktop": {
+      "server": "microsoft365"
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_name"
+  },
+  {
+   "id": "name_two_spaces",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "Microsoft  365",
+     "claude_desktop": {
+      "server": "microsoft365"
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_name"
+  },
+  {
+   "id": "name_with_tab",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "Microsoft\t365",
+     "claude_desktop": {
+      "server": "microsoft365"
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_name"
+  },
+  {
+   "id": "spaced_name_65_chars",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+     "claude_desktop": {
+      "server": "microsoft365"
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_name"
+  },
+  {
+   "id": "spaced_name_duplicate_any_case",
+   "connectors": [
+    {
+     "kind": "custom",
+     "name": "Microsoft 365",
+     "claude_desktop": {
+      "server": "microsoft365"
+     }
+    },
+    {
+     "kind": "custom",
+     "name": "microsoft 365",
+     "claude_desktop": {
+      "server": "microsoft365"
+     }
+    }
+   ],
+   "outcome": "refused",
+   "reason": "connector_name"
   }
  ],
  "secret_keys_match": "without regard to case, '_' or '-'"

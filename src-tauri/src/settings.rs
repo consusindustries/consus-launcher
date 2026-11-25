@@ -871,7 +871,8 @@ pub struct Values {
     pub tools: Option<Vec<String>>,
     pub web_access: bool,
     /// The connectors turned on, by name ("Slack"), then the org's own by
-    /// name and host ("issues (mcp.example.com)").
+    /// name and host ("issues (mcp.example.com)"), or the Claude Desktop
+    /// server one names ("Microsoft 365 (microsoft365)").
     pub connectors: Vec<String>,
     /// The org's model order, or None for each tool's own.
     pub models: Option<ModelChoice>,
@@ -919,7 +920,7 @@ impl Loaded {
                     .connectors
                     .iter()
                     .map(|c| crate::policy::policy().connector_name(&c.kind).to_string())
-                    .chain(s.target.custom.iter().map(|c| format!("{} ({})", c.name, c.host())))
+                    .chain(s.target.custom.iter().map(|c| format!("{} ({})", c.name, c.shown())))
                     .collect(),
                 models: s.target.models.clone(),
             }),
@@ -998,6 +999,15 @@ mod tests {
                 assert!(refused.iter().any(|r| r.code == case["reason"]), "{id}: {refused:?}");
             }
         }
+    }
+
+    #[test]
+    fn a_claude_desktop_server_is_shown_by_the_server_it_names() {
+        let doc = json!({ "connectors": [
+            { "kind": "custom", "name": "Microsoft 365", "claude_desktop": { "server": "microsoft365", "tenantId": "t" } }
+        ] });
+        let l = loaded(Raw::default(), Raw::default(), Some(doc), DEFAULT_ENDPOINT);
+        assert_eq!(l.view().values.unwrap().connectors, ["Microsoft 365 (microsoft365)"]);
     }
 
     #[test]
