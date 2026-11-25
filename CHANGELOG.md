@@ -2,7 +2,7 @@
 
 What changed in each release. Each release's GitHub page shows its section.
 
-## v1.8.0 (unreleased)
+## v1.8.0 (2026-11-24)
 
 - Your organization's own connectors can now be one of Claude Desktop's own servers, such as Microsoft 365, set once by an admin in the Consus portal. The launcher writes it into Claude Desktop at every launch, so it no longer has to be typed in again after each one. Such a connector has no URL: it names the server (`"server": "microsoft365"`) and is written exactly as saved. It is for Claude Desktop only.
 - A connector that goes only to Claude Desktop may have single spaces in its name ("Microsoft 365"). A connector that also goes to Claude Code keeps the old rule: letters, digits, `-` and `_`.
