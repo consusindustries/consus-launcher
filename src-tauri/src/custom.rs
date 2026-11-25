@@ -1,6 +1,7 @@
-// Custom connectors: remote MCP servers an org wrote itself, carried in its
-// device policy as one JSON blob per client (docs/device-policy-models-and-
-// custom-connectors.md). The launcher writes a blob as given, so it checks
+// Custom connectors: MCP servers an org chose itself, carried in its device
+// policy as one JSON blob per client (docs/device-policy-models-and-custom-
+// connectors.md): a remote server by its url, or for Claude Desktop one of
+// its own servers by name (docs/connectors-registry-launcher.md). The launcher writes a blob as given, so it checks
 // each one again first, with the gateway's rules: the document may come
 // from an org's own proxy or a hand-edited cache, and the machine that would
 // be harmed is the last check. policy/connector-cases.json holds the cases
@@ -69,6 +70,12 @@ pub const COMMAND_KEYS: [&str; 4] = ["command", "args", "env", "headersHelper"];
 pub const SECRET_KEYS: [&str; 2] = ["headers", "clientSecret"];
 /// Claude Code replaces `${VAR}` with the person's environment variable.
 pub const VARIABLE_MARKER: &str = "${";
+/// A Claude Desktop blob with this key names one of Claude Desktop's own
+/// servers (`"server": "microsoft365"`) and has no url. The launcher keeps no
+/// list of them: which are offered is the portal's decision. Not the
+/// "built-in" connectors of this code, which are the ones Consus defines in
+/// the policy document (Slack).
+pub const SERVER_KEY: &str = "server";
 pub const BLOB_MAX_BYTES: usize = 4096;
 pub const BLOB_MAX_DEPTH: usize = 8;
 pub const CUSTOM_MAX: usize = 16;
@@ -124,8 +131,17 @@ impl Check {
         if o.keys().any(|k| k != "kind" && k != "name" && !Client::ALL.iter().any(|c| c.key() == k)) {
             return Err(refuse("connector_field", "a custom connector with a field this launcher does not know"));
         }
-        let name = o.get("name").and_then(Value::as_str).filter(|n| valid_name(n));
+        // A name that can reach Claude Code is its key for the server and
+        // goes on a command line: the strict rule. With no Claude Code part
+        // the name is only what Claude Desktop shows, and may have spaces.
+        let for_code = o.get(Client::Code.key()).is_some_and(|v| !v.is_null());
+        let name = o.get("name").and_then(Value::as_str).filter(|n| valid_desktop_name(n));
         let name = name.ok_or_else(|| refuse("connector_name", "a custom connector without a valid name"))?;
+        if for_code && !valid_name(name) {
+            // Safe to print: it passed the wider rule. Without it the line
+            // could not say which connector stopped being written.
+            return Err(refuse("connector_name", format!("custom connector {name}: a name with a space cannot go to Claude Code")));
+        }
         let folded = name.to_lowercase();
         if self.built_in.contains(&folded) {
             return Err(refuse("connector_name", format!("custom connector {name}: the name is a built-in connector's")));
@@ -152,6 +168,15 @@ fn valid_name(name: &str) -> bool {
     (1..=NAME_MAX).contains(&name.len()) && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
 }
 
+/// The name rule for an entry with no Claude Code part: words of the strict
+/// rule's characters joined by one space, 64 at most with the spaces, so
+/// "Microsoft 365" keeps the name a person signed in under. No space at
+/// either end, no two in a row, no tab. Never a Claude Code key: Record::load
+/// keeps the strict rule.
+fn valid_desktop_name(name: &str) -> bool {
+    name.len() <= NAME_MAX && name.split(' ').all(valid_name)
+}
+
 /// One client's blob, or the reason code and why not, naming keys only.
 fn check_blob(blob: &Value, client: Client) -> Result<(), (&'static str, String)> {
     let o = blob.as_object().ok_or(("connector_blob", "not a JSON object".to_string()))?;
@@ -166,6 +191,21 @@ fn check_blob(blob: &Value, client: Client) -> Result<(), (&'static str, String)
     if let Some(k) = COMMAND_KEYS.iter().find(|k| o.contains_key(**k)) {
         return Err(("connector_command", format!("{k} would run a program")));
     }
+    // One of Claude Desktop's own servers: no url to check, and Claude
+    // Desktop drops one that also carries a url or a transport.
+    if let Some(server) = o.get(SERVER_KEY) {
+        let why = if client != Client::Desktop {
+            Some(format!("{SERVER_KEY} is for Claude Desktop only"))
+        } else if !server.as_str().is_some_and(valid_name) {
+            Some(format!("{SERVER_KEY} is not a server name"))
+        } else {
+            (["url"].iter().chain(&TRANSPORT_KEYS)).find(|k| o.contains_key(**k)).map(|k| format!("{SERVER_KEY} with {k}"))
+        };
+        if let Some(why) = why {
+            return Err(("connector_server", why));
+        }
+        return check_values(blob);
+    }
     let allowed = client.transports();
     for key in TRANSPORT_KEYS {
         if o.get(key).is_some_and(|v| !v.as_str().is_some_and(|s| allowed.contains(&s))) {
@@ -175,14 +215,21 @@ fn check_blob(blob: &Value, client: Client) -> Result<(), (&'static str, String)
     if let Some(key) = client.required_transport_key().filter(|k| !o.contains_key(*k)) {
         return Err(("connector_transport", format!("{key} is required")));
     }
+    check_values(blob)?;
+    if !o.get("url").and_then(Value::as_str).is_some_and(connector_url) {
+        return Err(("connector_url", "url is missing or not a URL the gateway accepts".into()));
+    }
+    Ok(())
+}
+
+/// The checks every blob passes, with a url or without: no secret, no
+/// variable reference.
+fn check_values(blob: &Value) -> Result<(), (&'static str, String)> {
     if let Some(k) = SECRET_KEYS.iter().find(|k| has_key(blob, &fold_key(k))) {
         return Err(("connector_secret", format!("carries {k}")));
     }
     if has_marker(blob) {
         return Err(("connector_variable", format!("contains {VARIABLE_MARKER}")));
-    }
-    if !o.get("url").and_then(Value::as_str).is_some_and(connector_url) {
-        return Err(("connector_url", "url is missing or not a URL the gateway accepts".into()));
     }
     Ok(())
 }
@@ -374,7 +421,7 @@ pub fn due(servers: &[CustomServer], writable: impl Fn(Client) -> bool, record: 
             continue;
         }
         let verb = if before.is_some() { "changed" } else { "added" };
-        let message = format!("Your organization {verb} the connector {} ({}).", s.name, s.host());
+        let message = format!("Your organization {verb} the connector {} ({}).", s.name, s.shown());
         out.extend(clients.into_iter().map(|client| Notice { client, message: message.clone() }));
         record.seen.insert(s.name.clone(), hash);
     }
@@ -469,9 +516,12 @@ impl CustomServer {
         Some(blob)
     }
 
-    /// The host its URL names, from whichever blob it has.
-    pub fn host(&self) -> &str {
-        Client::ALL.into_iter().filter_map(|c| self.blob(c)).find_map(|b| b.get("url")?.as_str()).map_or("", host)
+    /// What the notice and the Keys tab show beside its name: the host its
+    /// URL names, from whichever blob has one, else the Claude Desktop server
+    /// it names. A checked blob has one or the other.
+    pub fn shown(&self) -> &str {
+        let from = |key: &str| Client::ALL.into_iter().filter_map(|c| self.blob(c)).find_map(|b| b.get(key)?.as_str());
+        from("url").map(host).or_else(|| from(SERVER_KEY)).unwrap_or("")
     }
 }
 
@@ -502,6 +552,7 @@ mod tests {
         assert_eq!(doc["custom_max"], CUSTOM_MAX);
         assert_eq!(doc["connectors_max"], CONNECTORS_MAX);
         assert_eq!(doc["url_max"], URL_MAX);
+        assert_eq!(doc["server_key"], SERVER_KEY);
     }
 
     fn server(name: &str, desktop: Option<Value>) -> Value {
@@ -619,6 +670,60 @@ mod tests {
     #[test]
     fn an_added_blob_is_a_change() {
         assert_ne!(seen_hash(&issues(false)), seen_hash(&issues(true)));
+    }
+
+    fn m365(desktop: Value) -> Value {
+        json!({ "kind": "custom", "name": "Microsoft 365", "claude_desktop": desktop })
+    }
+
+    #[test]
+    fn any_server_value_of_the_right_shape_is_kept() {
+        // The shared fixture accepts only "microsoft365", because the portal
+        // refuses a value it has no form for. The launcher keeps no list.
+        let mut c = Check::new();
+        let s = c.entry(&json!({ "kind": "custom", "name": "notes", "claude_desktop": { "server": "something_else-2" } })).unwrap();
+        assert_eq!(s.shown(), "something_else-2");
+    }
+
+    #[test]
+    fn a_refusal_for_a_bad_server_never_carries_it() {
+        let mut c = Check::new();
+        let r = c.entry(&m365(json!({ "server": "s3cr3t value" }))).unwrap_err();
+        assert_eq!(r.code, "connector_server");
+        assert!(!r.message.contains("s3cr3t"), "{}", r.message);
+    }
+
+    #[test]
+    fn a_desktop_server_is_noticed_by_the_server_it_names() {
+        let mut c = Check::new();
+        let s = c.entry(&m365(json!({ "server": "microsoft365", "scope": "Mail.Read" }))).unwrap();
+        let mut r = Record::default();
+        let n = due(&[s.clone()], both, &mut r);
+        assert_eq!(clients(&n), [Client::Desktop]);
+        assert_eq!(n[0].message, "Your organization added the connector Microsoft 365 (microsoft365).", "never empty brackets");
+        assert!(due(&[s.clone()], both, &mut r).is_empty(), "once");
+        let mut wider = s;
+        wider.claude_desktop.as_mut().unwrap()["scope"] = json!("Mail.Read Files.Read.All");
+        assert_eq!(due(&[wider], both, &mut r)[0].message, "Your organization changed the connector Microsoft 365 (microsoft365).");
+    }
+
+    #[test]
+    fn a_server_beside_a_remote_blob_shows_the_host() {
+        let mut c = Check::new();
+        let s = c.entry(&server("m365", Some(json!({ "server": "microsoft365" })))).unwrap();
+        assert_eq!(s.shown(), "mcp.example.com", "the server it names only when neither blob has a url");
+    }
+
+    #[test]
+    fn a_name_with_spaces_is_never_a_claude_code_key() {
+        let mut c = Check::new();
+        let r = c.entry(&server("my server", None)).unwrap_err();
+        assert_eq!(r.code, "connector_name");
+        assert!(r.message.contains("my server"), "named, so the log says which connector: {}", r.message);
+        for bad in ["", " a", "a ", "a  b", "a\tb", "a\u{a0}b"] {
+            assert!(!valid_desktop_name(bad), "{bad:?}");
+        }
+        assert!(valid_desktop_name("Microsoft 365") && !valid_name("Microsoft 365"));
     }
 
     #[test]

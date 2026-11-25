@@ -613,6 +613,14 @@ mod tests {
     }
 
     #[test]
+    fn a_claude_desktop_only_server_never_reaches_claude_code() {
+        // Its name may have spaces, so it must never be a `claude mcp` argument.
+        let m365 = crate::models::CustomServer { name: "Microsoft 365".into(), claude_code: None, claude_desktop: Some(json!({ "server": "microsoft365" })) };
+        let wanted = connector_servers(&Target { custom: vec![m365], ..slack_on() });
+        assert_eq!(wanted.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(), ["slack"]);
+    }
+
+    #[test]
     fn claude_code_is_asked_only_for_what_differs() {
         let home = temp_home("mcp-steps");
         let wanted = connector_servers(&slack_on());
